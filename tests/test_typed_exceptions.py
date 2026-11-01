@@ -107,7 +107,7 @@ class TestExceptionConstruction:
         assert "перегружен" in exc.user_message  # Overloaded message
 
     def test_api_error_from_exception(self):
-        original = RuntimeError("quota exceeded for model")
+        original = RuntimeError("daily quota exceeded for model")
         exc = APIError.from_exception(original)
         assert exc.key_related is True
         assert exc.retryable is False

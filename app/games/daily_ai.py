@@ -116,7 +116,7 @@ async def generate_daily_text(
     from google.genai import types
 
     from app.config import is_gemini_chat_model_id, settings
-    from app.errors import classify_key_error
+    from app.errors import classify_key_error, extract_retry_after_seconds
     from app.observability.workload_events import observe_workload_call
     from app.providers.gemini import get_cached_genai_client
     from app.repos.keys import get_available_gemini_key, get_key_status_manager, reserve_gemini_key_usage
@@ -154,7 +154,11 @@ async def generate_daily_text(
             # can select a healthy key without silently changing the model.
             try:
                 await get_key_status_manager().suspend_key(
-                    key_data["key_hash"], model, classify_key_error(str(exc)), type(exc).__name__
+                    key_data["key_hash"],
+                    model,
+                    classify_key_error(exc),
+                    type(exc).__name__,
+                    retry_after_seconds=extract_retry_after_seconds(str(exc)),
                 )
             except Exception as suspension_error:
                 logger.debug("Crocodile key cooldown failed: %s", type(suspension_error).__name__)
@@ -162,6 +166,10 @@ async def generate_daily_text(
         text = getattr(response, "text", None)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Gemini returned empty daily text")
+        try:
+            await get_key_status_manager().record_success(key_data["key_hash"], model)
+        except Exception as health_error:
+            logger.debug("Crocodile key success recording failed: %s", type(health_error).__name__)
         return text.strip()
 
 

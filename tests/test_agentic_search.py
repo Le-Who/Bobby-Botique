@@ -197,3 +197,10 @@ async def test_tool_replies_match_original_ids_names_and_order_across_denied_cal
     assert replies[0].response["content"] == "Page evidence"
     assert "error" in replies[1].response
     assert replies[2].response["results"][0]["url"] == "https://three.test"
+
+
+@pytest.fixture(autouse=True)
+def isolated_research_quota(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("app.core.agentic.reserve_gemini_key_usage", AsyncMock(return_value=True))

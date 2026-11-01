@@ -53,6 +53,19 @@ async def selection_keys(db_conn_with_user):
 
 
 class TestKeyUsageTracking:
+    @pytest.mark.parametrize("daily_limit", [None, 100])
+    async def test_suspended_key_cannot_reserve_even_if_selected_earlier(
+        self, db_conn_with_key, daily_manager, daily_limit
+    ):
+        conn, key_hash = db_conn_with_key
+        await keys.KeyStatusManager().suspend_key(key_hash, MODEL, "rate_limit", "retryDelay: 45s")
+        assert await daily_manager.reserve_usage(key_hash, MODEL, daily_limit) is None
+        assert (
+            await conn.fetchval("SELECT COUNT(*) FROM key_usage WHERE key_hash=$1 AND model_name=$2", key_hash, MODEL)
+            == 0
+        )
+        assert await daily_manager.reserve_usage(key_hash, "other-model", daily_limit) == 1
+
     async def test_insert_usage_counter(self, db_conn_with_key, daily_manager):
         conn, key_hash = db_conn_with_key
 
@@ -178,6 +191,11 @@ class TestKeySelection:
 
         assert await daily_manager.get_fresh_available_key(MODEL, daily_limit=10, excluded_hashes=excluded) is None
 
+        await conn.execute(
+            "UPDATE key_model_status SET suspended_until=NOW() - interval '1 second' WHERE key_hash=$1 AND model_name=$2",
+            hash_b,
+            MODEL,
+        )
         await manager.record_success(hash_b, MODEL)
         assert await daily_manager.get_fresh_available_key(MODEL, daily_limit=10, excluded_hashes=excluded) == {
             "key_hash": hash_b,
@@ -220,6 +238,21 @@ class TestKeyModelStatus:
         manager = keys.KeyStatusManager()
         await manager.suspend_key(key_hash, MODEL, "permanent", "Invalid credential")
 
+        await manager.record_success(key_hash, MODEL)
+
+        # A success already in flight when another request was throttled must
+        # not erase the provider's newer cooldown.
+        assert (
+            await conn.fetchval(
+                "SELECT status FROM key_model_status WHERE key_hash=$1 AND model_name=$2", key_hash, MODEL
+            )
+            == "suspended"
+        )
+        await conn.execute(
+            "UPDATE key_model_status SET suspended_until=NOW() - interval '1 second' WHERE key_hash=$1 AND model_name=$2",
+            key_hash,
+            MODEL,
+        )
         await manager.record_success(key_hash, MODEL)
 
         row = await conn.fetchrow(

@@ -143,14 +143,16 @@ async def test_quota_failure_rotates_and_records_safe_health(monkeypatch, key_he
     async def execute(model, key):
         attempts.append((model, key))
         if key == "first-key":
-            raise RuntimeError("quota exceeded; sensitive prompt body and first-key")
+            raise RuntimeError("daily quota exceeded; sensitive prompt body and first-key")
         return {"result": "checked"}
 
     assert await gemini_execution.run_gemini_override("memory.extract", (), execute) == {"result": "checked"}
     assert attempts == [("gemini-chosen", "first-key"), ("gemini-chosen", "second-key")]
     assert reserved.await_count == 2
     assert selected.await_args.kwargs["excluded_hashes"] == {"first-hash"}
-    key_health.suspend_key.assert_awaited_once_with("first-hash", "gemini-chosen", "quota", "RuntimeError")
+    key_health.suspend_key.assert_awaited_once_with(
+        "first-hash", "gemini-chosen", "quota", "RuntimeError", retry_after_seconds=None
+    )
     key_health.record_success.assert_awaited_once_with("second-hash", "gemini-chosen")
 
 

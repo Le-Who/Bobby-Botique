@@ -135,7 +135,7 @@ async def extract_graph_structured(
     """
     import hashlib
 
-    from app.errors import classify_key_error
+    from app.errors import classify_key_error, extract_retry_after_seconds
     from app.handlers.ai_core import _resolve_ai_request
     from app.providers.gemini import get_cached_genai_client
     from app.repos.keys import get_key_status_manager, reserve_gemini_key_usage
@@ -175,10 +175,6 @@ async def extract_graph_structured(
                 config=build_generate_content_config(model, **config_kwargs),  # type: ignore[arg-type]
             )
             parsed = GraphExtractionResult.model_validate_json((response.text or "").strip())
-            try:
-                await status_mgr.record_success(selected_hash, model)
-            except Exception:
-                pass
             request_attempt.finish(
                 outcome="succeeded", entity_count=len(parsed.entities), relation_count=len(parsed.relations)
             )
@@ -287,10 +283,11 @@ async def extract_graph_structured(
             request_attempt.fail(e, reason_code="provider_or_parse_error")
             failed_keys.add(current_key_hash)
             error_str = str(e).lower()
-            error_category = classify_key_error(error_str)
+            error_category = classify_key_error(e)
 
             # JSON truncation: Gemini cut the response mid-object due to max_output_tokens.
             # Treat as transient and retry with doubled token limit (no server-side wait needed).
+            is_validation = isinstance(e, ValueError)
             is_truncation = any(p in error_str for p in ("eof while parsing", "json_invalid", "unexpected end of"))
             is_transient = (
                 error_category == "transient"
@@ -298,15 +295,21 @@ async def extract_graph_structured(
                 or any(p in error_str for p in ("503", "unavailable", "overloaded", "rate limit", "timeout"))
             )
 
-            if not is_truncation:  # Don't suspend for truncation — key is fine
+            if not is_validation:  # Output/schema failures do not indicate unhealthy credentials.
                 try:
                     if error_category != "permanent" or "api_key" in error_str or "400" in error_str:
-                        await status_mgr.suspend_key(current_key_hash, GRAPH_EXTRACTION_MODEL, error_category, str(e))
+                        await status_mgr.suspend_key(
+                            current_key_hash,
+                            GRAPH_EXTRACTION_MODEL,
+                            error_category,
+                            type(e).__name__,
+                            retry_after_seconds=extract_retry_after_seconds(str(e)),
+                        )
                 except Exception:
                     pass
 
             if is_transient and attempt < 2:
-                if is_truncation:
+                if is_validation:
                     # Token budget expands on next attempt logic explicitly (config max_tokens)
                     wait = 0.0
                     emit(
@@ -315,7 +318,7 @@ async def extract_graph_structured(
                         operation="memory.extraction",
                         attempt_number=attempt + 1,
                         next_attempt=attempt + 2,
-                        reason_code="json_truncated",
+                        reason_code="invalid_response",
                         key_fingerprint=current_key_hash,
                     )
                 else:
@@ -872,7 +875,7 @@ async def _resolve_ambiguous_conflict(
 
     import hashlib
 
-    from app.repos.keys import reserve_gemini_key_usage
+    from app.repos.keys import get_key_status_manager, reserve_gemini_key_usage
 
     try:
         if not await reserve_gemini_key_usage(hashlib.sha256(api_key.encode()).hexdigest(), get_taxonomy_model()):
@@ -902,6 +905,12 @@ async def _resolve_ambiguous_conflict(
         )
         answer = (response.text or "").strip().lower()
         if answer in ("update", "parallel", "refinement"):
+            try:
+                await get_key_status_manager().record_success(
+                    hashlib.sha256(api_key.encode()).hexdigest(), get_taxonomy_model()
+                )
+            except Exception:
+                logging.debug("Memory conflict success recording unavailable")
             request_attempt.finish(outcome="succeeded", verdict=answer)
             return answer
         logging.debug("LLM judge returned unexpected: %r, defaulting to 'parallel'", answer)

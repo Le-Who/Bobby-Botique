@@ -18,6 +18,17 @@ class TestDailyKeyManager:
         return DailyKeyManager("test_keys", "test_usage")
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("limit", [None, 100])
+    async def test_reservation_rechecks_health_at_the_database_boundary(self, limit):
+        mgr = self._make_manager()
+        with patch("app.repos.keys.db_query", new_callable=AsyncMock, return_value=[]) as query:
+            assert await mgr.reserve_usage("hash1", "model", limit) is None
+        sql, params = query.await_args.args
+        assert "NOT EXISTS" in sql and "key_model_status" in sql
+        assert "kms.suspended_until > NOW()" in sql
+        assert params[:2] == ("hash1", "model")
+
+    @pytest.mark.asyncio
     async def test_get_available_key_happy_path(self):
         """Should return the least-used key."""
         mgr = self._make_manager()

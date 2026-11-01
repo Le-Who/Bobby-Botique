@@ -61,3 +61,10 @@ async def test_search_tool_excludes_seen_evidence_across_searches_but_keeps_dist
     assert [row["content"] for row in second["results"]] == ["Page two"]
     assert second["_dedup_count"] == 1
     assert seen == {"https://example.com/article?page=1", "https://example.com/article?page=2"}
+
+
+@pytest.fixture(autouse=True)
+def isolated_research_quota(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("app.core.agentic.reserve_gemini_key_usage", AsyncMock(return_value=True))

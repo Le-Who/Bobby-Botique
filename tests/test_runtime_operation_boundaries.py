@@ -95,7 +95,7 @@ async def test_role_retry_uses_saved_chain_without_user_model_or_duplicate_usage
     assert "Configured teacher" in progress.edit_text.await_args.args[0]
 
 
-async def test_role_retry_legacy_route_charges_usage_once(monkeypatch):
+async def test_role_retry_legacy_route_does_not_duplicate_wrapper_reservation(monkeypatch):
     update, _, user_id = _role_update(monkeypatch)
     increment = AsyncMock()
     monkeypatch.setattr(
@@ -113,7 +113,7 @@ async def test_role_retry_legacy_route_charges_usage_once(monkeypatch):
     await cb_roles.role_custom_retry_callback(update, SimpleNamespace())
 
     assert get_generated_role(user_id)["title"] == "Legacy"
-    increment.assert_awaited_once_with("hash", "gemini-user-c")
+    increment.assert_not_awaited()
     assert get_user_state(user_id).generating_custom_role is False
 
 

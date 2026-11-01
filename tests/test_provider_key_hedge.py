@@ -400,6 +400,7 @@ async def test_key_preparation_obeys_model_deadline_and_awaits_cleanup(monkeypat
         )
 
     router, request, pool, started, closed, tasks = install(monkeypatch, script, budget=0.03)
+    monkeypatch.setattr("app.providers.router.KEY_RACE_HEDGE_DELAY_SECONDS", 1.0)
     resolve = pool.resolve_exact_ai_request
     reserve = pool.reserve_key_usage
 
@@ -456,6 +457,7 @@ async def test_failure_health_write_cannot_hold_rotation_past_model_deadline(mon
             health_closed.set()
 
     router, request, pool, started, closed, tasks = install(monkeypatch, script, budget=0.03)
+    monkeypatch.setattr("app.providers.router.KEY_RACE_HEDGE_DELAY_SECONDS", 1.0)
     monkeypatch.setattr(pool, "suspend_key", suspend)
     events = await asyncio.wait_for(collect(router.stream(request)), 0.5)
 
@@ -463,6 +465,58 @@ async def test_failure_health_write_cannot_hold_rotation_past_model_deadline(mon
     assert events[0].code is ErrorCode.OVERLOADED
     assert health_closed.is_set()
     assert started == ["first", "second"]
+    assert closed == set(started)
+    assert all(task.done() for task in tasks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["lookup", "quota"])
+async def test_blocked_hedge_preparation_returns_deadline_after_original_failures(monkeypatch, stage):
+    preparation_started = asyncio.Event()
+    preparation_closed = asyncio.Event()
+
+    async def script(key, pool, closed):
+        await preparation_started.wait()
+        yield StreamFailed(
+            code=ErrorCode.OVERLOADED,
+            phase=FailurePhase.BEFORE_TEXT,
+            retry=RetryDisposition.TRY_NEXT_KEY,
+            key=KeyDisposition.TRANSIENT_FAILURE,
+            diagnostic="synthetic overload",
+        )
+
+    router, request, pool, started, closed, tasks = install(monkeypatch, script, budget=0.1)
+    resolve = pool.resolve_exact_ai_request
+    reserve = pool.reserve_key_usage
+
+    async def block():
+        preparation_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)
+            preparation_closed.set()
+
+    async def lookup(model, *, excluded_key_hashes):
+        if stage == "lookup" and {"first", "second"}.issubset(excluded_key_hashes):
+            await block()
+        return await resolve(model, excluded_key_hashes=excluded_key_hashes)
+
+    async def quota(key, model, provider):
+        if stage == "quota" and key == "reserve":
+            await block()
+        return await reserve(key, model, provider)
+
+    monkeypatch.setattr(pool, "resolve_exact_ai_request", lookup)
+    monkeypatch.setattr(pool, "reserve_key_usage", quota)
+    events = await asyncio.wait_for(collect(router.stream(request)), 1)
+
+    assert len(events) == 1 and isinstance(events[0], StreamFailed)
+    assert events[0].code is ErrorCode.TIMEOUT
+    assert events[0].key is KeyDisposition.UNCHANGED
+    assert preparation_closed.is_set()
+    assert started == ["first", "second"]
+    assert pool.reserved == started
     assert closed == set(started)
     assert all(task.done() for task in tasks)
 

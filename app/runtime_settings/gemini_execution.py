@@ -65,7 +65,12 @@ async def _run_gemini_override[T](
     reservation infrastructure errors propagate. There is no implicit provider
     or baseline fallback.
     """
-    from app.errors import classify_key_error
+    from app.errors import (
+        classify_error_from_exception,
+        classify_key_error,
+        extract_retry_after_seconds,
+        is_retryable_error_code,
+    )
     from app.repos.keys import get_available_gemini_key, get_key_status_manager, reserve_gemini_key_usage
 
     policy = await resolve_process(process_id, baseline)
@@ -107,16 +112,17 @@ async def _run_gemini_override[T](
                 # Validation/JSON parsing belongs to the callback, not key health.
                 if isinstance(error, ValueError):
                     break
-                category = classify_key_error(str(error))
-                status = getattr(error, "status_code", None) or getattr(error, "code", None)
-                if (
-                    category == "transient"
-                    and status not in (408, 429, 500, 502, 503, 504)
-                    and not isinstance(error, (TimeoutError, ConnectionError))
-                ):
+                category = classify_key_error(error)
+                if category == "transient" and not is_retryable_error_code(classify_error_from_exception(error)):
                     break
                 try:
-                    await get_key_status_manager().suspend_key(key_hash, model, category, type(error).__name__)
+                    await get_key_status_manager().suspend_key(
+                        key_hash,
+                        model,
+                        category,
+                        type(error).__name__,
+                        retry_after_seconds=extract_retry_after_seconds(str(error)),
+                    )
                 except Exception as health_error:
                     logging.debug("Gemini process key cooldown failed: %s", type(health_error).__name__)
                 continue

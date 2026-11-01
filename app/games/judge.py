@@ -339,7 +339,7 @@ async def _race_generate(
     from google.genai import types as _gtypes
 
     from app.agent_use_cases import AgentRequestUseCase
-    from app.errors import classify_key_error, extract_retry_after_seconds
+    from app.errors import classify_key_error, extract_retry_after_seconds, user_friendly_error
     from app.providers.gemini import get_cached_genai_client
     from app.repos.keys import get_key_status_manager
 
@@ -370,6 +370,12 @@ async def _race_generate(
             return None
         try:
             async with lease:
+                try:
+                    if not await use_case.reserve_key_usage(key_hash, model, use_openrouter=False):
+                        return None
+                except Exception:
+                    logger.debug("Judge quota admission unavailable")
+                    return None
                 client = get_cached_genai_client(api_key)
                 response = await observe_workload_call(
                     asyncio.wait_for(
@@ -393,15 +399,17 @@ async def _race_generate(
                 data = json.loads(text)
                 result = GuessJudgement.model_validate(data)
                 submit_task(status_mgr.record_success(key_hash, model))
-                submit_task(use_case.increment_key_usage(key_hash, model, use_openrouter=False))
                 submit_task(record_result("ai_studio", model, "success"))
                 return result
+        except ValueError:
+            logger.debug("Judge returned invalid structured output (model=%s)", model)
+            return None
         except Exception as exc:
             err_text = str(exc)
             logger.warning("Judge race call failed (model=%s): %s", model, exc)
             # Classify error and suspend key — prevents the same exhausted key
             # from being re-used in subsequent resolve_ai_request() calls.
-            category = classify_key_error(err_text)
+            category = classify_key_error(exc)
             submit_task(
                 record_result(
                     "ai_studio",
@@ -411,7 +419,7 @@ async def _race_generate(
                     reason=err_text[:500],
                 )
             )
-            submit_task(_suspend_key_safe(key_hash, model, category, err_text[:500]))
+            submit_task(_suspend_key_safe(key_hash, model, category, user_friendly_error(exc)))
             return None
 
     async def _run_race(

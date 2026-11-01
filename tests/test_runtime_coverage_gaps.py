@@ -171,3 +171,10 @@ def test_research_synthesis_prompt_requires_payload_variables():
     load_controlled_prompts()
     with pytest.raises(ValueError, match="placeholders"):
         validate_prompt_text("research.synthesis.system", "Edited without query or max pages")
+
+
+@pytest.fixture(autouse=True)
+def isolated_research_quota(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("app.core.agentic.reserve_gemini_key_usage", AsyncMock(return_value=True))

@@ -202,6 +202,7 @@ class TestJudgeGuessPipeline:
             ]
         )
         mock_use_case.increment_key_usage = AsyncMock()
+        mock_use_case.reserve_key_usage = AsyncMock(return_value=True)
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),

@@ -282,7 +282,6 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
     # Используем универсальную функцию for получения keyа (поддерживает и Gemini, и OpenRouter)
     from app.handlers.ai_core import (
         _get_ai_response,
-        _increment_key_usage,
         _resolve_ai_request,
     )
     from app.process_policies import execute_text_process, resolve_process
@@ -324,7 +323,6 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
                 user_id=user_id,
                 chat_id=user_id,
             )
-            await _increment_key_usage(key_data["key_hash"], model_used)
 
         logging.info(
             "Role retry response received",

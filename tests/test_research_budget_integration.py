@@ -250,3 +250,10 @@ async def test_synthesis_keeps_fast_tool_result_when_sibling_times_out():
         await agent.run("query", AsyncMock())
     assert {"content": "Completed evidence"} in captured
     assert sum("error" in row for row in captured) == 1
+
+
+@pytest.fixture(autouse=True)
+def isolated_research_quota(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("app.core.agentic.reserve_gemini_key_usage", AsyncMock(return_value=True))

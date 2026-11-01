@@ -263,7 +263,7 @@ def test_rate_limit_user_message_retains_retryable_rate_limit_code():
         (401, ErrorCode.INVALID_KEY),
         (403, ErrorCode.INVALID_KEY),
         (400, ErrorCode.INVALID_REQUEST),
-        (500, ErrorCode.PROCESSING),
+        (500, ErrorCode.OVERLOADED),
     ],
 )
 def test_classify_error_from_status_code(http_status, expected_code):
@@ -304,7 +304,8 @@ def test_classify_error_from_exception_reads_status_code_attribute():
         ("503 Service Unavailable", ErrorCode.OVERLOADED),
         ("server overloaded", ErrorCode.OVERLOADED),
         ("429 too many requests", ErrorCode.RATE_LIMIT),
-        ("quota exceeded for model", ErrorCode.QUOTA_EXCEEDED),
+        ("quota exceeded for model", ErrorCode.RATE_LIMIT),
+        ("daily quota exceeded for model", ErrorCode.QUOTA_EXCEEDED),
         ("daily limit reached", ErrorCode.QUOTA_EXCEEDED),
         ("some completely unknown error", ErrorCode.GENERIC),
     ],

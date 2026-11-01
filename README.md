@@ -322,7 +322,7 @@ When configured, the bot communicates with a self-hosted Local Bot API Server in
 
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
-| `GEMINI_API_KEYS` | ✅ | `key1,key2,key3` | — | Comma-separated Google AI Studio API keys. The system rotates through them automatically on quota exhaustion or 503 errors for Gemini chat/judge/fallback paths. Each key has an independent daily request budget tracked in the DB. Minimum 1 key required. Live Audio no longer consumes this pool. |
+| `GEMINI_API_KEYS` | ✅ | `key1,key2,key3` | — | Comma-separated Google AI Studio API keys. Fresh selection spreads recent traffic across eligible keys before comparing daily usage. Each key has a local daily budget tracked in the DB; Google's actual RPM/TPM/RPD limits are shared per project. Minimum 1 key required. Live Audio no longer consumes this pool. |
 | `GEMINI_AVAILABLE_MODELS` | ⚙️ | `gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite` | `gemini-3.6-flash,gemini-3.5-flash-lite` | Exact, ordered Gemini list shown in `/model`. Future syntactically valid `gemini-*` IDs are accepted without a code release. Role models such as `DEFAULT_MODEL` are not added to this selector automatically. Use the single token `none` for an intentionally empty list. |
 | `DEFAULT_MODEL` | ⚙️ | `gemini-3.6-flash` | `gemini-3.6-flash` | Internal model used for standard conversational messages. It may be intentionally hidden from the user-selectable list. |
 | `QNA_MODEL` | ⚙️ | `gemini-3.5-flash-lite` | `gemini-3.5-flash-lite` | Internal model used for quick Q&A web search queries (`?` prefix). |

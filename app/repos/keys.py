@@ -10,10 +10,13 @@ Extracted from app/database.py to isolate key-management domain logic.
 import hashlib
 import logging
 import re
+import time
+from collections import deque
 from datetime import date, datetime, timedelta
 from typing import Any
 
 import asyncpg
+from cachetools import TTLCache
 
 from app.config import UTC_TZ, settings
 from app.crypto import encrypt_api_key, safe_decrypt
@@ -48,6 +51,10 @@ class DailyKeyManager:
             raise ValueError(f"Unsafe table name: {usage_table!r}")
         self.keys_table = keys_table
         self.usage_table = usage_table
+        # Selection pressure is process-local, not a provider RPM entitlement.
+        # Record before returning a key so concurrent callers spread even before
+        # their daily reservations commit. PostgreSQL remains the RPD authority.
+        self._recent_selections: TTLCache = TTLCache(maxsize=4096, ttl=60)
 
     def _today(self) -> date:
         return datetime.now(get_pacific_tz()).date()
@@ -115,19 +122,21 @@ class DailyKeyManager:
         another worker reached the threshold first and the request must not be
         sent.
         """
-        if not daily_limit:
-            result = await self.increment_usage(key_hash, model_name)
-            return int(result[0]["request_count"]) if result else None
-
         today = self._today()
-        threshold = max(1, int(daily_limit * settings.LIMIT_THRESHOLD_PERCENT))
+        threshold = max(1, int(daily_limit * settings.LIMIT_THRESHOLD_PERCENT)) if daily_limit else None
         query = f"""
             INSERT INTO {self.usage_table}
                 (key_hash, model_name, usage_date, request_count)
-            VALUES ($1, $2, $3, 1)
+            SELECT $1, $2, $3, 1
+            WHERE NOT EXISTS (
+                SELECT 1 FROM key_model_status kms
+                WHERE kms.key_hash = $1 AND kms.model_name = $2
+                  AND kms.status <> 'active'
+                  AND (kms.suspended_until IS NULL OR kms.suspended_until > NOW())
+            )
             ON CONFLICT (key_hash, model_name, usage_date)
             DO UPDATE SET request_count = {self.usage_table}.request_count + 1
-            WHERE {self.usage_table}.request_count < $4
+            WHERE {self.usage_table}.request_count < $4 OR $4::integer IS NULL
             RETURNING request_count;
         """
         result = await db_query(query, (key_hash, model_name, today, threshold))
@@ -155,48 +164,16 @@ class DailyKeyManager:
         excluded_hashes: set[str] | None = None,
         conn=None,
     ) -> dict[str, Any] | None:
-        """Find the least-used key that is still under the daily limit.
+        """Spread recent traffic across eligible keys, then prefer lower RPD.
 
-        Two-tier selection:
-            Tier 1 — active keys (status='active' or no status row)
-            Tier 2 — suspended keys whose cooldown has expired
-
-        Keys in *excluded_hashes* are filtered at the SQL level.
+        Expired cooldowns rejoin the same pool as active keys. Exclusions and
+        active cooldowns are filtered in SQL; recent selection pressure breaks
+        concurrent-read ties without pinning an entire batch to one cached key.
         """
         today = self._today()
         excluded = list(excluded_hashes) if excluded_hashes else []
 
-        if not daily_limit:
-            query = f"""
-                SELECT ak.key_hash, ak.api_key
-                FROM {self.keys_table} ak
-                LEFT JOIN {self.usage_table} ku
-                    ON ak.key_hash = ku.key_hash
-                    AND ku.model_name = $1 AND ku.usage_date = $3
-                LEFT JOIN key_model_status kms
-                    ON ak.key_hash = kms.key_hash AND kms.model_name = $1
-                WHERE ak.key_hash != ALL($2)
-                  AND (
-                      COALESCE(kms.status, 'active') = 'active'
-                      OR kms.suspended_until < NOW()
-                  )
-                ORDER BY
-                    CASE WHEN COALESCE(kms.status, 'active') = 'active' THEN 0 ELSE 1 END,
-                    COALESCE(ku.request_count, 0) ASC
-            """
-            keys = await db_query(query, (model_name, excluded, today), conn=conn)
-            for row in keys:
-                try:
-                    return {
-                        "key_hash": row["key_hash"],
-                        "api_key": safe_decrypt(row["api_key"]),
-                    }
-                except Exception as e:
-                    logging.error("Failed to decrypt key %s: %s", row["key_hash"][:8], e)
-                    continue
-            return None
-
-        threshold = max(1, int(daily_limit * settings.LIMIT_THRESHOLD_PERCENT))
+        threshold = max(1, int(daily_limit * settings.LIMIT_THRESHOLD_PERCENT)) if daily_limit else None
         query = f"""
             SELECT ak.key_hash, ak.api_key,
                    COALESCE(ku.request_count, 0) AS request_count,
@@ -210,26 +187,39 @@ class DailyKeyManager:
             WHERE ak.key_hash != ALL($3)
               AND (
                   COALESCE(kms.status, 'active') = 'active'
-                  OR kms.suspended_until < NOW()
+                  OR kms.suspended_until <= NOW()
               )
             ORDER BY
-                CASE WHEN COALESCE(kms.status, 'active') = 'active' THEN 0 ELSE 1 END,
-                COALESCE(ku.request_count, 0) ASC
+                COALESCE(ku.request_count, 0) ASC, ak.key_hash
         """
         results = await db_query(query, (model_name, today, excluded), conn=conn)
         if not results:
             return None
 
-        for row in results:
-            if row["request_count"] < threshold:
+        now = time.monotonic()
+
+        def pressure(row):
+            recent = self._recent_selections.get((model_name, row["key_hash"]), ())
+            while recent and recent[0] <= now - 60:
+                recent.popleft()
+            return len(recent), row.get("request_count", 0), recent[-1] if recent else 0
+
+        # There is no await between ordering and recording the selection.
+        for row in sorted(results, key=pressure):
+            if threshold is None or row.get("request_count", 0) < threshold:
                 try:
-                    return {
+                    selected = {
                         "key_hash": row["key_hash"],
                         "api_key": safe_decrypt(row["api_key"]),
                     }
                 except Exception as e:
                     logging.error("Failed to decrypt key %s: %s", row["key_hash"][:8], e)
                     continue
+                identity = (model_name, row["key_hash"])
+                recent = self._recent_selections.get(identity, deque(maxlen=4096))
+                recent.append(now)
+                self._recent_selections[identity] = recent
+                return selected
         return None
 
 
@@ -342,7 +332,7 @@ async def get_available_gemini_key(
     model_name: str,
     excluded_hashes: set[str] | None = None,
     *,
-    use_cache: bool = True,
+    use_cache: bool = False,
 ) -> dict[str, Any] | None:
     # When exclusions are requested, skip cache (caller wants a *different* key)
     if use_cache and not excluded_hashes:
@@ -466,6 +456,7 @@ _PENALTY_DURATIONS: dict[str, timedelta] = {
     # "quota" is handled specially (until midnight PT)
 }
 _MAX_SUSPENSION = timedelta(days=7)
+_MAX_TEMPORARY_SUSPENSION = timedelta(seconds=60)
 
 
 def _compute_suspended_until(
@@ -490,8 +481,9 @@ def _compute_suspended_until(
     base = _PENALTY_DURATIONS.get(category, timedelta(seconds=15))
 
     # Exponential backoff on repeated failures (capped)
-    multiplier = min(2 ** (failure_count - 1), 128) if failure_count > 1 else 1
-    cooldown = min(base * multiplier, _MAX_SUSPENSION)
+    multiplier = 2 ** min(max(failure_count - 1, 0), 7)
+    cap = _MAX_SUSPENSION if category == "permanent" else _MAX_TEMPORARY_SUSPENSION
+    cooldown = min(base * multiplier, cap)
     return now + cooldown
 
 
@@ -503,7 +495,7 @@ class KeyStatusManager:
     """
 
     def __init__(self):
-        self._suspension_cache: dict[str, datetime] = {}
+        self._suspension_cache: TTLCache = TTLCache(maxsize=4096, ttl=5)
 
     async def suspend_key(
         self,
@@ -511,9 +503,16 @@ class KeyStatusManager:
         model_name: str,
         error_category: str,
         error_text: str = "",
+        *,
+        retry_after_seconds: int | None = None,
     ) -> None:
         """Suspend a key for a specific model with category-aware cooldown."""
-        cache_key = f"{key_hash}:{model_name}"
+        from app.errors import extract_retry_after_seconds
+
+        retry_after = retry_after_seconds or extract_retry_after_seconds(error_text)
+        cache_key = f"{key_hash}:{model_name}:{error_category}"
+        if retry_after is not None:
+            cache_key += f":{retry_after}"
         now_utc = datetime.now(UTC_TZ)
 
         # Drop duplicate suspension requests within 5 seconds for the same key.
@@ -535,6 +534,10 @@ class KeyStatusManager:
         prev_failures = rows[0]["failure_count"] if rows else 0
         new_failures = prev_failures + 1
         suspended_until = _compute_suspended_until(error_category, new_failures)
+        if error_category in {"rate_limit", "transient"} and retry_after is not None:
+            suspended_until = max(
+                suspended_until, now_utc + timedelta(seconds=min(retry_after, _MAX_SUSPENSION.total_seconds()))
+            )
 
         await db_query(
             """
@@ -545,7 +548,7 @@ class KeyStatusManager:
             ON CONFLICT (key_hash, model_name)
             DO UPDATE SET
                 status = 'suspended',
-                suspended_until = $3,
+                suspended_until = GREATEST(key_model_status.suspended_until, $3),
                 failure_count = $4,
                 last_error = $5,
                 updated_at = NOW()
@@ -569,7 +572,7 @@ class KeyStatusManager:
         key_hash: str,
         model_name: str,
     ) -> None:
-        """Reset key to active after a successful request."""
+        """Reset recovered keys without erasing a newer concurrent cooldown."""
         await db_query(
             """
             INSERT INTO key_model_status
@@ -583,6 +586,8 @@ class KeyStatusManager:
                 failure_count = 0,
                 last_error = NULL,
                 updated_at = NOW()
+            WHERE key_model_status.status = 'active'
+               OR key_model_status.suspended_until <= NOW()
             """,
             (key_hash, model_name),
         )

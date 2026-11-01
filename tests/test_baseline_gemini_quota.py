@@ -61,8 +61,15 @@ def baseline_call(monkeypatch):
         yield True
 
     monkeypatch.setattr("app.repos.memory_consent.private_data_lease", lease)
-    for module in (memory, extraction, consolidation, briefs):
+    for module in (memory, extraction, briefs):
         monkeypatch.setattr(module, "run_gemini_override", AsyncMock(return_value=None))
+    from app.runtime_settings import gemini_execution
+
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=SimpleNamespace(explicit=False, models=(consolidation._CONSOLIDATION_MODEL,))),
+    )
 
     async def invoke(name):
         if name == "expand":
@@ -128,6 +135,22 @@ async def test_baseline_success_reserves_selected_key_and_model_once_before_sdk(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "caller,response",
+    [
+        ("expand", "Python project"),
+        ("relevance", '[{"index":0,"relevant":true}]'),
+        ("taxonomy", "update"),
+    ],
+)
+async def test_baseline_success_clears_previous_key_failures(baseline_call, caller, response):
+    case = baseline_call
+    case.responses.append(response)
+    await case.invoke(caller)
+    case.health.record_success.assert_awaited_once_with(case.events[0][1], case.events[0][2])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("refusal", [False, ConnectionError("quota store unavailable")])
 async def test_consolidation_parse_fallback_requires_its_own_reservation(baseline_call, refusal):
     case = baseline_call
@@ -152,6 +175,16 @@ async def test_consolidation_successful_parse_fallback_counts_both_attempts(base
 async def test_extraction_retry_reserves_again_before_second_sdk_attempt(baseline_call):
     case = baseline_call
     case.responses.extend(['{"entities":[', '{"entities":[],"relations":[]}'])
+    result = await case.invoke("extract")
+    assert result.entities == []
+    assert [event[0] for event in case.events] == ["reserve", "sdk", "reserve", "sdk"]
+    case.health.suspend_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_schema_invalid_extraction_does_not_suspend_valid_key(baseline_call):
+    case = baseline_call
+    case.responses.extend(['{"entities":123,"relations":[]}', '{"entities":[],"relations":[]}'])
     result = await case.invoke("extract")
     assert result.entities == []
     assert [event[0] for event in case.events] == ["reserve", "sdk", "reserve", "sdk"]

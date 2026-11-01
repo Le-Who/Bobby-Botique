@@ -21,6 +21,7 @@ from app.prompt_registry import get_registry, render_prompt_text
 from app.providers.base import _build_thinking_config
 from app.providers.gemini import get_cached_genai_client
 from app.providers.gemini_config import build_generate_content_config
+from app.repos.keys import reserve_gemini_key_usage
 from app.runtime_settings import interactive_prompts as _interactive_prompts  # noqa: F401
 from app.search_services import parallel_search
 from app.utils.stage_indicators import STAGES_AGENTIC_RESEARCH
@@ -294,7 +295,6 @@ class AgenticSearch:
         self,
         model_name: str,
         api_key: str,
-        on_key_used: Callable[[], Awaitable[None]] | None = None,
         *,
         ltm_enabled: bool = False,
         ltm_api_key: str | None = None,
@@ -309,9 +309,6 @@ class AgenticSearch:
         self.max_pages = int(settings.AGENTIC_MAX_PAGES)
         self.max_tokens = int(settings.AGENTIC_MAX_TOKENS)
         self.timeout_seconds = float(settings.AGENTIC_TIMEOUT_SECONDS)
-        # Called after every generate_content call so the handler can
-        # increment key usage (+1 per LLM invocation).
-        self._on_key_used = on_key_used
         # Agentic RAG: when LTM is enabled, the agent can call recall_memory
         self._ltm_enabled = ltm_enabled
         self._ltm_api_key = ltm_api_key
@@ -584,14 +581,6 @@ class AgenticSearch:
             )
             return {"error": f"Execution failed: {str(e)}"}
 
-    async def _notify_key_used(self) -> None:
-        """Fire the on_key_used callback (if set) after each LLM call."""
-        if self._on_key_used:
-            try:
-                await self._on_key_used()
-            except Exception as e:
-                logger.warning("on_key_used callback failed: %s", e)
-
     @staticmethod
     def _extract_token_count(response: Any) -> int:
         """Safely extract total_token_count from response.usage_metadata."""
@@ -646,20 +635,28 @@ class AgenticSearch:
             api_key=self.api_key,
             origin="agentic_synthesis" if synthesis else "agentic_loop",
         )
+        dispatched = False
         try:
             async with asyncio.timeout(remaining) as timeout:
+                if not await reserve_gemini_key_usage(
+                    hashlib.sha256(self.api_key.encode()).hexdigest(), self.model_name
+                ):
+                    raise RuntimeError("Research provider quota admission refused")
                 attempt.record_dispatch()
+                dispatched = True
                 response = await self.client.aio.models.generate_content(
                     model=self.model_name,
                     contents=contents,
                     config=config,
                 )
         except asyncio.CancelledError:
-            budget.record_usage(None)
-            attempt.finish(outcome="cancelled", reason_code="cancelled", usage_uncertain=True)
+            if dispatched:
+                budget.record_usage(None)
+            attempt.finish(outcome="cancelled", reason_code="cancelled", usage_uncertain=dispatched)
             raise
         except Exception as error:
-            budget.record_usage(None)
+            if dispatched:
+                budget.record_usage(None)
             # An SDK TimeoutError alone does not exhaust the request budget.
             if isinstance(error, TimeoutError) and timeout.expired():
                 budget.reason = "deadline"
@@ -669,7 +666,6 @@ class AgenticSearch:
         usage = raw if type(raw) is int and raw >= 0 else None
         budget.record_usage(usage)
         attempt.finish(outcome="succeeded", token_count=usage, usage_uncertain=usage is None)
-        await self._notify_key_used()
         return response
 
     async def _run(

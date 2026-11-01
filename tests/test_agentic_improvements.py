@@ -482,3 +482,10 @@ async def test_parallel_execution_of_multiple_tools(mock_agent, mock_status_call
     ]
     assert [response.name for response in responses] == ["search_web", "read_page"]
     assert responses[1].response == {"content": "Page content"}
+
+
+@pytest.fixture(autouse=True)
+def isolated_research_quota(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("app.core.agentic.reserve_gemini_key_usage", AsyncMock(return_value=True))

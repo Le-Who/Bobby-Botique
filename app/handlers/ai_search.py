@@ -309,7 +309,7 @@ async def _handle_research_agent_leased_impl(
     trace_chat_id: int | None = placeholder_message.chat.id if placeholder_message.chat else None
 
     # Get the key and model for AgenticSearch. Fallback to default if no OpenRouter/override
-    from app.repos.keys import get_available_gemini_key, increment_gemini_key_usage
+    from app.repos.keys import get_available_gemini_key
 
     model_used = (
         model_override
@@ -417,16 +417,6 @@ async def _handle_research_agent_leased_impl(
                     except BadRequest, NetworkError:
                         pass
 
-                # Rebuild callback for this model+key pair
-                _current_model = model_used
-                _current_key_hash = key_hash
-
-                async def _on_key_used(
-                    _kh: str = _current_key_hash,
-                    _cm: str = _current_model,
-                ) -> None:
-                    await increment_gemini_key_usage(_kh, _cm)
-
                 assert key_data is not None
 
                 # Agentic RAG: enable recall_memory tool when user has LTM enabled
@@ -435,7 +425,6 @@ async def _handle_research_agent_leased_impl(
                 agent = AgenticSearch(
                     model_name=model_used,
                     api_key=key_data["api_key"],
-                    on_key_used=_on_key_used,
                     ltm_enabled=_ltm_enabled,
                     ltm_api_key=_ltm_key,
                     ltm_expected_epoch=_expected_epoch,

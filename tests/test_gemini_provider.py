@@ -12,6 +12,47 @@ from app.providers.gemini import GeminiProvider, _gemini_clients_cache
 
 
 @pytest.mark.asyncio
+async def test_stream_retry_delay_survives_diagnostic_truncation():
+    from app.errors import extract_retry_after_seconds
+    from app.providers.stream_types import GenerationRequest, PromptRole, PromptTurn, TextPart
+
+    error = APIError(429, {"error": {"message": "Quota exceeded " + "details " * 150 + " retryDelay: 47s"}})
+    request = GenerationRequest(
+        models=("gemini-3.5-flash-lite",), turns=(PromptTurn(PromptRole.USER, (TextPart("Hello"),)),)
+    )
+    with patch("app.providers.gemini.get_cached_genai_client", return_value=MagicMock()) as factory:
+        factory.return_value.aio.models.generate_content_stream = AsyncMock(side_effect=error)
+        events = [event async for event in GeminiProvider("fake-key").stream(request, model_name=request.models[0])]
+    assert len(events[0].diagnostic) <= 500
+    # The router forwards only the first 200 diagnostic characters to key health.
+    assert extract_retry_after_seconds(events[0].diagnostic[:200]) == 47
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "expected_code"),
+    [
+        ("Quota exceeded for generate_requests_per_minute", "RATE_LIMIT"),
+        ("Quota exceeded", "RATE_LIMIT"),
+        ("RESOURCE_EXHAUSTED", "RATE_LIMIT"),
+        ("Quota exceeded for GenerateRequestsPerDayPerProjectPerModel", "QUOTA_EXCEEDED"),
+        ("Quota exceeded for GenerateRequestsPerDay; retryDelay: 5s", "QUOTA_EXCEEDED"),
+    ],
+)
+async def test_background_generation_uses_same_quota_evidence_as_streaming(message, expected_code):
+    from app.errors import extract_error_code
+
+    client = MagicMock()
+    client.aio.models.generate_content = AsyncMock(side_effect=APIError(429, {"error": {"message": message}}))
+    with patch("app.providers.gemini.get_cached_genai_client", return_value=client):
+        response = await GeminiProvider("fake-quota-key")._execute_request(
+            [{"role": "user", "parts": ["test"]}], "gemini-test", None, None, None, 5.0
+        )
+    assert not response.success
+    assert extract_error_code(response.text).value == expected_code
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("error", "expected_code", "expected_key"),
     [
@@ -19,6 +60,12 @@ from app.providers.gemini import GeminiProvider, _gemini_clients_cache
         (APIError(429, {"error": {"message": ""}}), "RATE_LIMIT", "RATE_LIMITED"),
         (APIError(504, {"error": {"message": ""}}), "TIMEOUT", "TRANSIENT_FAILURE"),
         (APIError(401, {"error": {"message": ""}}), "INVALID_KEY", "INVALID"),
+        (APIError(429, {"error": {"message": "Quota exceeded for requests_per_minute"}}), "RATE_LIMIT", "RATE_LIMITED"),
+        (
+            APIError(429, {"error": {"message": "Quota exceeded for requests_per_day; retryDelay: 5s"}}),
+            "QUOTA_EXCEEDED",
+            "EXHAUSTED",
+        ),
     ],
 )
 async def test_native_stream_classifies_typed_statuses_without_error_message(error, expected_code, expected_key):

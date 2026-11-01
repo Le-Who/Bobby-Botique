@@ -39,10 +39,12 @@ class TestUserFriendlyError:
         assert user_friendly_error("Server overloaded") == OVERLOADED_ERROR
 
     def test_quota_error(self):
-        assert user_friendly_error("Quota exceeded") == QUOTA_ERROR
+        assert user_friendly_error("Daily quota exceeded") == QUOTA_ERROR
 
     def test_limit_error(self):
-        assert user_friendly_error("Rate limit reached") == QUOTA_ERROR
+        from app.errors import ErrorCode, extract_error_code
+
+        assert extract_error_code(user_friendly_error("Rate limit reached")) is ErrorCode.RATE_LIMIT
 
     def test_timeout_error(self):
         assert user_friendly_error("Request timeout") == TIMEOUT_ERROR
@@ -51,7 +53,7 @@ class TestUserFriendlyError:
         assert user_friendly_error("Some unknown error") == GENERIC_ERROR
 
     def test_exception_input(self):
-        exc = ValueError("Quota exceeded")
+        exc = ValueError("Daily quota exceeded")
         assert user_friendly_error(exc) == QUOTA_ERROR
 
     def test_empty_string(self):
@@ -97,7 +99,7 @@ class TestIsRetryableError:
 
     def test_quota_not_retryable(self):
         # Quota errors are key-related, not retryable by same key
-        assert is_retryable_error("quota exceeded") is False
+        assert is_retryable_error("daily quota exceeded") is False
 
     def test_empty_not_retryable(self):
         assert is_retryable_error("") is False
@@ -139,7 +141,7 @@ class TestAPIError:
         assert err.key_related is True
 
     def test_from_exception_quota(self):
-        exc = ValueError("Quota exceeded for model")
+        exc = ValueError("Daily quota exceeded for model")
         err = APIError.from_exception(exc)
         assert err.key_related is True
         assert err.user_message == QUOTA_ERROR

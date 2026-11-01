@@ -12,7 +12,7 @@ def _client(text: str):
     return SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))), generate
 
 
-async def _chosen_model(process_id, baseline, execute, *, initial_api_key=None, model="gemini-3.8-flash"):
+async def _chosen_model(process_id, baseline, execute, *, initial_api_key=None, model="gemini-3.8-flash", **kwargs):
     assert baseline and initial_api_key == "test-key"
     return await execute(model, "test-key")
 

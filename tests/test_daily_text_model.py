@@ -8,6 +8,14 @@ from app.games import crocodile_daily as daily
 from app.repos import crocodile_daily as repo
 
 
+@pytest.fixture(autouse=True)
+def key_health(monkeypatch):
+    monkeypatch.setattr(
+        "app.repos.keys.get_key_status_manager",
+        lambda: SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock()),
+    )
+
+
 @pytest.mark.asyncio
 async def test_daily_text_setting_defaults_to_automatic(monkeypatch):
     from app.games.daily_ai import get_daily_text_model
@@ -85,7 +93,7 @@ async def test_shared_text_retires_failed_key_before_next_request(monkeypatch):
     async def select_key(model_name):
         return {"api_key": "healthy" if state["failed"] else "bad-secret", "key_hash": "hash"}
 
-    async def suspend(key_hash, model_name, category, error_text):
+    async def suspend(key_hash, model_name, category, error_text, **kwargs):
         assert (key_hash, model_name, category) == ("hash", model, "permanent")
         assert "bad-secret" not in error_text
         state["failed"] = True

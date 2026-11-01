@@ -125,19 +125,18 @@ class TestGetAvailableGeminiKey:
         assert mock_deps["mgr"]._active_keys_cache["test-model"] is cached
 
     @pytest.mark.asyncio
-    async def test_returns_cached_key(self, mock_deps):
+    async def test_background_selection_does_not_reuse_sticky_chat_key(self, mock_deps):
         from app.repos.keys import get_available_gemini_key
 
         mock_deps["mgr"]._active_keys_cache = {"test-model": {"key_hash": "abc", "api_key": "AIza..."}}
-        # Mock _is_key_available to return True
         with patch(
-            "app.repos.keys._is_key_available",
+            "app.repos.keys._get_fresh_available_key",
             new_callable=AsyncMock,
-            return_value=True,
+            return_value={"key_hash": "fresh", "api_key": "fake-fresh"},
         ):
             result = await get_available_gemini_key("test-model")
             assert result is not None
-            assert result["key_hash"] == "abc"
+            assert result["key_hash"] == "fresh"
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_keys(self, mock_deps):

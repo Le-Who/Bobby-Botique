@@ -28,3 +28,10 @@ async def test_direct_research_answer_joins_all_visible_text_parts(monkeypatch, 
     assert result.answer == "The answer is forty-two."
     assert result.llm_calls == 1
     assert result.total_tokens == 12
+
+
+@pytest.fixture(autouse=True)
+def isolated_research_quota(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("app.core.agentic.reserve_gemini_key_usage", AsyncMock(return_value=True))

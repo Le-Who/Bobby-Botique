@@ -265,6 +265,17 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
         )
         expanded = (resp.text or "").strip().strip('"')
         if expanded and len(expanded) > 3:
+            try:
+                from app.repos.keys import get_key_status_manager
+
+                await asyncio.wait_for(
+                    get_key_status_manager().record_success(
+                        hashlib.sha256(api_key.encode()).hexdigest(), QUERY_EXPANSION_MODEL
+                    ),
+                    timeout=max(0.001, deadline - asyncio.get_running_loop().time()),
+                )
+            except Exception:
+                logging.debug("Memory expansion success recording unavailable")
             attempt.finish(outcome="succeeded", output_chars=len(expanded))
             return expanded
         attempt.finish(outcome="failed", level="warning", reason_code="empty_response")
@@ -355,7 +366,7 @@ async def _get_embedding(
 
             if is_invalid_key and _attempt == 0:
                 # Key is revoked/invalid — track hash and rotate to a fresh one
-                key_hash = hashlib.sha256(current_key.encode()).hexdigest()[:16]
+                key_hash = hashlib.sha256(current_key.encode()).hexdigest()
                 failed_hashes.add(key_hash)
                 try:
                     from app.handlers.ai_core import _resolve_ai_request
@@ -1446,6 +1457,14 @@ async def _search_memories_with_llm_judge_impl(
             if not await reserve_gemini_key_usage(hashlib.sha256(api_key.encode()).hexdigest(), QUERY_EXPANSION_MODEL):
                 return []
             judgements = await generate(QUERY_EXPANSION_MODEL, api_key)
+            try:
+                from app.repos.keys import get_key_status_manager
+
+                await get_key_status_manager().record_success(
+                    hashlib.sha256(api_key.encode()).hexdigest(), QUERY_EXPANSION_MODEL
+                )
+            except Exception:
+                logging.debug("Memory relevance success recording unavailable")
         relevant_indices = {int(j["index"]) for j in judgements if j.get("relevant")}
 
         result = [{**c, "llm_judged": True} for i, c in enumerate(candidates) if i in relevant_indices][:limit]

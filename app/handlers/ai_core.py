@@ -89,6 +89,16 @@ async def _get_ai_response(
     chat_id: int | None = None,
     use_openrouter: bool | None = None,
 ):
+    # Legacy role operations pass an already selected key. Admission belongs
+    # here, not in the general use case (router callers reserve separately).
+    import hashlib
+
+    from app.errors import ErrorCode, tag_error
+
+    if not await _agent_use_case.reserve_key_usage(
+        hashlib.sha256(api_key.encode()).hexdigest(), model_name, use_openrouter
+    ):
+        return tag_error(ErrorCode.KEYS_EXHAUSTED, "⏳ Модель временно недоступна. Попробуйте позже."), None
     return await _agent_use_case.get_ai_response(
         api_key,
         history,
@@ -97,6 +107,7 @@ async def _get_ai_response(
         user_id,
         chat_id,
         use_openrouter,
+        provider_max_retries=1,
     )
 
 

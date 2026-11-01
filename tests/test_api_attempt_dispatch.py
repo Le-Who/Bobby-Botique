@@ -40,15 +40,17 @@ def test_explicit_dispatch_is_counted_once_per_attempt(collector):
 async def test_consolidation_fallback_refusal_does_not_invent_an_attempt(monkeypatch, collector, override, quota_error):
     from app.providers import gemini
     from app.repos import keys, memory_consolidation
-
-    async def configured(process, models, execute, **kwargs):
-        return await execute(models[0], "fake-key") if override else None
+    from app.runtime_settings import gemini_execution
 
     reservations = [True, RuntimeError("synthetic quota unavailable") if quota_error else False]
-    # The configured execution helper has already reserved the first attempt.
-    if override:
-        reservations.pop(0)
-    monkeypatch.setattr(memory_consolidation, "run_gemini_override", configured)
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=SimpleNamespace(explicit=override, models=("gemini-test",))),
+    )
+    monkeypatch.setattr(
+        keys, "get_key_status_manager", lambda: SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
+    )
     monkeypatch.setattr(keys, "reserve_gemini_key_usage", AsyncMock(side_effect=reservations))
     generate = AsyncMock(side_effect=ValueError("synthetic provider failure"))
     monkeypatch.setattr(

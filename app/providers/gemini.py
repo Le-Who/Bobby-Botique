@@ -445,11 +445,7 @@ class GeminiProvider(BaseAIProvider):
             retry = RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY
             key = KeyDisposition.UNCHANGED if text_emitted else KeyDisposition.TRANSIENT_FAILURE
             code = classify_error_from_exception(exc)
-            if extract_retry_after_seconds(message) is not None:
-                code = ErrorCode.RATE_LIMIT
-            elif code in {ErrorCode.RATE_LIMIT, ErrorCode.GENERIC, ErrorCode.PROCESSING} and "quota" in lowered:
-                code = ErrorCode.QUOTA_EXCEEDED
-            elif code in {ErrorCode.GENERIC, ErrorCode.PROCESSING} and (
+            if code in {ErrorCode.GENERIC, ErrorCode.PROCESSING} and (
                 "api key" in lowered or "api_key_invalid" in lowered
             ):
                 code = ErrorCode.INVALID_KEY
@@ -466,7 +462,11 @@ class GeminiProvider(BaseAIProvider):
                 retry = RetryDisposition.DO_NOT_RETRY
                 key = KeyDisposition.UNCHANGED
 
-            diagnostic = f"{type(exc).__name__}: {message}"[:500]
+            retry_after = extract_retry_after_seconds(message)
+            retry_hint = f"retry_after={retry_after}s; " if retry_after is not None else ""
+            # Key-health storage retains only the first 200 characters. Parse
+            # RetryInfo before truncating potentially long Google error bodies.
+            diagnostic = f"{retry_hint}{type(exc).__name__}: {message}"[:500]
             if self.api_key:
                 diagnostic = diagnostic.replace(self.api_key, "[redacted]")
             yield StreamFailed(
@@ -667,10 +667,10 @@ class GeminiProvider(BaseAIProvider):
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
             logging.error("Gemini API Error: %s", e)
             err_lower = str(e).lower()
-            status_code = getattr(e, "code", None)
+            error_code = classify_error_from_exception(e)
             retry_after_seconds = extract_retry_after_seconds(str(e))
 
-            if retry_after_seconds is not None:
+            if error_code is ErrorCode.RATE_LIMIT:
                 await metrics_collector.record_error("gemini_rate_limit", str(e))
                 wait_text = (
                     f"⏱️ Временный лимит запросов модели. Подождите около {retry_after_seconds}с."
@@ -678,21 +678,21 @@ class GeminiProvider(BaseAIProvider):
                     else "⏱️ Временный лимит запросов модели. Подождите немного."
                 )
                 text = tag_error(ErrorCode.RATE_LIMIT, wait_text)
-            elif "quota" in err_lower:
+            elif error_code is ErrorCode.QUOTA_EXCEEDED:
                 await metrics_collector.record_error("gemini_quota", str(e))
                 text = tag_error(
                     ErrorCode.QUOTA_EXCEEDED,
                     "🚫 Достигнут лимит запросов к API (Quota Exceeded).",
                 )
             elif (
-                status_code in {503, 504}
+                error_code in {ErrorCode.OVERLOADED, ErrorCode.TIMEOUT, ErrorCode.NETWORK}
                 or "unavailable" in err_lower
                 or "overloaded" in err_lower
                 or "deadline_exceeded" in err_lower
             ):
                 await metrics_collector.record_error("gemini_overloaded", str(e))
                 raise  # Trigger retry in BaseAIProvider
-            elif "api key" in err_lower or "api_key_invalid" in err_lower:
+            elif error_code is ErrorCode.INVALID_KEY or "api key" in err_lower or "api_key_invalid" in err_lower:
                 await metrics_collector.record_error("gemini_invalid_key", str(e))
                 text = tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
             elif "invalid" in err_lower or "malformed" in err_lower:

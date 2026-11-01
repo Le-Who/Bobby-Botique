@@ -1003,6 +1003,8 @@ async def resolve_custom_word_category(word: str) -> str:
             kd, mdl, _ = await use_case.resolve_ai_request(model)
             if not kd or not mdl:
                 continue
+            if not await use_case.reserve_key_usage(kd["key_hash"], mdl):
+                continue
 
             response_text, _ = await asyncio.wait_for(
                 get_ai_response(

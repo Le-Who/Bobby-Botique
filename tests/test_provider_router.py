@@ -111,6 +111,31 @@ class FakeAgentRequestUseCase:
         return True
 
 
+@pytest.mark.asyncio
+async def test_caught_provider_error_preserves_retry_delay_after_long_details():
+    from google.genai.errors import APIError
+
+    from app.errors import extract_retry_after_seconds
+
+    model = "gemini-3.5-flash-lite"
+    status = FakeKeyStatusManager()
+    use_case = FakeAgentRequestUseCase(
+        [({"api_key": key, "key_hash": key}, model, None) for key in ("failed", "winner")],
+        [
+            APIError(429, {"error": {"message": "Quota exceeded " + "private-details " * 100 + "retryDelay: 47s"}}),
+            ("ok", 1),
+        ],
+    )
+    with (
+        patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
+        patch("app.repos.keys.get_key_status_manager", return_value=status),
+    ):
+        assert await ProviderRouter().get_response(model, [], max_key_retries=2) == ("ok", 1)
+    diagnostic = status.suspended_keys["failed"]["error_text"]
+    assert extract_retry_after_seconds(diagnostic) == 47
+    assert "private-details" not in diagnostic
+
+
 def _typed_request(model: str = "gemini-3.5-flash") -> GenerationRequest:
     return GenerationRequest(
         models=(model,),
@@ -876,10 +901,15 @@ class TestProviderRouter:
         fake_status = FakeKeyStatusManager()
         fake_use_case = FakeAgentRequestUseCase(
             resolve_sequence=[],
-            response_sequence=[TimeoutError(), TimeoutError(), TimeoutError(), TimeoutError(), ("Recovered", 7)],
+            response_sequence=[("malformed", 1)] * 4 + [("Recovered", 7)],
         )
         first_key = {"api_key": "k1", "key_hash": "hash1"}
         second_key = {"api_key": "k2", "key_hash": "hash2"}
+
+        def parse_response(text):
+            if text == "malformed":
+                raise ValueError("Invalid response structure")
+            return text
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
@@ -893,11 +923,12 @@ class TestProviderRouter:
             result = await router.execute_gemini_model_plan(
                 ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.6-flash"],
                 [{"role": "user", "parts": ["hi"]}],
-                parse_response=lambda text: text,
+                parse_response=parse_response,
                 max_keys=2,
             )
 
         assert result == "Recovered"
+        assert fake_status.suspended_keys == {}
         assert [call["args"][0] for call in fake_use_case.response_calls] == ["k1", "k1", "k1", "k1", "k2"]
         assert [call["args"][2] for call in fake_use_case.response_calls] == [
             "gemini-3.7-flash",
@@ -1019,7 +1050,7 @@ class TestProviderRouter:
                 (None, None, "all_exhausted"),
             ],
             response_sequence=[
-                ("🚫 Достигнут лимит запросов к API (Quota Exceeded).", None),
+                ("🚫 Достигнут суточный лимит запросов к API (Daily Quota Exceeded).", None),
             ],
         )
 

@@ -416,7 +416,7 @@ _STATUS_CODE_MAP: dict[int, ErrorCode] = {
     402: ErrorCode.QUOTA_EXCEEDED,
     403: ErrorCode.INVALID_KEY,
     400: ErrorCode.INVALID_REQUEST,
-    500: ErrorCode.PROCESSING,
+    500: ErrorCode.OVERLOADED,
 }
 
 # ErrorCode → user-facing message
@@ -479,13 +479,32 @@ def extract_retry_after_seconds(text: str) -> int | None:
             continue
         try:
             return max(1, int(float(match.group(1)) + 0.999))
-        except ValueError:
+        except ValueError, OverflowError:
             continue
     return None
 
 
 def has_retry_after_hint(text: str) -> bool:
     return extract_retry_after_seconds(text) is not None
+
+
+def _quota_error_code(text: str) -> ErrorCode | None:
+    """Only explicit daily evidence justifies waiting until the PT reset.
+
+    Google uses RESOURCE_EXHAUSTED/"quota exceeded" for RPM and TPM too.
+    A RetryInfo hint does not override a documented daily quota violation.
+    """
+    low = text.lower()
+    compact = re.sub(r"[\s_-]+", "", low)
+    if "perday" in compact or any(
+        marker in low for marker in ("daily limit", "daily quota", "суточн", "дневной лимит")
+    ):
+        return ErrorCode.QUOTA_EXCEEDED
+    if has_retry_after_hint(text) or any(
+        marker in low for marker in ("429", "quota", "resource_exhausted", "rate limit", "rate_limit", "limit exceeded")
+    ):
+        return ErrorCode.RATE_LIMIT
+    return None
 
 
 def classify_error_from_exception(exc: Exception) -> ErrorCode:
@@ -507,21 +526,27 @@ def classify_error_from_exception(exc: Exception) -> ErrorCode:
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     if not isinstance(status, int):
         status = getattr(getattr(exc, "response", None), "status_code", None)
+    msg = str(exc).lower()
+    if status == 429:
+        return _quota_error_code(msg) or ErrorCode.RATE_LIMIT
+    if status == 400 and any(marker in msg for marker in ("api_key_invalid", "api key not valid", "invalid api key")):
+        return ErrorCode.INVALID_KEY
     if isinstance(status, int) and status in _STATUS_CODE_MAP:
         return _STATUS_CODE_MAP[status]
 
     # String fallback for unknown exception types
-    msg = str(exc).lower()
     if "timeout" in msg or "timed out" in msg:
         return ErrorCode.TIMEOUT
     if "503" in msg or "overloaded" in msg or "unavailable" in msg:
         return ErrorCode.OVERLOADED
-    if has_retry_after_hint(msg):
-        return ErrorCode.RATE_LIMIT
-    if "429" in msg or "rate" in msg:
-        return ErrorCode.RATE_LIMIT
-    if "quota" in msg or "limit" in msg:
-        return ErrorCode.QUOTA_EXCEEDED
+    if any(
+        marker in msg
+        for marker in ("api_key_invalid", "invalid api key", "api key not valid", "unauthorized", "forbidden")
+    ):
+        return ErrorCode.INVALID_KEY
+    quota_code = _quota_error_code(msg)
+    if quota_code is not None:
+        return quota_code
 
     return ErrorCode.GENERIC
 
@@ -539,17 +564,27 @@ def user_friendly_error(raw_error: Exception | str) -> str:
     # Type-based classification (primary path)
     if isinstance(raw_error, Exception):
         code = classify_error_from_exception(raw_error)
-        return _ERROR_CODE_MESSAGES.get(code, GENERIC_ERROR)
+        message = _ERROR_CODE_MESSAGES.get(code, GENERIC_ERROR)
+        retry_after = extract_retry_after_seconds(str(raw_error))
+        if retry_after is not None and code in {
+            ErrorCode.RATE_LIMIT,
+            ErrorCode.OVERLOADED,
+            ErrorCode.TIMEOUT,
+            ErrorCode.NETWORK,
+        }:
+            # Legacy provider adapters return only friendly text. Preserve the
+            # safe numeric cooldown without copying private provider details.
+            return f"{message} Подождите около {retry_after}с."
+        return message
 
     # Text-based classification (legacy path)
     text = raw_error
     low = (text or "").lower()
     if any(x in low for x in ["503", "unavailable", "overloaded"]):
         return OVERLOADED_ERROR
-    if has_retry_after_hint(text):
-        return tag_error(ErrorCode.RATE_LIMIT, "⏱️ Временный лимит запросов. Подождите немного.")
-    if "quota" in low or "limit" in low:
-        return QUOTA_ERROR
+    quota_code = _quota_error_code(text)
+    if quota_code is not None:
+        return _ERROR_CODE_MESSAGES[quota_code]
     if "timeout" in low or "timed out" in low:
         return TIMEOUT_ERROR
     return GENERIC_ERROR
@@ -580,8 +615,9 @@ def is_retryable_error(text: str) -> bool:
     code = extract_error_code(text)
     if code is not None:
         return is_retryable_error_code(code)
-    if has_retry_after_hint(text):
-        return True
+    quota_code = _quota_error_code(text)
+    if quota_code is not None:
+        return is_retryable_error_code(quota_code)
     # Legacy fallback: text pattern matching
     retryable_patterns = [
         "⏰",
@@ -650,16 +686,16 @@ def is_key_related_error(text: str) -> bool:
     return any(p.lower() in text_lower or text.startswith(p) for p in key_patterns)
 
 
-def classify_key_error(text: str) -> str:
+def classify_key_error(text: str | Exception) -> str:
     """Classify error into penalty category: permanent/quota/rate_limit/transient."""
+    if isinstance(text, Exception):
+        return _ERROR_PROPERTIES[classify_error_from_exception(text)][2]
     if not text:
         return "transient"
     # Fast path: tagged error
     code = extract_error_code(text)
     if code is not None:
         return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[2]
-    if has_retry_after_hint(text):
-        return "rate_limit"
     # Legacy fallback: text pattern matching
     text_lower = text.lower()
     transient = [
@@ -689,12 +725,11 @@ def classify_key_error(text: str) -> str:
     ]
     if any(p.lower() in text_lower or text.startswith(p) for p in permanent):
         return "permanent"
+    quota_code = _quota_error_code(text)
+    if quota_code is not None:
+        return _ERROR_PROPERTIES[quota_code][2]
     quota = [
         "🚫",
-        "quota",
-        "quota exceeded",
-        "daily limit",
-        "limit exceeded",
         "достигнут лимит",
     ]
     if any(p.lower() in text_lower or text.startswith(p) for p in quota):

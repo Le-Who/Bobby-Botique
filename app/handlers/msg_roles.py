@@ -10,6 +10,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app.errors import is_error_message
 from app.handlers import menus
 from app.i18n import t
 from app.metrics import role_conv_metrics
@@ -111,7 +112,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
             # Use the same AI pipeline as role generation
             from app.config import settings
-            from app.handlers.ai_core import _get_ai_response, _increment_key_usage, _resolve_ai_request
+            from app.handlers.ai_core import _get_ai_response, _resolve_ai_request
 
             chat_state = await get_user_chat(user_id)
             model_for_edit = chat_state.model or settings.DEFAULT_MODEL
@@ -144,9 +145,8 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     user_id=user_id,
                     chat_id=user_id,
                 )
-                await _increment_key_usage(key_data["key_hash"], model_used)
 
-            if not response_text or not response_text.strip():
+            if not response_text or not response_text.strip() or is_error_message(response_text):
                 await progress_msg.edit_text(t("role.ai_no_result"))
                 return True
 
@@ -342,7 +342,6 @@ async def handle_custom_role_generation(
                     user_id=user_id,
                     chat_id=chat_id,
                 )
-                await agent._increment_key_usage(key_data["key_hash"], model_used)
 
             logging.info(
                 "Role generation response received",

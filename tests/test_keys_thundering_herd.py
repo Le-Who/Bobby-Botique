@@ -39,7 +39,7 @@ async def test_thundering_herd_suspension(monkeypatch):
     assert "status = 'suspended'" in sql
     assert parameters == (key_hash, model_name, datetime(2026, 10, 10, 7, tzinfo=UTC), 3, "Test")
     invalidation.assert_awaited_once_with(model_name)
-    assert manager._suspension_cache == {f"{key_hash}:{model_name}": now}
+    assert manager._suspension_cache == {f"{key_hash}:{model_name}:quota": now}
 
     now += timedelta(seconds=4)
     await manager.suspend_key(key_hash, model_name, "quota", "ignored")
@@ -57,4 +57,4 @@ async def test_thundering_herd_suspension(monkeypatch):
         "after cooldown",
     )
     assert invalidation.await_count == 2
-    assert manager._suspension_cache[f"{key_hash}:{model_name}"] == now
+    assert manager._suspension_cache[f"{key_hash}:{model_name}:quota"] == now

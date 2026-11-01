@@ -228,7 +228,7 @@ class ProviderRouter:
 
     Uses DB-backed KeyStatusManager for persistent per-model key health tracking.
     Keys are suspended with error-category-aware cooldowns and automatically
-    recover after their cooldown expires (two-tier selection in SQL).
+    recover into the eligible pool after their cooldown expires.
     """
 
     def __init__(self, rate_limit_per_minute: int = 20) -> None:
@@ -256,7 +256,7 @@ class ProviderRouter:
         Get AI response with automatic key rotation and health-aware selection.
 
         Delegates to AgentRequestUseCase for key resolution, which uses
-        two-tier SQL (active first, then cooldown-expired) to pick keys.
+        recent selection pressure and daily usage to pick eligible keys.
         On failure, classifies the error and suspends the key with appropriate
         cooldown. On success, promotes the key back to active.
         """
@@ -427,7 +427,7 @@ class ProviderRouter:
                             key_data["key_hash"],
                             model_used,
                             error_category,
-                            str(exc)[:200] or type(exc).__name__,
+                            response_text[:200],
                         )
                 except Exception as suspend_exc:
                     logging.warning("Non-critical: failed to suspend key after exception: %s", suspend_exc)
@@ -657,7 +657,7 @@ class ProviderRouter:
                 if is_error_message(response_text):
                     error_category = classify_key_error(response_text)
                     last_error = RuntimeError(response_text)
-                    if error_category in {"permanent", "quota"}:
+                    if error_category in {"permanent", "quota"} or is_retryable_error(response_text):
                         try:
                             await status_mgr.suspend_key(
                                 key_hash,
@@ -667,6 +667,7 @@ class ProviderRouter:
                             )
                         except Exception as exc:
                             logging.warning("Non-critical: failed to suspend planned key: %s", exc)
+                    if error_category in {"permanent", "quota"}:
                         switch_key = True
                         break
                     continue
@@ -1227,6 +1228,7 @@ class ProviderRouter:
                 winner_idx: int | None = None
                 late_key_losers: set[int] = set()
                 pre_text_terminals: dict[int, GenerationEvent] = {}
+                race_timeout: StreamFailed | None = None
                 done: set[int] = set()
                 next_model_failure: tuple[int, StreamFailed] | None = None
                 hedge_deadline = asyncio.get_running_loop().time() + min(
@@ -1309,6 +1311,7 @@ class ProviderRouter:
                                 tasks.append(asyncio.create_task(run_reserve(len(keys_to_race))))
                                 continue
                             timeout_failure = _first_text_timeout(model_used, race_id)
+                            race_timeout = timeout_failure
                             for index in range(len(keys_to_race)):
                                 pre_text_terminals.setdefault(index, timeout_failure)
                             break
@@ -1378,6 +1381,13 @@ class ProviderRouter:
                             model_had_transient |= category == "transient" or terminal.code is ErrorCode.TIMEOUT
                             model_all_permanent &= category == "permanent"
                             last_failure = terminal
+                        if race_timeout is not None:
+                            # Reserve preparation may time out before it joins
+                            # keys_to_race. Preserve provider health evidence,
+                            # but report the deadline that ended this race.
+                            last_failure = race_timeout
+                            model_had_transient = True
+                            model_all_permanent = False
                         continue
 
                     for index, task in enumerate(tasks):

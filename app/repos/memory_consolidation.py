@@ -389,6 +389,10 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
             result.setdefault("facts", [])
             result.setdefault("entities", [])
             result.setdefault("relations", [])
+            if any(not isinstance(result[field], list) for field in ("facts", "entities", "relations")):
+                raise ValueError("Memory graph collections must be arrays")
+            if any(not isinstance(item, dict) for field in ("entities", "relations") for item in result[field]):
+                raise ValueError("Memory graph entities and relations must be objects")
             for relation in result["relations"]:
                 raw_core = relation.get("is_core", False)
                 relation["is_core"] = bool(raw_core) if isinstance(raw_core, (bool, int)) else False
@@ -396,6 +400,10 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
             return result
         except Exception as error:
             override_attempt.fail(error, reason_code="provider_or_parse_error")
+            # A different output format can repair malformed JSON, not a quota,
+            # credential or network failure. Let the executor rotate those.
+            if not isinstance(error, ValueError):
+                raise
 
         fallback_attempt = start_workload_attempt(
             workload="memory_consolidation",
@@ -439,7 +447,11 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
 
     try:
         override = await run_gemini_override(
-            "memory.consolidate", (_CONSOLIDATION_MODEL,), execute_override, initial_api_key=api_key
+            "memory.consolidate",
+            (_CONSOLIDATION_MODEL,),
+            execute_override,
+            initial_api_key=api_key,
+            use_baseline=True,
         )
         if override is not None:
             return override
@@ -447,118 +459,7 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
         logging.warning("Configured memory consolidation failed; returning empty graph")
         return {"facts": [], "entities": [], "relations": []}
 
-    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-    try:
-        if not await reserve_gemini_key_usage(key_hash, _CONSOLIDATION_MODEL):
-            return {"facts": [], "entities": [], "relations": []}
-    except Exception as error:
-        logging.debug("Memory consolidation quota unavailable: %s", type(error).__name__)
-        return {"facts": [], "entities": [], "relations": []}
-
-    request_attempt = start_workload_attempt(
-        workload="memory_consolidation",
-        provider="gemini",
-        model=_CONSOLIDATION_MODEL,
-        api_key=api_key,
-        origin="memory_consolidation_primary",
-        input_chars=len(memories_text),
-    )
-    try:
-        client = get_cached_genai_client(api_key)
-        request_attempt.record_dispatch()
-        response = await client.aio.models.generate_content(
-            model=_CONSOLIDATION_MODEL,
-            contents=prompt,
-            config=build_generate_content_config(
-                _CONSOLIDATION_MODEL,
-                response_mime_type="application/json",
-                temperature=0.1,
-                max_output_tokens=2048,
-            ),
-        )
-        response_text = response.text or ""
-        if not response_text.strip():
-            logging.warning("Graph extraction returned empty response")
-            request_attempt.finish(outcome="failed", level="warning", reason_code="empty_response")
-            return {"facts": [], "entities": [], "relations": []}
-        result = json.loads(response_text)
-
-        # Validate structure
-        if not isinstance(result, dict):
-            logging.warning("Graph extraction returned non-dict: %s", type(result))
-            request_attempt.finish(outcome="failed", level="warning", reason_code="invalid_response")
-            return {"facts": [], "entities": [], "relations": []}
-
-        result.setdefault("facts", [])
-        result.setdefault("entities", [])
-        result.setdefault("relations", [])
-
-        # Normalise is_core: must be a bool, default False
-        for rel in result["relations"]:
-            raw_core = rel.get("is_core", False)
-            rel["is_core"] = bool(raw_core) if isinstance(raw_core, (bool, int)) else False
-
-        n_core = sum(1 for r in result["relations"] if r.get("is_core"))
-        logging.info(
-            "Graph extraction: %d facts, %d entities, %d relations (%d core)",
-            len(result["facts"]),
-            len(result["entities"]),
-            len(result["relations"]),
-            n_core,
-        )
-        request_attempt.finish(
-            outcome="succeeded",
-            fact_count=len(result["facts"]),
-            entity_count=len(result["entities"]),
-            relation_count=len(result["relations"]),
-        )
-        return result
-
-    except Exception as e:
-        request_attempt.fail(e, reason_code="provider_or_parse_error")
-        # Fallback: try legacy plain-text extraction
-        fallback_attempt = start_workload_attempt(
-            workload="memory_consolidation",
-            provider="gemini",
-            model=_CONSOLIDATION_MODEL,
-            api_key=api_key,
-            origin="memory_consolidation_fallback",
-            input_chars=len(memories_text),
-        )
-        try:
-            if not await reserve_gemini_key_usage(key_hash, _CONSOLIDATION_MODEL):
-                fallback_attempt.finish(outcome="skipped", reason_code="quota_exhausted")
-                return {"facts": [], "entities": [], "relations": []}
-            client = get_cached_genai_client(api_key)
-            fallback_prompt = render_prompt_text(
-                get_prompt_text("memory.consolidate.fallback"),
-                min_facts=MIN_PERSONA_FACTS,
-                max_facts=MAX_PERSONA_FACTS,
-                memories_text=memories_text,
-            )
-            fallback_attempt.record_dispatch()
-            response = await client.aio.models.generate_content(
-                model=_CONSOLIDATION_MODEL,
-                contents=fallback_prompt,
-                config=build_generate_content_config(
-                    _CONSOLIDATION_MODEL,
-                    temperature=0.1,
-                    max_output_tokens=1024,
-                ),
-            )
-            text = (response.text or "").strip()
-            facts = []
-            for line in text.split("\n"):
-                line = line.strip()
-                if line.startswith(("- ", "• ")):
-                    facts.append(line[2:].strip())
-            if not facts:
-                facts = [ln.strip() for ln in text.split("\n") if ln.strip()]
-            fallback_attempt.finish(outcome="succeeded", fact_count=min(len(facts), MAX_PERSONA_FACTS))
-            return {"facts": facts[:MAX_PERSONA_FACTS], "entities": [], "relations": []}
-        except Exception as fallback_err:
-            fallback_attempt.fail(fallback_err, reason_code="provider_or_parse_error")
-            return {"facts": [], "entities": [], "relations": []}
+    return {"facts": [], "entities": [], "relations": []}
 
 
 def _snapshot_matches(raw_memories: list[dict[str, Any]], current_rows: list[Any]) -> bool:
