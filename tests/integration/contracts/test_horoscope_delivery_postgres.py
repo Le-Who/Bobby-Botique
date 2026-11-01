@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -60,7 +61,8 @@ async def enqueue(value, users=(USER,), kind="today"):
     results = await value.enqueue_scheduled(
         channel="horoscope",
         user_ids=list(users),
-        effective_date=datetime.now(UTC).date(),
+        # The scheduler's idempotency day is Kyiv, including the UTC midnight gap.
+        effective_date=datetime.now(ZoneInfo("Europe/Kyiv")).date(),
         variant=kind,
     )
     return results[0]["batch"]
