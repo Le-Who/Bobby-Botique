@@ -6,6 +6,8 @@ import re
 from typing import Any, TypedDict
 
 from redis.asyncio import Redis
+from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
 from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
 from app.errors import RedisConnectionError
@@ -32,27 +34,32 @@ def _redis_tls_options(url: str) -> _RedisTLSOptions:
     }
 
 
-# Initialize Redis client with Upstash.com optimized configuration
+def create_redis_client(url: str) -> Redis:
+    """Shared transport: a lost mutation response must never cause a replay.
+
+    Cache reads/idempotent writes have explicit bounded retries below. Queue
+    commands and quota reservations own their uncertainty and recovery policy.
+    """
+    return Redis.from_url(
+        url,
+        socket_timeout=5,
+        socket_connect_timeout=5,
+        max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "64")),
+        retry=Retry(NoBackoff(), 0),
+        decode_responses=False,
+        health_check_interval=30,
+        **_redis_tls_options(url),
+    )
+
+
 redis_url = os.getenv("REDIS_URL")
 if not redis_url:
     logging.warning("REDIS_URL environment variable not set. Caching will be disabled.")
     redis_client = None
 else:
     try:
-        max_connections = int(os.getenv("REDIS_MAX_CONNECTIONS", "64"))
-        # Default is sized for local/VPS Redis plus Mini App websocket usage.
-        # Deployments with stricter limits can override via REDIS_MAX_CONNECTIONS.
-        redis_client = Redis.from_url(
-            redis_url,
-            socket_timeout=5,  # Fast timeout for quick failure detection
-            socket_connect_timeout=5,  # Fast connect timeout
-            max_connections=max_connections,
-            retry_on_timeout=True,  # Only retry on timeout, not all errors
-            decode_responses=False,  # Keep as bytes for manual handling
-            health_check_interval=0,  # Disable built-in health-check pings
-            **_redis_tls_options(redis_url),
-        )
-        logging.info("Redis client initialized successfully for Upstash.com")
+        redis_client = create_redis_client(redis_url)
+        logging.info("Redis client configured; connectivity is checked by readiness")
     except (ConnectionError, RedisError) as e:
         logging.warning("Failed to connect to Redis: %s. Caching will be disabled.", e)
         redis_client = None
@@ -63,7 +70,8 @@ async def ping_safe() -> bool:
     if not redis_client:
         return False
     try:
-        return bool(await redis_client.ping())  # type: ignore[misc]  # always async in our setup
+        async with asyncio.timeout(2):
+            return bool(await redis_client.ping())  # type: ignore[misc]  # always async in our setup
     except Exception:
         return False
 

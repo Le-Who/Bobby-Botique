@@ -249,6 +249,12 @@ Configuration is explicitly read from environment variables in `app/config.py` a
 
 ### 📦 Cache & Queue (Redis)
 
+The VPS deployment uses the isolated Redis stack documented in
+[Redis operations](ops/redis/README.md). Its connection comes from the root-owned
+`/opt/gemaibot-redis/bot.env`, not the legacy GitHub `REDIS_URL` secret. Redis data,
+credentials and local bounded backups survive bot deployments. Local/development
+runs still read `REDIS_URL` normally.
+
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
 | `REDIS_URL` | ⚙️ | `redis://localhost:6379/0` or `rediss://user:pass@host:6379` | — | Used for: distributed LLM semaphores (multi-replica safety), Telegram Mini App Reader page cache (24h TTL), Gemini image per-key counters. Some locks/counters fall back locally if absent; Redis-backed Reader/deferred features and cross-process coordination need separate validation. Use `rediss://` scheme for TLS connections. |
@@ -766,6 +772,7 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
 
 - `GET /`, `GET /login`, `POST /login`, `GET /logout` — UI interface (requires `ADMIN_SECRET` authentication and uses Cookie Sessions).
 - `GET /health` — Unauthenticated process/database status: 200 when the database connection flag is healthy, 503 when it is not, 500 on an internal check error. Redis status is reported but does not determine the overall status. This does not probe Telegram or AI providers.
+- `GET /ready` — The same bounded status probe, additionally requiring configured, reachable Redis. VPS deployment uses this endpoint so unavailable queue/quota coordination cannot pass candidate readiness.
 - `GET /metrics` — Unauthenticated, rate-limited Prometheus telemetry text. Restrict exposure at the reverse proxy when required by the deployment.
 - `GET /api/dashboard` — Aggregated batch endpoint (replaces 8 individual fetches with 1 RTT). Auth required.
 - `GET /api/overview`, `/api/keys`, `/api/errors`, `/api/cache`, `/api/queue`, `/api/database`, `/api/circuit-breakers`, `/api/memory` — Individual JSON data endpoints for dashboard charts (requires auth cookie or `X-Auth-Token` header).

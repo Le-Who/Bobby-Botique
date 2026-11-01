@@ -31,7 +31,7 @@ async def _run_job(monkeypatch, handler, *, task_type="test_outcome"):
         events.append((event, fields))
         if event == "job.retry_scheduled":
             clock[0] += fields["delay_seconds"]
-            queue._work_available.set()
+            queue._notify_work("deferred")
         if event == "job.finished":
             task = queue.tasks.get(fields.get("job_id"))
             if task and task.completed_at is not None:

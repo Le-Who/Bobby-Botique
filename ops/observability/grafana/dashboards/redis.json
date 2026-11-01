@@ -1,0 +1,181 @@
+{
+  "uid": "gemaibot-redis",
+  "title": "GemAI Redis and backups",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "tags": [
+    "redis",
+    "operations"
+  ],
+  "timezone": "browser",
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Redis health probe (including Docker exec)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "gemaibot-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "gemaibot-loki"
+          },
+          "expr": "last_over_time({service_name=\"gemaibot-redis\"} | json ping_ms=\"ping_ms\" | unwrap ping_ms | __error__=\"\" [5m])",
+          "queryType": "range"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Memory / maxmemory",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "gemaibot-loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "gemaibot-loki"
+          },
+          "expr": "last_over_time({service_name=\"gemaibot-redis\"} | json memory_ratio=\"memory_ratio\" | unwrap memory_ratio | __error__=\"\" [5m])",
+          "queryType": "range"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Age of latest verified backup",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "gemaibot-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "gemaibot-loki"
+          },
+          "expr": "last_over_time({service_name=\"gemaibot-redis\"} | json backup_age_seconds=\"backup_age_seconds\" | unwrap backup_age_seconds | __error__=\"\" [5m])",
+          "queryType": "range"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Latest backup size",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "gemaibot-loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "gemaibot-loki"
+          },
+          "expr": "last_over_time({service_name=\"gemaibot-redis\"} | json backup_bytes=\"backup_bytes\" | unwrap backup_bytes | __error__=\"\" [5m])",
+          "queryType": "range"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Redis checks and failures (metadata only)",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "gemaibot-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 12
+      },
+      "options": {
+        "showTime": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "gemaibot-loki"
+          },
+          "expr": "{service_name=\"gemaibot-redis\"} | json",
+          "maxLines": 100,
+          "queryType": "range",
+          "direction": "backward"
+        }
+      ]
+    }
+  ]
+}

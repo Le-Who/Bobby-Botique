@@ -1,0 +1,15 @@
+[Unit]
+Description=GemAI Redis verified local backup
+Requires=docker.service
+After=docker.service
+ConditionPathExists=/opt/gemaibot-redis/migration-complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/gemaibot-redis/maintenance.py backup
+TimeoutStartSec=180
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=256M
+CPUQuota=25%
+UMask=0077

@@ -9,7 +9,7 @@ inside pytest's temporary directory.
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -58,6 +58,28 @@ def _isolated_cache():
     _hints_store.clear()
     _cat_store.clear()
     _generated_words_store.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("store_name", "limit_name", "lookup", "arguments", "payload"),
+    [
+        ("_store", "_MAX_ENTRIES", get_cached_judgement, ("cat", "dog"), _COLD.model_dump_json()),
+        ("_hints_store", "_MAX_HINTS", get_cached_hints, ("cat", "animals"), '["hint"]'),
+        ("_cat_store", "_MAX_CAT", get_cached_word_category, ("cat",), "animals"),
+        ("_generated_words_store", "_MAX_GEN_WORDS", get_cached_generated_words, ("en", "animals"), '["cat"]'),
+    ],
+)
+async def test_redis_cache_hits_respect_local_capacity(monkeypatch, store_name, limit_name, lookup, arguments, payload):
+    store = getattr(judgement_cache_module, store_name)
+    store["old"] = payload
+    monkeypatch.setattr(judgement_cache_module, limit_name, 1)
+    monkeypatch.setattr(judgement_cache_module, "_redis_hash_get", AsyncMock(return_value=payload))
+
+    assert await lookup(*arguments) is not None
+
+    assert len(store) == 1
+    assert "old" not in store
 
 
 # ── _make_key ─────────────────────────────────────────────────────────────────

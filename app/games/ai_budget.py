@@ -14,6 +14,26 @@ logger = logging.getLogger(__name__)
 
 HintGenerationMode = Literal["foreground", "background"]
 
+# A member is the admission receipt: retransmitting one operation never spends
+# another slot. Redis time keeps workers with different clocks in one window.
+_CONSUME_WINDOW_LUA = """
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000
+for _, key in ipairs(KEYS) do
+    redis.call('ZREMRANGEBYSCORE', key, '-inf', now - 60)
+    redis.call('EXPIRE', key, 90)
+end
+if redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 1 end
+for _, key in ipairs(KEYS) do
+    if redis.call('ZCARD', key) >= tonumber(ARGV[2]) then return 0 end
+end
+for _, key in ipairs(KEYS) do
+    redis.call('ZADD', key, now, ARGV[1])
+    redis.call('EXPIRE', key, 90)
+end
+return 1
+"""
+
 _AI_STUDIO_FOREGROUND_RPM: dict[str, int] = {
     "gemini-3.5-flash": 4,
     "gemini-3.1-flash-lite": 14,
@@ -172,6 +192,25 @@ class _BudgetManager:
         self._foreground_active = 0
 
     async def _try_consume_window(self, scope: str, use_case: str, provider: str, model: str, limit: int) -> bool:
+        if redis_client:
+            redis_key = f"croc:ai_budget:{scope}:{provider}:{model}"
+            # Both scopes spend the same model window. Background's smaller
+            # limit also reserves capacity after foreground work has begun.
+            shared_key = f"croc:ai_budget:shared:{provider}:{model}"
+            try:
+                script = redis_client.register_script(_CONSUME_WINDOW_LUA)
+                return bool(await script(keys=[redis_key, shared_key], args=[f"{use_case}:{uuid.uuid4()}", limit]))
+            except Exception as exc:
+                logger.warning(
+                    "Crocodile AI budget unavailable provider=%s model=%s error_type=%s",
+                    provider,
+                    model,
+                    type(exc).__name__,
+                )
+                return False
+
+        # No await between checking and appending: concurrent coroutines cannot
+        # spend the same local slot. Local mode is only for an absent backend.
         now = time.time()
         window_key = (provider, model)
         local_window = self._windows[window_key]
@@ -180,20 +219,6 @@ class _BudgetManager:
             local_window.popleft()
         if len(local_window) >= limit:
             return False
-
-        if redis_client:
-            redis_key = f"croc:ai_budget:{scope}:{provider}:{model}"
-            try:
-                await redis_client.zremrangebyscore(redis_key, 0, cutoff)  # type: ignore[misc]
-                current = await redis_client.zcard(redis_key)  # type: ignore[misc]
-                if int(current) >= limit:
-                    return False
-                member = f"{use_case}:{uuid.uuid4()}"
-                await redis_client.zadd(redis_key, {member: now})  # type: ignore[misc]
-                await redis_client.expire(redis_key, 90)  # type: ignore[misc]
-            except Exception as exc:
-                logger.debug("Crocodile AI budget Redis window fallback for %s/%s: %s", provider, model, exc)
-
         local_window.append(now)
         return True
 

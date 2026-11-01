@@ -12,6 +12,15 @@ from app import database
 from app.repos import db_helpers
 from app.repos import memory as memory_repo
 from app.repos import memory_extraction as extraction
+from app.runtime_settings.lifecycle import runtime_settings_scope
+from app.runtime_settings.store import SettingsSnapshot
+
+
+@pytest.fixture(autouse=True)
+async def _pin_runtime_settings_snapshot():
+    """Keep settings-cache refreshes out of provenance transaction accounting."""
+    async with runtime_settings_scope(SettingsSnapshot(0, {})):
+        yield
 
 
 @pytest.fixture(autouse=True)

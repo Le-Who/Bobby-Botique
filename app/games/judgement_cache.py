@@ -1,20 +1,21 @@
 # /app/games/judgement_cache.py
-"""Local-file Crocodile caches for judgements, hints, and generated words.
+"""Bounded Crocodile caches for judgements, hints, and generated words.
 
 Caches LLM judgement results for (target_word, guess_word) pairs so that
 common combinations (e.g. крокодил↔аллигатор) are served in <1ms on
-subsequent games without spending LLM tokens or Redis keys.
+subsequent games without spending LLM tokens.
 
 Storage:
   - In-process: OrderedDict (LRU, max _MAX_ENTRIES entries) — sub-ms reads.
-  - Persistence: JSON file at _CACHE_PATH, written-through on every new entry
-    and loaded once at module import. File is ~a few hundred KB at full cap.
+  - Persistence: bounded Redis hashes when configured, otherwise JSON files.
+    Redis hashes retain their existing field formats, expire after 30 days
+    without renewal, and use random eviction at the matching local capacity.
+    Oversized legacy hashes shrink by at most 128 fields per access.
   - Persist writes are dispatched to asyncio.to_thread() so they never block
     the event loop.
 
 Max capacity: _MAX_ENTRIES = 50 000 entries x ~150B ~ 7 MB on disk.
-No TTL: cache is evicted by LRU capacity, not time. Old entries for obscure
-word pairs are naturally evicted when the cap is hit.
+Local/file caches use LRU capacity rather than TTL.
 """
 
 from __future__ import annotations
@@ -57,6 +58,31 @@ _MAX_HINTS = 5_000
 _MAX_CAT = 10_000
 _MAX_GEN_WORDS = 5_000
 _REDIS_HASH_PREFIX = "croc:cache:"
+_REDIS_RETENTION_SECONDS = 30 * 86400
+_REDIS_PRUNE_BATCH = 128
+_CACHE_HASH_LUA = """
+local action = ARGV[1]
+local field = ARGV[2]
+local capacity = tonumber(ARGV[4])
+local value = false
+if action == 'get' then value = redis.call('HGET', KEYS[1], field) end
+if action == 'delete' then redis.call('HDEL', KEYS[1], field) end
+local adding = 0
+if action == 'set' and redis.call('HEXISTS', KEYS[1], field) == 0 then adding = 1 end
+local excess = redis.call('HLEN', KEYS[1]) + adding - capacity
+if excess > 0 then
+    local fields = redis.call('HRANDFIELD', KEYS[1], math.min(excess, tonumber(ARGV[6])))
+    if #fields > 0 then redis.call('HDEL', KEYS[1], unpack(fields)) end
+end
+if action == 'set' then
+    -- Do not grow a legacy oversized hash while its bounded pruning catches up.
+    if redis.call('HLEN', KEYS[1]) < capacity or redis.call('HEXISTS', KEYS[1], field) == 1 then
+        redis.call('HSET', KEYS[1], field, ARGV[3])
+    end
+end
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[5]), 'NX')
+return value
+"""
 
 
 # ── In-process LRU store ──────────────────────────────────────────────────────
@@ -113,9 +139,9 @@ async def _redis_hash_get(namespace: str, key: str) -> str | None:
     if not redis_client:
         return None
     try:
-        raw = await redis_client.hget(_redis_hash_name(namespace), key)  # type: ignore[misc]
+        raw = await _redis_hash_operation(namespace, "get", key)
     except Exception as exc:
-        logger.debug("Redis %s cache read failed for key=%r: %s", namespace, key, exc)
+        logger.debug("Redis %s cache read failed error_type=%s", namespace, type(exc).__name__)
         return None
     return _decode_text(raw)
 
@@ -124,18 +150,33 @@ async def _redis_hash_set(namespace: str, key: str, value: str) -> None:
     if not redis_client:
         return
     try:
-        await redis_client.hset(_redis_hash_name(namespace), key, value)  # type: ignore[misc]
+        await _redis_hash_operation(namespace, "set", key, value)
     except Exception as exc:
-        logger.debug("Redis %s cache write failed for key=%r: %s", namespace, key, exc)
+        logger.debug("Redis %s cache write failed error_type=%s", namespace, type(exc).__name__)
 
 
 async def _redis_hash_delete(namespace: str, key: str) -> None:
     if not redis_client:
         return
     try:
-        await redis_client.hdel(_redis_hash_name(namespace), key)  # type: ignore[misc]
+        await _redis_hash_operation(namespace, "delete", key)
     except Exception as exc:
-        logger.debug("Redis %s cache delete failed for key=%r: %s", namespace, key, exc)
+        logger.debug("Redis %s cache delete failed error_type=%s", namespace, type(exc).__name__)
+
+
+async def _redis_hash_operation(namespace: str, action: str, key: str, value: str = "") -> bytes | str | None:
+    assert redis_client is not None
+    capacity = {
+        "judgement": _MAX_ENTRIES,
+        "hints": _MAX_HINTS,
+        "category": _MAX_CAT,
+        "generated_words": _MAX_GEN_WORDS,
+    }[namespace]
+    script = redis_client.register_script(_CACHE_HASH_LUA)
+    return await script(
+        keys=[_redis_hash_name(namespace)],
+        args=[action, key, value, capacity, _REDIS_RETENTION_SECONDS, _REDIS_PRUNE_BATCH],
+    )
 
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
@@ -218,6 +259,8 @@ async def get_cached_judgement(
     # Move to end (LRU: mark as recently used)
     _store[key_used] = value
     _store.move_to_end(key_used)
+    while len(_store) > _MAX_ENTRIES:
+        _store.popitem(last=False)
 
     try:
         return GuessJudgement.model_validate_json(value)
@@ -320,6 +363,8 @@ async def get_cached_hints(word: str, category: str, *, topic_id: str | None = "
         return None
     _hints_store[key_used] = value
     _hints_store.move_to_end(key_used)
+    while len(_hints_store) > _MAX_HINTS:
+        _hints_store.popitem(last=False)
     try:
         return json.loads(value)
     except Exception as exc:
@@ -397,6 +442,8 @@ async def get_cached_word_category(word: str) -> str | None:
             return None
         _cat_store[key] = value
     _cat_store.move_to_end(key)
+    while len(_cat_store) > _MAX_CAT:
+        _cat_store.popitem(last=False)
     return value
 
 
@@ -476,6 +523,8 @@ async def get_cached_generated_words(
         return None
     _generated_words_store[key_used] = value
     _generated_words_store.move_to_end(key_used)
+    while len(_generated_words_store) > _MAX_GEN_WORDS:
+        _generated_words_store.popitem(last=False)
     try:
         words = json.loads(value)
         if not isinstance(words, list):

@@ -135,6 +135,24 @@ async def test_public_health_endpoint(client):
 
 
 @pytest.mark.asyncio
+async def test_readiness_requires_configured_redis_without_changing_liveness(client, monkeypatch):
+    monkeypatch.setattr("app.cache.redis_client", None)
+    assert (await client.get("/health")).status_code == 200
+    response = await client.get("/ready")
+    assert response.status_code == 503
+    assert (await response.get_json())["services"]["redis"] == "not_configured"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("redis_ok, expected", [(False, 503), (True, 200)])
+async def test_readiness_checks_redis(client, monkeypatch, redis_ok, expected):
+    monkeypatch.setattr("app.cache.redis_client", object())
+    monkeypatch.setattr("app.cache.ping_safe", AsyncMock(return_value=redis_ok))
+    response = await client.get("/ready")
+    assert response.status_code == expected
+
+
+@pytest.mark.asyncio
 async def test_security_headers_present(client):
     """Verify that security headers are present."""
     response = await client.get("/health")

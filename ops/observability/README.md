@@ -1,6 +1,7 @@
 # Private log search
 
-This stack provides bounded Grafana search for GemAI and YT-DLP bot logs.
+This stack provides bounded Grafana search for GemAI and YT-DLP bot logs, plus
+metadata-only Redis/backup health in **GemAI Redis and backups**.
 It does not replace Portainer container actions or shell access.
 
 ```text
@@ -13,11 +14,18 @@ tg-bot and ytdlbot-bot-1 stdout (NDJSON)
 ```
 
 The collector requires both `com.gemaibot.logs=true` and one of the exact Docker
-container names `tg-bot` or `ytdlbot-bot-1`. Each container has its own Alloy
+container names `tg-bot`, `ytdlbot-bot-1` or `gemaibot-redis-monitor`. Each container has its own Alloy
 source and Loki `service_name` label, including for malformed JSON lines. This
 prevents other labeled projects on the same VPS from entering either protected
 stream. Each bot's deploy workflow applies the label to its primary container;
 short-lived migration and release containers remain outside collection.
+
+The Redis source reads only the dedicated status-log container. Its filesystem
+and backup checks run in bounded systemd jobs, independently of the bot. A stale
+monitor document produces an explicit error after three minutes. The dashboard
+shows probe wall time (including Docker exec overhead), memory and backup age;
+it contains no Redis values, key names or credentials. See
+[Redis operations](../redis/README.md) for retention and restore procedures.
 
 ## Immediate production transition
 

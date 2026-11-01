@@ -656,14 +656,15 @@ class RedisQueueStore:
     def __init__(self, redis, *, namespace: str = QUEUE_NAMESPACE):
         self.redis = redis
         self.namespace = namespace
+        self._script = redis.register_script(_QUEUE_SCRIPT)
 
     async def _call(self, action: str, **body) -> Any:
         async with asyncio.timeout(5):
-            raw = await self.redis.eval(
-                _QUEUE_SCRIPT,
-                1,
-                self.namespace,
-                json.dumps({"action": action, **body}, ensure_ascii=False, separators=(",", ":")),
+            # redis-py reloads only after NOSCRIPT, which confirms no mutation ran.
+            # Transport failures must escape without repeating uncertain claims.
+            raw = await self._script(
+                keys=[self.namespace],
+                args=[json.dumps({"action": action, **body}, ensure_ascii=False, separators=(",", ":"))],
             )
         result = json.loads(raw) if raw else None
         if isinstance(result, dict) and result.get("error"):

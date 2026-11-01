@@ -1,0 +1,77 @@
+name: gemaibot-redis
+
+services:
+  redis:
+    image: redis:8.8.4-alpine@sha256:ab669f1420eaa05360a417b24f3bd210c9272e2c79a4bb35d3e50b4bfd50dbee
+    container_name: gemaibot-redis
+    user: "999:999"
+    command: [redis-server, /usr/local/etc/redis/redis.conf]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    cpus: 0.50
+    pids_limit: 64
+    labels:
+      com.gemaibot.redis: "true"
+    networks:
+      redis:
+        aliases: [gemaibot-redis]
+    volumes:
+      - data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./secrets/users.acl:/usr/local/etc/redis/users.acl:ro
+      - ./secrets/admin_password:/run/secrets/admin_password:ro
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$(cat /run/secrets/admin_password)" redis-cli --user ops ping | grep -qx PONG']
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: local
+      options: {max-size: 5m, max-file: "3"}
+
+  monitor-log:
+    image: redis:8.8.4-alpine@sha256:ab669f1420eaa05360a417b24f3bd210c9272e2c79a4bb35d3e50b4bfd50dbee
+    container_name: gemaibot-redis-monitor
+    entrypoint: [/bin/sh, -c]
+    command:
+      - |
+        while true; do
+          now=$$(date +%s)
+          modified=$$(stat -c %Y /status/health.json 2>/dev/null || echo 0)
+          if [ "$$((now - modified))" -gt 180 ]; then
+            printf '{"schema_version":1,"timestamp":"%s","service":"gemaibot-redis","environment":"production","event":"redis.health","level":"error","outcome":"unhealthy","issues":["monitor_stale"]}\n' "$$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          else
+            cat /status/health.json; printf '\n'
+          fi
+          sleep 60
+        done
+    restart: unless-stopped
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 16m
+    cpus: 0.05
+    pids_limit: 16
+    labels:
+      com.gemaibot.redis: "true"
+      com.gemaibot.logs: "true"
+    volumes:
+      - ./status:/status:ro
+    logging:
+      driver: local
+      options: {max-size: 2m, max-file: "3"}
+
+networks:
+  redis:
+    external: true
+    name: gemaibot-redis
+
+volumes:
+  data:
+    external: true
+    name: gemaibot-redis-data

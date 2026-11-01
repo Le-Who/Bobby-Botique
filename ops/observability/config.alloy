@@ -47,6 +47,29 @@ discovery.relabel "ytdlbot" {
   }
 }
 
+// Metadata-only status from this project's isolated Redis monitor.
+discovery.relabel "redis" {
+  targets = discovery.docker.bot.targets
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    action = "keep"
+    regex = "/gemaibot-redis-monitor"
+  }
+}
+
+loki.source.docker "redis" {
+  host = "http://docker-proxy:2375"
+  targets = discovery.relabel.redis.output
+  refresh_interval = "24h"
+  labels = {
+    environment = "production",
+    level = "unknown",
+    parse_status = "invalid",
+    service_name = "gemaibot-redis",
+  }
+  forward_to = [loki.process.bot.receiver]
+}
+
 loki.source.docker "bot" {
   host             = "http://docker-proxy:2375"
   targets          = discovery.relabel.bot.output

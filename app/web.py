@@ -152,7 +152,7 @@ async def add_security_headers(response):
 
     nonce = getattr(g, "csp_nonce", "")
     is_natal_report = request.path.startswith("/reports/natal/")
-    is_health_check = request.path == "/health"
+    is_health_check = request.path in {"/health", "/ready"}
     is_webapp = request.path.startswith("/webapp")
 
     if is_natal_report:
@@ -388,8 +388,9 @@ async def dashboard():
 
 
 @quart_app.route("/health")
+@quart_app.route("/ready")
 async def health_check_endpoint():
-    """Health check endpoint for Docker monitoring."""
+    """Liveness stays compatible; readiness also requires Redis coordination."""
     try:
         db_ok = database.is_database_connected()
         overall = "healthy" if db_ok else "unhealthy"
@@ -417,6 +418,9 @@ async def health_check_endpoint():
         except Exception:
             health["services"]["redis"] = "unknown"
 
+        if request.path == "/ready" and health["services"]["redis"] != "connected":
+            overall = "unhealthy"
+            health["status"] = overall
         return jsonify(health), 200 if overall == "healthy" else 503
 
     except Exception as e:

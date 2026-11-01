@@ -150,39 +150,31 @@ async def test_automatic_generation_stops_before_any_provider_when_paused(quota_
 
 
 @pytest.mark.asyncio
-async def test_redis_budget_uses_saved_limit_and_rolls_back_denied_attempts(quota_store, monkeypatch):
-    counts = {}
-    expirations = {}
-
-    async def incr(key):
-        counts[key] = counts.get(key, 0) + 1
-        return counts[key]
-
-    async def decr(key):
-        counts[key] -= 1
-
-    async def expire(key, ttl):
-        expirations[key] = ttl
-
-    monkeypatch.setattr("app.cache.redis_client", SimpleNamespace(incr=incr, decr=decr, expire=expire))
+async def test_redis_outage_does_not_open_a_second_local_budget(quota_store, monkeypatch):
+    fail = AsyncMock(side_effect=ConnectionError("quota reply lost"))
+    monkeypatch.setattr("app.cache.redis_client", SimpleNamespace(incr=fail, register_script=lambda _: fail))
     quota_store["daily_croc_image_quota_per_hour"] = "1"
-    now = datetime(2026, 9, 9, tzinfo=UTC)
-    assert await daily._check_and_consume_image_quota(now=now)
-    assert not await daily._check_and_consume_image_quota(now=now)
-    assert counts == {"daily:img:quota:2026-09-09T00": 1}
-    assert expirations == {"daily:img:quota:2026-09-09T00": 7200}
-    quota_store["daily_croc_image_quota_per_hour"] = "2"
-    assert await daily._check_and_consume_image_quota(now=now)
-    assert counts["daily:img:quota:2026-09-09T00"] == 2
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await daily._check_and_consume_image_quota()
     assert daily._local_image_quota == {}
 
 
 @pytest.mark.asyncio
-async def test_redis_outage_keeps_local_attempts_bounded(quota_store, monkeypatch):
-    monkeypatch.setattr("app.cache.redis_client", SimpleNamespace(incr=AsyncMock(side_effect=ConnectionError)))
-    quota_store["daily_croc_image_quota_per_hour"] = "1"
-    assert await daily._check_and_consume_image_quota()
-    assert not await daily._check_and_consume_image_quota()
+async def test_automatic_image_defers_on_quota_backend_failure(quota_store, monkeypatch, caplog):
+    fail = AsyncMock(side_effect=ConnectionError("quota reply lost"))
+    monkeypatch.setattr("app.cache.redis_client", SimpleNamespace(incr=fail, register_script=lambda _: fail))
+    monkeypatch.setattr(
+        daily, "_generate_via_pollinations", AsyncMock(side_effect=AssertionError("must not call provider"))
+    )
+
+    file_id, _ = await daily._generate_daily_image_file_id(
+        object(), prompt="cat", puzzle_date=date(2026, 9, 9), difficulty="easy", image_model="qwen-image"
+    )
+
+    assert file_id is None
+    assert "unavailable" in caplog.text.lower()
+    assert "exhausted" not in caplog.text.lower()
+    assert daily._local_image_quota == {}
 
 
 @pytest.mark.asyncio

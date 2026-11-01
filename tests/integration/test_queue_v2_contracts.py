@@ -1,16 +1,37 @@
 """Execute v2 production Lua against explicitly disposable Redis, never a protocol double."""
 
+import hashlib
 import json
 import os
 import uuid
 
 import pytest
 from redis.asyncio import Redis
+from redis.commands.core import AsyncScript
 
 from app.queue_contracts import AdmissionState, JobOutcome, JobResult, JobState, QueueConflict, QueuePolicy
 from app.queue_store import JobEnvelope, RedisQueueStore
 
 pytestmark = pytest.mark.integration
+
+
+class LostReplyRedis:
+    def __init__(self, redis):
+        self.redis = redis
+        self.first = True
+
+    def register_script(self, script):
+        return AsyncScript(self, script.encode("utf-8"))
+
+    async def script_load(self, script):
+        return await self.redis.script_load(script)
+
+    async def evalsha(self, *args):
+        value = await self.redis.evalsha(*args)
+        if self.first:
+            self.first = False
+            raise ConnectionError("synthetic lost committed reply")
+        return value
 
 
 @pytest.fixture
@@ -48,6 +69,47 @@ def job(task_id="first", *, operation="operation", payload="{}", lane="deferred"
     )
 
 
+async def test_cold_script_cache_loads_once_then_uses_sha_for_all_queue_commands(v2_store, monkeypatch):
+    from app import queue_store
+
+    _, redis, prefix = v2_store
+    # A unique comment produces a real NOSCRIPT response without clearing the
+    # server-wide script cache used by concurrent tests or other namespaces.
+    script = queue_store._QUEUE_SCRIPT + f"\n-- cache-test:{uuid.uuid4().hex}\n"
+    assert await redis.script_exists(hashlib.sha1(script.encode("utf-8")).hexdigest()) == [False]
+    monkeypatch.setattr(queue_store, "_QUEUE_SCRIPT", script)
+    execute = redis.execute_command
+    commands = []
+
+    async def record(*args, **kwargs):
+        commands.append(args[0])
+        return await execute(*args, **kwargs)
+
+    monkeypatch.setattr(redis, "execute_command", record)
+    store = RedisQueueStore(redis, namespace=prefix)
+    assert (await store.admit(job(), QueuePolicy())).state is AdmissionState.ACCEPTED
+    assert (await RedisQueueStore(redis, namespace=prefix).read_job("first")).state is JobState.QUEUED
+    claim = await store.claim("deferred", "owner")
+    assert claim.snapshot.attempts_started == 1
+    assert (
+        await store.finish("first", "owner", claim.snapshot.revision, JobResult(JobOutcome.SUCCEEDED))
+    ).state is JobState.SUCCEEDED
+    assert commands.count("SCRIPT LOAD") == 1
+    assert commands.count("EVALSHA") == 5
+    assert "EVAL" not in commands
+
+
+async def test_committed_claim_with_lost_reply_never_claims_the_next_job(v2_store):
+    store, redis, prefix = v2_store
+    await store.admit(job(), QueuePolicy())
+    await store.admit(job("second", operation="second"), QueuePolicy())
+    with pytest.raises(ConnectionError, match="lost committed reply"):
+        await RedisQueueStore(LostReplyRedis(redis), namespace=prefix).claim("deferred", "uncertain-owner")
+    first, second = await store.read_job("first"), await store.read_job("second")
+    assert first.state is JobState.RUNNING and first.attempts_started == 1
+    assert second.state is JobState.QUEUED and second.attempts_started == 0
+
+
 async def test_broadcast_lane_cap_and_single_owner_do_not_consume_daily_workers(v2_store):
     store, _, _ = v2_store
     for i in range(10):
@@ -81,17 +143,7 @@ async def test_atomic_admission_identity_capacity_and_redis_server_time(v2_store
 async def test_committed_admission_with_lost_reply_reconciles_without_second_job(v2_store):
     store, redis, prefix = v2_store
 
-    class LostReply:
-        first = True
-
-        async def eval(self, *args):
-            value = await redis.eval(*args)
-            if self.first:
-                self.first = False
-                raise ConnectionError("synthetic lost committed reply")
-            return value
-
-    result = await RedisQueueStore(LostReply(), namespace=prefix).admit(job(), QueuePolicy())
+    result = await RedisQueueStore(LostReplyRedis(redis), namespace=prefix).admit(job(), QueuePolicy())
     assert result.state is AdmissionState.EXISTING
     assert (await store.stats("deferred"))["nonterminal"] == 1
     assert await redis.zcard(f"{prefix}:ready:deferred") == 1
@@ -102,17 +154,7 @@ async def test_terminal_ack_lost_reply_does_not_double_release_counters(v2_store
     await store.admit(job(), QueuePolicy())
     claim = await store.claim("deferred", "owner")
 
-    class LostReply:
-        first = True
-
-        async def eval(self, *args):
-            value = await redis.eval(*args)
-            if self.first:
-                self.first = False
-                raise ConnectionError("synthetic lost finish reply")
-            return value
-
-    result = await RedisQueueStore(LostReply(), namespace=prefix).finish(
+    result = await RedisQueueStore(LostReplyRedis(redis), namespace=prefix).finish(
         "first", "owner", claim.snapshot.revision, JobResult(JobOutcome.SUCCEEDED)
     )
     assert result.state is JobState.SUCCEEDED

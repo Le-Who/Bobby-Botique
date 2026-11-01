@@ -1,0 +1,8 @@
+/secrets/
+/status/
+/backups/
+/bot.env
+/image.txt
+/migration-complete
+/migration-source.env
+/migration-*.json

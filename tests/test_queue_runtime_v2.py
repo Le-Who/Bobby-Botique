@@ -227,3 +227,190 @@ async def test_ten_thousand_mixed_admissions_outage_and_drain_stay_bounded(monke
     finally:
         await queue.stop()
     assert not queue.workers and not queue._executions
+
+
+async def test_idle_workers_back_off_without_scheduler_wake_storm():
+    class CountingStore(MemoryQueueStore):
+        claims = 0
+        sweeps = 0
+
+        async def claim(self, lane, owner_token):
+            self.claims += 1
+            return await super().claim(lane, owner_token)
+
+        async def sweep(self):
+            self.sweeps += 1
+            await super().sweep()
+
+    store = CountingStore()
+    queue = TaskQueue(store=store)
+    await queue.start()
+    try:
+        await asyncio.sleep(3.2)
+        # Seven workers get an initial probe and bounded early discovery probes.
+        assert 7 <= store.claims <= 28
+        assert store.sweeps <= 2
+    finally:
+        await queue.stop()
+
+
+async def test_admission_while_empty_claim_returns_cannot_lose_local_wakeup():
+    empty_claim, release_claim, handled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    class PausedStore(MemoryQueueStore):
+        async def claim(self, lane, owner_token):
+            claim = await super().claim(lane, owner_token)
+            if lane == "deferred" and not empty_claim.is_set():
+                empty_claim.set()
+                await release_claim.wait()
+            return claim
+
+    queue = TaskQueue(max_workers=1, store=PausedStore())
+
+    async def handler():
+        handled.set()
+        return JobResult(JobOutcome.SUCCEEDED)
+
+    queue.register_handler("test_local_wakeup", handler, lane="deferred", effectful=False)
+    await queue.start()
+    try:
+        await asyncio.wait_for(empty_claim.wait(), 1)
+        await queue.enqueue_job(0, "test_local_wakeup", {}, idempotency_key="race", lane="deferred")
+        release_claim.set()
+        await asyncio.wait_for(handled.wait(), 0.2)
+    finally:
+        release_claim.set()
+        await queue.stop()
+
+
+async def test_local_admission_wakes_its_lane_without_probing_other_lanes():
+    class CountingStore(MemoryQueueStore):
+        def __init__(self):
+            super().__init__()
+            self.probes = dict.fromkeys(("deferred", "maintenance", "daily", "broadcast"), 0)
+
+        async def claim(self, lane, owner_token):
+            self.probes[lane] += 1
+            return await super().claim(lane, owner_token)
+
+    store, handled = CountingStore(), asyncio.Event()
+    queue = TaskQueue(store=store)
+
+    async def handler():
+        handled.set()
+        return JobResult(JobOutcome.SUCCEEDED)
+
+    queue.register_handler("test_lane_wakeup", handler, lane="maintenance", effectful=False)
+    await queue.start()
+    try:
+        await asyncio.sleep(1.6)
+        before = dict(store.probes)
+        await queue.enqueue_job(0, "test_lane_wakeup", {}, idempotency_key="maintenance", lane="maintenance")
+        await asyncio.wait_for(handled.wait(), 0.2)
+        assert store.probes["maintenance"] > before["maintenance"]
+        for lane in ("deferred", "daily", "broadcast"):
+            assert store.probes[lane] == before[lane]
+    finally:
+        await queue.stop()
+
+
+async def test_local_burst_wakes_every_worker_in_the_lane():
+    queue = TaskQueue(store=MemoryQueueStore())
+    started, all_started, release = [], asyncio.Event(), asyncio.Event()
+
+    async def handler(index):
+        started.append(index)
+        if len(started) == 3:
+            all_started.set()
+        await release.wait()
+        return JobResult(JobOutcome.SUCCEEDED)
+
+    queue.register_handler("test_parallel_wakeup", handler, lane="deferred", effectful=False)
+    await queue.start()
+    try:
+        await asyncio.sleep(1.6)
+        for index in range(3):
+            await queue.enqueue_job(
+                0, "test_parallel_wakeup", {"index": index}, idempotency_key=str(index), lane="deferred"
+            )
+        await asyncio.wait_for(all_started.wait(), 0.2)
+        assert sorted(started) == [0, 1, 2]
+    finally:
+        release.set()
+        await queue.stop()
+
+
+async def test_max_idle_backoff_discovers_remote_delayed_and_expired_owner_work_within_five_seconds():
+    from app.queue_contracts import QueuePolicy
+    from app.queue_store import JobEnvelope
+
+    clock, idle_backoff = [1000.0], asyncio.Event()
+
+    class ObservedStore(MemoryQueueStore):
+        probes = 0
+
+        async def claim(self, lane, owner_token):
+            result = await super().claim(lane, owner_token)
+            if lane == "deferred":
+                self.probes += 1
+                if self.probes == 5:
+                    idle_backoff.set()
+            return result
+
+    store = ObservedStore(clock=lambda: clock[0])
+    queue = TaskQueue(max_workers=1, store=store, clock=lambda: clock[0])
+    effects, finished = [], asyncio.Event()
+
+    async def handler(source):
+        effects.append(source)
+        if len(effects) == 3:
+            finished.set()
+        return JobResult(JobOutcome.SUCCEEDED)
+
+    for lane in ("deferred", "daily", "maintenance", "broadcast"):
+        queue.register_handler("test_discovery_" + lane, handler, lane=lane, effectful=lane == "broadcast")
+    for task_id, lane, delay, effectful in (
+        ("delayed", "daily", 61, False),
+        ("recoverable", "maintenance", 0, False),
+        ("uncertain", "broadcast", 0, True),
+    ):
+        await store.admit(
+            JobEnvelope(
+                task_id,
+                "test_discovery_" + lane,
+                lane,
+                0,
+                '{"data":{"source":"' + task_id + '"},"context":{}}',
+                task_id,
+                delay_seconds=delay,
+                effectful=effectful,
+            ),
+            QueuePolicy(),
+        )
+        if not delay:
+            await store.claim(lane, "dead-owner")
+    await queue.start()
+    try:
+        # The fifth empty probe follows 0.5, 1, 2, and 4 second waits. No local
+        # admission notification is sent to this queue for the new remote job.
+        await asyncio.wait_for(idle_backoff.wait(), 9)
+        await store.admit(
+            JobEnvelope(
+                "remote",
+                "test_discovery_deferred",
+                "deferred",
+                0,
+                '{"data":{"source":"remote"},"context":{}}',
+                "remote",
+                effectful=False,
+            ),
+            QueuePolicy(),
+        )
+        clock[0] = 1061.0
+        await asyncio.wait_for(finished.wait(), 5.2)
+        assert sorted(effects) == ["delayed", "recoverable", "remote"]
+        assert store.jobs["uncertain"]["state"] == "unknown_delivery"
+        assert store.jobs["recoverable"]["attempts_started"] == 2
+        assert store.jobs["uncertain"]["attempts_started"] == 1
+    finally:
+        await queue.stop()

@@ -414,8 +414,12 @@ through Alloy/Loki and checks cardinality, filtering, privacy and query limits
 through the authenticated Grafana datasource proxy. These disposable-stack
 checks do not establish ingestion on a deployed VPS.
 
-The VPS workflow defines `tg-api`, `tg-bot` and `tg-media-cleanup`; database/Redis
-are supplied separately. The root Compose file is a legacy single-bot local
+The VPS workflow defines `tg-api`, `tg-bot` and `tg-media-cleanup`; PostgreSQL is
+supplied separately. Redis has an independent lifecycle in the owned
+`gemaibot-redis` stack, with a private network, persistent volume, local bounded
+backups and minute monitoring. Bot deploys preserve that Redis container and
+verify its migration identity before using the VPS-owned connection file; see
+[Redis operations](../ops/redis/README.md). The root Compose file is a legacy single-bot local
 alternative, not this production stack. The separate log-search project and its
 privacy/retention boundaries are in [the runbook](../ops/observability/README.md).
 See [README operations](../README.md#run)

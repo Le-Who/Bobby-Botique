@@ -59,6 +59,10 @@ line-length = 120
 # Supplied review bundles are external evidence, not application source.
 extend-exclude = ["revisions"]
 
+[tool.ruff.per-file-target-version]
+# Host operations run with Ubuntu's Python, separately from the bot image.
+"ops/redis/*.py" = "py312"
+
 [tool.ruff.format]
 # Keep the existing Python-only scope when upgrading Ruff's Markdown support.
 exclude = ["*.md"]

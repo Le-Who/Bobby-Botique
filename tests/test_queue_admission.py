@@ -4,6 +4,7 @@ import pytest
 
 from app.queue_contracts import AdmissionState, QueuePolicy
 from app.queue_store import JobEnvelope, MemoryQueueStore, RedisQueueStore
+from tests.test_redis_queue import QueueRedis
 
 
 def envelope(task_id="job-a", *, key="operation-a", payload="{}", user_id=1):
@@ -35,8 +36,9 @@ async def test_observing_lane_does_not_discard_stricter_admission_policy():
 
 @pytest.mark.parametrize("reconcile_available", [False, True])
 async def test_redis_commit_then_disconnect_never_creates_local_duplicate(reconcile_available):
-    class LostReplyRedis:
+    class LostReplyRedis(QueueRedis):
         def __init__(self):
+            super().__init__()
             self.calls = []
 
         async def eval(self, script, count, *args):

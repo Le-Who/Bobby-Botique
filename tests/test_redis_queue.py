@@ -10,11 +10,14 @@ Validates:
 """
 
 import asyncio
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from redis.commands.core import AsyncScript
+from redis.exceptions import NoScriptError
 
 from app import queue as queue_module
 from app.queue import (
@@ -39,6 +42,25 @@ class QueueRedis:
         self.lists = {}
         self.values = {}
         self.sets = {}
+        self.scripts = {}
+        self.script_loads = []
+        self.evalsha_calls = []
+
+    def register_script(self, script):
+        return AsyncScript(self, script.encode("utf-8"))
+
+    async def script_load(self, script):
+        encoded = script.encode("utf-8") if isinstance(script, str) else script
+        sha = hashlib.sha1(encoded).hexdigest()
+        self.scripts[sha] = encoded.decode("utf-8")
+        self.script_loads.append(sha)
+        return sha
+
+    async def evalsha(self, sha, number, *arguments):
+        self.evalsha_calls.append((sha, number, arguments))
+        if sha not in self.scripts:
+            raise NoScriptError("Synthetic empty script cache")
+        return await self.eval(self.scripts[sha], number, *arguments)
 
     async def lpush(self, key, raw):
         self.lists.setdefault(key, []).insert(0, raw)
@@ -429,3 +451,45 @@ async def test_coalesced_operation_lookup_is_readonly_and_returns_original_id():
     assert snapshot.task_id == "first" and snapshot.state is JobState.SUCCEEDED
     assert redis.calls == before
     assert len(redis.model.jobs) == 1
+
+
+async def test_queue_script_is_loaded_once_and_reloaded_after_cache_loss():
+    from app.queue_contracts import AdmissionState, QueuePolicy
+    from app.queue_store import JobEnvelope, RedisQueueStore
+
+    redis = WireRedis()
+    store = RedisQueueStore(redis)
+    admitted = await store.admit(
+        JobEnvelope("first", "cleanup_metrics", "maintenance", 0, "{}", "first", effectful=False), QueuePolicy()
+    )
+    assert admitted.state is AdmissionState.ACCEPTED
+    assert (await store.read_job("first")).task_id == "first"
+    assert len(redis.script_loads) == 1
+    # Only the first request may upload the script; subsequent commands carry its SHA.
+    assert len(redis.evalsha_calls) == 3
+    assert all(len(sha) == 40 and number == 1 for sha, number, _ in redis.evalsha_calls)
+    assert all(len(arguments[1].encode("utf-8")) < 2048 for _, _, arguments in redis.evalsha_calls)
+
+    redis.scripts.clear()
+    claim = await store.claim("maintenance", "owner")
+    assert claim.snapshot.task_id == "first"
+    assert claim.snapshot.attempts_started == 1
+    assert len(redis.script_loads) == 2
+    assert redis.calls.count("claim") == 1
+
+
+async def test_lost_claim_reply_does_not_claim_a_second_job():
+    from app.queue_contracts import JobState, QueuePolicy
+    from app.queue_store import JobEnvelope, RedisQueueStore
+
+    redis = WireRedis()
+    store = RedisQueueStore(redis)
+    for task_id in ("first", "second"):
+        await store.admit(JobEnvelope(task_id, "document_processing", "deferred", 0, "{}", task_id), QueuePolicy())
+    redis.fail_after.add("claim")
+    with pytest.raises(ConnectionError, match="reply loss"):
+        await store.claim("deferred", "uncertain-owner")
+    first, second = await store.read_job("first"), await store.read_job("second")
+    assert first.state is JobState.RUNNING and first.attempts_started == 1
+    assert second.state is JobState.QUEUED and second.attempts_started == 0
+    assert redis.calls.count("claim") == 1

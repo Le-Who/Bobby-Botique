@@ -1,0 +1,13 @@
+[Unit]
+Description=GemAI Redis health and backup monitoring
+After=docker.service
+ConditionPathExists=/opt/gemaibot-redis/migration-complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/gemaibot-redis/maintenance.py monitor
+TimeoutStartSec=45
+Nice=10
+MemoryMax=128M
+CPUQuota=10%
+UMask=0077

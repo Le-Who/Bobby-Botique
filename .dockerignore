@@ -48,6 +48,12 @@ test_keys_out.txt
 # ── Secrets ───────────────────────────────────────────────────
 .env
 .env.*
+ops/redis/secrets/
+ops/redis/status/
+ops/redis/backups/
+ops/redis/bot.env
+ops/redis/migration-*.json
+ops/redis/migration-source.env
 
 # ── Docs (not needed in image) ────────────────────────────────
 README.md

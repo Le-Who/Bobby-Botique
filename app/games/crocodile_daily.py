@@ -6,6 +6,7 @@ import contextlib
 import io
 import logging
 import time
+import uuid
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -34,10 +35,26 @@ DAILY_IMAGE_QUOTA_PER_HOUR: int = 6
 DAILY_IMAGE_QUOTA_SETTING_KEY = "daily_croc_image_quota_per_hour"
 DAILY_IMAGE_QUOTA_MAX = 1000
 _local_image_quota: dict[str, int] = {}  # {"YYYY-MM-DDTHH": count}
+_CONSUME_IMAGE_QUOTA_LUA = """
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+redis.call('EXPIRE', KEYS[1], 7200, 'NX')
+if current > 0 and redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then return 1 end
+if current >= tonumber(ARGV[2]) then return 0 end
+if current == 0 then redis.call('DEL', KEYS[2]) end
+redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], 7200, 'NX')
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('EXPIRE', KEYS[2], 7200, 'NX')
+return 1
+"""
 
 
 class DailyImageBusyError(RuntimeError):
     """A forced regeneration cannot reuse another operation's old asset."""
+
+
+class DailyImageQuotaUnavailable(RuntimeError):
+    """The shared automatic-image budget could not confirm admission."""
 
 
 def _prep_lock_key(puzzle_date: date, difficulty: str) -> str:
@@ -336,8 +353,9 @@ async def get_daily_image_quota_limit() -> int:
 async def _check_and_consume_image_quota(*, now: datetime | None = None, limit: int | None = None) -> bool:
     """Return True and increment the counter if quota is available; False if exhausted.
 
-    Uses Redis INCR with expiry when available, falls back to an
-    in-process dict so a single worker can still respect the limit without Redis.
+    Shared admission, expiry and bounded replay receipts are atomic. A configured
+    Redis failure raises DailyImageQuotaUnavailable; only absent Redis uses the
+    process-local counter. An uncertain attempt stays consumed.
     """
     if limit is None:
         limit = await get_daily_image_quota_limit()
@@ -348,23 +366,10 @@ async def _check_and_consume_image_quota(*, now: datetime | None = None, limit: 
         from app.cache import redis_client
 
         if redis_client:
-            current = await redis_client.incr(key)
-            if current == 1:
-                # First use of this bucket — set TTL to 2 h so keys self-clean
-                await redis_client.expire(key, 7200)
-            if current > limit:
-                # Over-counted: decrement back so other processes see the right value
-                await redis_client.decr(key)
-                logger.info(
-                    "daily image quota exhausted for hour %s (redis count=%d, limit=%d)",
-                    key,
-                    current - 1,
-                    limit,
-                )
-                return False
-            return True
+            script = redis_client.register_script(_CONSUME_IMAGE_QUOTA_LUA)
+            return bool(await script(keys=[key, key + ":operations"], args=[uuid.uuid4().hex, limit]))
     except Exception as exc:
-        logger.debug("daily image quota: Redis unavailable, using local counter: %s", exc)
+        raise DailyImageQuotaUnavailable("Daily image quota unavailable") from exc
 
     # In-process fallback
     count = _local_image_quota.get(key, 0)
@@ -505,7 +510,16 @@ async def _generate_daily_image_file_id(
     # admin operations bypass this budget, not provider limits or prep locks.
     if not bypass_image_quota:
         limit = await get_daily_image_quota_limit()
-        if not await _check_and_consume_image_quota(now=now, limit=limit):
+        try:
+            admitted = await _check_and_consume_image_quota(now=now, limit=limit)
+        except DailyImageQuotaUnavailable:
+            logger.warning(
+                "daily puzzle image deferred for %s/%s: automatic quota service unavailable",
+                puzzle_date,
+                difficulty,
+            )
+            return None, image_model
+        if not admitted:
             logger.info(
                 "daily puzzle image deferred for %s/%s: automatic hourly quota (%d/h) exhausted",
                 puzzle_date,

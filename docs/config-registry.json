@@ -609,7 +609,7 @@
     "readers": [
       "app/cache.py"
     ],
-    "deploy": true,
+    "deploy": false,
     "compose": false
   },
   "RESEARCH_MODEL": {

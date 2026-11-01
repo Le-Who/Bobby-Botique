@@ -45,6 +45,8 @@ from app.queue_scheduling import next_attempt_at
 from app.queue_store import LANE_POLICIES, LANE_WORKERS, JobClaim, JobEnvelope, MemoryQueueStore, RedisQueueStore
 
 OWNER_HEARTBEAT_SECONDS = 2.0
+MIN_IDLE_POLL_SECONDS = 0.5
+MAX_IDLE_POLL_SECONDS = 5.0
 _guard_context: contextvars.ContextVar[JobExecutionGuard | None] = contextvars.ContextVar(
     "queue_execution_guard", default=None
 )
@@ -134,7 +136,7 @@ class TaskQueue:
         self._claims: dict[str, JobClaim] = {}
         self._scheduler_task: asyncio.Task | None = None
         self._metrics_scheduler_task: asyncio.Task | None = None
-        self._work_available = asyncio.Event()
+        self._work_available = {lane: asyncio.Event() for lane in LANE_WORKERS}
         self.running = False
         self._registrations: dict[str, HandlerRegistration] = {}
         self._task_handlers: dict[str, Any] = {}
@@ -294,7 +296,7 @@ class TaskQueue:
             priority=priority,
         )
         if admission.state in {AdmissionState.ACCEPTED, AdmissionState.EXISTING}:
-            self._work_available.set()
+            self._notify_work(lane)
             try:
                 snapshot = await store.read_job(admission.task_id)
                 if snapshot:
@@ -417,7 +419,7 @@ class TaskQueue:
             actor=actor,
             operation_id=operation_id,
         )
-        self._work_available.set()
+        self._notify_work(lane)
         return result
 
     async def request_cancel(
@@ -464,7 +466,7 @@ class TaskQueue:
                 operation_id=operation_id,
                 privacy_epoch=epoch,
             )
-        self._work_available.set()
+        self._notify_work(private["lane"])
         return result
 
     async def start(self):
@@ -481,7 +483,20 @@ class TaskQueue:
         self._metrics_scheduler_task = start_background_task(
             self._metrics_scheduler_task, self._schedule_metrics_cleanup, "queue metrics scheduler"
         )
-        self._work_available.set()
+
+    def _notify_work(self, lane: str):
+        # Rotate instead of clearing: every waiter retains the generation it saw
+        # before claiming, including workers still awaiting an empty Redis reply.
+        event = self._work_available[lane]
+        self._work_available[lane] = asyncio.Event()
+        event.set()
+
+    async def _wait_for_work(self, event: asyncio.Event, delay: float) -> float:
+        try:
+            await asyncio.wait_for(event.wait(), delay)
+        except TimeoutError:
+            return min(delay * 2, MAX_IDLE_POLL_SECONDS)
+        return MIN_IDLE_POLL_SECONDS
 
     async def stop(self):
         self.running = False
@@ -496,10 +511,11 @@ class TaskQueue:
         while True:
             try:
                 await self._choose_store().sweep()
-                self._work_available.set()
             except Exception as error:
                 logging.warning("Queue scheduler unavailable (%s)", type(error).__name__)
-            await asyncio.sleep(0.5)
+            # Claims also sweep. This independent timer covers expiry/retention
+            # while all workers are occupied, without waking idle worker pools.
+            await asyncio.sleep(MAX_IDLE_POLL_SECONDS)
 
     async def _schedule_metrics_cleanup(self):
         while True:
@@ -627,18 +643,17 @@ class TaskQueue:
             )
 
     async def _worker(self, lane: str):
+        idle_delay = MIN_IDLE_POLL_SECONDS
         while True:
+            work_available = self._work_available[lane]
             claim = None
             execution = heartbeat = None
             try:
                 claim = await self._choose_store().claim(lane, uuid.uuid4().hex)
                 if claim is None:
-                    self._work_available.clear()
-                    try:
-                        await asyncio.wait_for(self._work_available.wait(), 0.5)
-                    except TimeoutError:
-                        pass
+                    idle_delay = await self._wait_for_work(work_available, idle_delay)
                     continue
+                idle_delay = MIN_IDLE_POLL_SECONDS
                 self._claims[claim.snapshot.task_id] = claim
                 self._cache(claim.snapshot, claim.user_id)
                 emit(
@@ -701,7 +716,7 @@ class TaskQueue:
                 raise
             except Exception as error:
                 logging.warning("Queue worker unavailable (%s)", type(error).__name__)
-                await asyncio.sleep(0.5)
+                idle_delay = await self._wait_for_work(work_available, idle_delay)
             finally:
                 if heartbeat is not None:
                     heartbeat.cancel()
