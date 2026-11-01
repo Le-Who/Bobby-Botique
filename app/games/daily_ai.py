@@ -119,7 +119,12 @@ async def generate_daily_text(
     from app.errors import classify_key_error, extract_retry_after_seconds
     from app.observability.workload_events import observe_workload_call
     from app.providers.gemini import get_cached_genai_client
-    from app.repos.keys import get_available_gemini_key, get_key_status_manager, reserve_gemini_key_usage
+    from app.repos.keys import (
+        get_available_gemini_key,
+        get_key_status_manager,
+        reserve_available_gemini_key,
+        reserve_gemini_key_usage,
+    )
 
     model = (model or settings.DEFAULT_MODEL).strip()
     if not is_gemini_chat_model_id(model):
@@ -130,7 +135,9 @@ async def generate_daily_text(
         if not key_data:
             raise RuntimeError("No Gemini key available for daily text generation")
         if not await reserve_gemini_key_usage(key_data["key_hash"], model):
-            raise RuntimeError("Gemini quota exhausted for daily text generation")
+            key_data = await reserve_available_gemini_key(model, excluded_hashes={key_data["key_hash"]})
+            if not key_data:
+                raise RuntimeError("Gemini quota exhausted for daily text generation")
         client = get_cached_genai_client(key_data["api_key"])
         try:
             response = await observe_workload_call(

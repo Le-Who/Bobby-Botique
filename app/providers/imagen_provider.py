@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import logging
 import time
 from collections.abc import Awaitable
@@ -155,6 +156,29 @@ async def _get_key_usage(api_key: str) -> int:
             _KEY_DAY_BUCKET[bk] = {"count": 0, "reset_ts": float(_next_midnight_ts())}
             return 0
         return entry["count"]
+
+
+async def _reserve_generation_usage(api_key: str, model: str) -> bool:
+    from app.repos.keys import gemini_minute_quota, get_model_minute_limit
+
+    minute = None
+    scope = f"{hashlib.sha256(api_key.encode()).hexdigest()}:{model}"
+    try:
+        async with asyncio.timeout(30):
+            limit = await get_model_minute_limit(model)
+            if limit is not None:
+                minute, _ = await gemini_minute_quota.reserve(scope, limit, pending_for=30)
+                if minute is None:
+                    return False
+            admitted = await _reserve_key_usage(api_key)
+            if minute is not None:
+                if admitted:
+                    await gemini_minute_quota.commit(scope, minute)
+                else:
+                    await gemini_minute_quota.release_unsent(scope, minute)
+            return admitted
+    except Exception as error:
+        raise QuotaReservationUnavailable from error
 
 
 async def _reserve_key_usage(api_key: str) -> bool:
@@ -368,7 +392,7 @@ class ImagenProvider:
             selected_key: str | None = None
             try:
                 for key in keys:
-                    if await _reserve_key_usage(key):
+                    if await _reserve_generation_usage(key, model):
                         selected_key = key
                         break
             except QuotaReservationUnavailable:

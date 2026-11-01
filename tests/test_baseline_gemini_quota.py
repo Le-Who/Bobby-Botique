@@ -11,6 +11,32 @@ import pytest
 CALLERS = ("expand", "relevance", "extract", "taxonomy", "consolidate", "brief", "brief_lease")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller", CALLERS)
+async def test_baseline_local_limit_rotates_before_sending(baseline_call, caller, monkeypatch):
+    case = baseline_call
+    case.reservation_results.extend([False, True])
+    replacement = {"api_key": "replacement", "key_hash": hashlib.sha256(b"replacement").hexdigest()}
+    selected = [replacement]
+    if caller in {"brief", "brief_lease"}:
+        selected.insert(0, {"api_key": "test-key", "key_hash": hashlib.sha256(b"test-key").hexdigest()})
+    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", AsyncMock(side_effect=selected))
+    case.responses.append(
+        {
+            "expand": "Python project",
+            "relevance": '[{"index":0,"relevant":true}]',
+            "extract": '{"entities":[],"relations":[]}',
+            "taxonomy": "update",
+            "consolidate": '{"facts":[],"entities":[],"relations":[]}',
+            "brief": '{"coding":"News summary"}',
+            "brief_lease": '{"coding":"News summary"}',
+        }[caller]
+    )
+    await case.invoke(caller)
+    assert [event[0] for event in case.events] == ["reserve", "reserve", "sdk"]
+    case.health.suspend_key.assert_not_awaited()
+
+
 @pytest.fixture
 def baseline_call(monkeypatch):
     from app.handlers import scheduled_briefs as briefs
@@ -96,6 +122,47 @@ def baseline_call(monkeypatch):
         health=health,
         modules=(memory, extraction, consolidation, briefs),
     )
+
+
+@pytest.mark.asyncio
+async def test_consolidation_fallback_rotates_after_first_request_fills_minute(baseline_call, monkeypatch):
+    case = baseline_call
+    replacement = {"api_key": "replacement", "key_hash": hashlib.sha256(b"replacement").hexdigest()}
+    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", AsyncMock(return_value=replacement))
+    case.reservation_results.extend([True, False, True])
+    case.responses.extend(["invalid JSON", "- Alice codes"])
+    result = await case.invoke("consolidate")
+    assert result["facts"] == ["Alice codes"]
+    assert [event[0] for event in case.events] == ["reserve", "sdk", "reserve", "reserve", "sdk"]
+    assert case.events[3][1] == replacement["key_hash"]
+    case.health.suspend_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_failure", [False, True])
+async def test_consolidation_replacement_failure_never_penalizes_initial_key(
+    baseline_call, monkeypatch, provider_failure
+):
+    from google.genai.errors import APIError
+
+    case = baseline_call
+    replacement = {"api_key": "replacement", "key_hash": hashlib.sha256(b"replacement").hexdigest()}
+    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", AsyncMock(return_value=replacement))
+    case.reservation_results.extend([True, False, True])
+    error = (
+        APIError(429, {"error": {"message": "Quota exceeded retryDelay:47s"}})
+        if provider_failure
+        else ValueError("synthetic validation")
+    )
+    case.responses.extend(["invalid JSON", error])
+    assert await case.invoke("consolidate") == {"facts": [], "entities": [], "relations": []}
+    assert [event[0] for event in case.events] == ["reserve", "sdk", "reserve", "reserve", "sdk"]
+    if provider_failure:
+        case.health.suspend_key.assert_awaited_once_with(
+            replacement["key_hash"], case.events[3][2], "rate_limit", "APIError", retry_after_seconds=47
+        )
+    else:
+        case.health.suspend_key.assert_not_awaited()
 
 
 @pytest.mark.asyncio

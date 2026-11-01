@@ -95,10 +95,18 @@ async def _get_ai_response(
 
     from app.errors import ErrorCode, tag_error
 
-    if not await _agent_use_case.reserve_key_usage(
-        hashlib.sha256(api_key.encode()).hexdigest(), model_name, use_openrouter
-    ):
-        return tag_error(ErrorCode.KEYS_EXHAUSTED, "⏳ Модель временно недоступна. Попробуйте позже."), None
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    if not await _agent_use_case.reserve_key_usage(key_hash, model_name, use_openrouter):
+        from app.config import get_use_openrouter, is_gemini_chat_model_id
+        from app.repos.keys import reserve_available_gemini_key
+
+        replacement = None
+        routed_openrouter = get_use_openrouter() if use_openrouter is None else use_openrouter
+        if is_gemini_chat_model_id(model_name) and not routed_openrouter:
+            replacement = await reserve_available_gemini_key(model_name, excluded_hashes={key_hash})
+        if replacement is None:
+            return tag_error(ErrorCode.KEYS_EXHAUSTED, "⏳ Модель временно недоступна. Попробуйте позже."), None
+        api_key = replacement["api_key"]
     return await _agent_use_case.get_ai_response(
         api_key,
         history,

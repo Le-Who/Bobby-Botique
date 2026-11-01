@@ -68,6 +68,8 @@ async def test_judge_reserves_before_dispatch_without_post_success_increment(mon
     use_case.increment_key_usage.assert_not_awaited()
     if outcome in {"refused", "quota_store_error", "invalid"}:
         health.suspend_key.assert_not_awaited()
+    if outcome in {"refused", "quota_store_error"}:
+        assert judge._primary_circuit_open_until == 0.0
     if outcome == "rate_limit":
         from app.errors import extract_retry_after_seconds
 

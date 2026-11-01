@@ -355,7 +355,7 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
     from google.genai import types
 
     from app.providers.gemini import get_cached_genai_client
-    from app.repos.keys import reserve_gemini_key_usage
+    from app.repos.keys import reserve_available_gemini_key, reserve_gemini_key_usage
 
     prompt = render_prompt_text(
         get_prompt_text("memory.consolidate"),
@@ -405,6 +405,19 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
             if not isinstance(error, ValueError):
                 raise
 
+        try:
+            selected_hash = hashlib.sha256(selected_key.encode()).hexdigest()
+            reserved = await reserve_gemini_key_usage(selected_hash, model)
+            if not reserved:
+                replacement = await reserve_available_gemini_key(model, excluded_hashes={selected_hash})
+                if replacement is None:
+                    raise ValueError("Memory consolidation fallback quota exhausted")
+                selected_key = replacement["api_key"]
+        except Exception:
+            # Local admission cannot penalize credentials through the override
+            # executor's provider-error path, including replacement lookup errors.
+            raise ValueError("Memory consolidation fallback quota unavailable") from None
+
         fallback_attempt = start_workload_attempt(
             workload="memory_consolidation",
             provider="gemini",
@@ -414,14 +427,6 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
             input_chars=len(memories_text),
         )
         try:
-            try:
-                reserved = await reserve_gemini_key_usage(hashlib.sha256(selected_key.encode()).hexdigest(), model)
-            except Exception:
-                # The override helper treats domain errors separately from key
-                # health; quota infrastructure must never penalize the provider.
-                raise ValueError("Memory consolidation fallback quota unavailable") from None
-            if not reserved:
-                raise ValueError("Memory consolidation fallback RPD exhausted")
             fallback_prompt = render_prompt_text(
                 get_prompt_text("memory.consolidate.fallback"),
                 min_facts=MIN_PERSONA_FACTS,
@@ -443,6 +448,32 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
             return {"facts": facts[:MAX_PERSONA_FACTS], "entities": [], "relations": []}
         except Exception as error:
             fallback_attempt.fail(error, reason_code="provider_or_parse_error")
+            replacement_hash = hashlib.sha256(selected_key.encode()).hexdigest()
+            if replacement_hash != selected_hash:
+                # The outer executor owns the initial key. A replacement's SDK
+                # failure must update only that replacement's health.
+                if not isinstance(error, ValueError):
+                    from app.errors import (
+                        classify_error_from_exception,
+                        classify_key_error,
+                        extract_retry_after_seconds,
+                        is_retryable_error_code,
+                    )
+                    from app.repos.keys import get_key_status_manager
+
+                    category = classify_key_error(error)
+                    if category != "transient" or is_retryable_error_code(classify_error_from_exception(error)):
+                        try:
+                            await get_key_status_manager().suspend_key(
+                                replacement_hash,
+                                model,
+                                category,
+                                type(error).__name__,
+                                retry_after_seconds=extract_retry_after_seconds(str(error)),
+                            )
+                        except Exception:
+                            logging.debug("Memory consolidation replacement health unavailable")
+                raise ValueError("Memory consolidation replacement failed") from None
             raise
 
     try:

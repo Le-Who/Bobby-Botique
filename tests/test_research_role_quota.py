@@ -33,6 +33,7 @@ async def test_research_reserves_each_attempt_before_dispatch(monkeypatch, outco
         return SimpleNamespace(usage_metadata=SimpleNamespace(total_token_count=10))
 
     monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
+    monkeypatch.setattr("app.repos.keys.reserve_available_gemini_key", AsyncMock(return_value=None))
     monkeypatch.setattr(agentic, "reserve_gemini_key_usage", reserve, raising=False)
     client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
     monkeypatch.setattr(agentic, "get_cached_genai_client", lambda _: client)
@@ -69,6 +70,7 @@ async def test_legacy_role_boundary_reserves_once_and_disables_nested_retries(mo
         return "checked", 1
 
     monkeypatch.setattr(ai_core, "_agent_use_case", SimpleNamespace(reserve_key_usage=reserve, get_ai_response=respond))
+    monkeypatch.setattr("app.repos.keys.reserve_available_gemini_key", AsyncMock(return_value=None))
     result, _ = await ai_core._get_ai_response("fake-key", [], "gemini-test")
     assert events == (["reserve", "sdk"] if allowed else ["reserve"])
     if allowed:

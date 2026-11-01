@@ -7,23 +7,27 @@ import uuid
 import pytest
 from redis.asyncio import Redis
 
+from app.providers.gemini_quota import GeminiMinuteQuota
 from app.providers.tts_quota import TTSMinuteQuota
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-async def test_two_workers_share_atomic_minute_capacity_and_owned_refunds(monkeypatch):
+@pytest.mark.parametrize("quota_type", [TTSMinuteQuota, GeminiMinuteQuota])
+async def test_two_workers_share_atomic_minute_capacity_and_owned_refunds(monkeypatch, quota_type):
     url = os.environ.get("TEST_REDIS_URL")
     if not url:
         pytest.skip("TEST_REDIS_URL must identify an explicitly isolated Redis")
     client = Redis.from_url(url, decode_responses=True)
     scope = "tts-contract:" + uuid.uuid4().hex
-    first, second = TTSMinuteQuota(), TTSMinuteQuota()
+    first, second = quota_type(), quota_type()
     monkeypatch.setattr("app.cache.redis_client", client)
     try:
         results = await asyncio.gather(*((first if i % 2 else second).reserve(scope, 3) for i in range(20)))
         admitted = [token for token, _ in results if token is not None]
         assert len(admitted) == 3
+        if isinstance(first, GeminiMinuteQuota):
+            assert not await second.available(scope, 3)
         assert all(0 < delay <= 60 for token, delay in results if token is None)
         assert 0 < await client.ttl(first._key(scope)) <= 61
         await first.commit(scope, admitted[1])

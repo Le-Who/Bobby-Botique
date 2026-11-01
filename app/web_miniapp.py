@@ -3300,6 +3300,24 @@ async def _handle_live_session(
         if transport_mode == _LIVE_VERTEX_CONNECTION_MODE
         else (settings.GEMINI_API_KEYS[0] if settings.GEMINI_API_KEYS else None)
     )
+    if transport_mode != _LIVE_VERTEX_CONNECTION_MODE:
+        from app.providers.gemini import get_admitted_live_api_client
+        from app.repos.keys import get_model_minute_limit
+
+        try:
+            async with asyncio.timeout(5):
+                if await get_model_minute_limit(model_name) is not None:
+                    client, live_api_key = await get_admitted_live_api_client(model_name)
+                    if client is None:
+                        await _send_live_fatal(
+                            websocket, reason="local_quota", message="Минутный лимит занят. Попробуйте позже."
+                        )
+                        return
+        except Exception:
+            await _send_live_fatal(
+                websocket, reason="local_quota", message="Не удалось проверить доступность модели. Попробуйте позже."
+            )
+            return
     live_attempt = start_workload_attempt(
         workload="live_session",
         provider=transport_backend,

@@ -344,7 +344,7 @@ async def _generate_brief_summary(
 
         from app.observability.workload_events import observe_workload_call
         from app.providers.gemini import get_cached_genai_client
-        from app.repos.keys import get_available_gemini_key, reserve_gemini_key_usage
+        from app.repos.keys import get_available_gemini_key, reserve_available_gemini_key, reserve_gemini_key_usage
 
         articles_block = ""
         if articles:
@@ -410,7 +410,12 @@ async def _generate_brief_summary(
 
         if user_id is None:
             if not await reserve_gemini_key_usage(key_data["key_hash"], "gemini-3.1-flash-lite"):
-                return {}
+                key_data = await reserve_available_gemini_key(
+                    "gemini-3.1-flash-lite", excluded_hashes={key_data["key_hash"]}
+                )
+                if key_data is None:
+                    return {}
+                client = get_cached_genai_client(key_data["api_key"])
             response = await observe_workload_call(
                 client.aio.models.generate_content(
                     model="gemini-3.1-flash-lite",
@@ -440,7 +445,12 @@ async def _generate_brief_summary(
                     logger.info("Skipped stale/revoked brief summary for user %s", user_id)
                     return {}
                 if not await reserve_gemini_key_usage(key_data["key_hash"], "gemini-3.1-flash-lite"):
-                    return {}
+                    key_data = await reserve_available_gemini_key(
+                        "gemini-3.1-flash-lite", excluded_hashes={key_data["key_hash"]}
+                    )
+                    if key_data is None:
+                        return {}
+                    client = get_cached_genai_client(key_data["api_key"])
                 response = await observe_workload_call(
                     client.aio.models.generate_content(
                         model="gemini-3.1-flash-lite",

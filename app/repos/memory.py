@@ -230,14 +230,22 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
         logging.debug("Memory query expansion override unavailable: %s", type(error).__name__)
         return query
 
-    from app.repos.keys import reserve_gemini_key_usage
+    from app.repos.keys import reserve_available_gemini_key, reserve_gemini_key_usage
 
     try:
         if not await asyncio.wait_for(
             reserve_gemini_key_usage(hashlib.sha256(api_key.encode()).hexdigest(), QUERY_EXPANSION_MODEL),
             timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
         ):
-            return query
+            replacement = await asyncio.wait_for(
+                reserve_available_gemini_key(
+                    QUERY_EXPANSION_MODEL, excluded_hashes={hashlib.sha256(api_key.encode()).hexdigest()}
+                ),
+                timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+            )
+            if replacement is None:
+                return query
+            api_key = replacement["api_key"]
     except Exception as error:
         logging.debug("Memory query expansion quota unavailable: %s", type(error).__name__)
         return query
@@ -327,6 +335,22 @@ async def _get_embedding(
                 pass
 
         if not current_key:
+            return None
+
+        from app.repos.keys import reserve_available_gemini_key, reserve_gemini_minute_usage
+
+        try:
+            current_hash = hashlib.sha256(current_key.encode()).hexdigest()
+            if not await reserve_gemini_minute_usage(current_hash, EMBEDDING_MODEL):
+                failed_hashes.add(current_hash)
+                replacement = await reserve_available_gemini_key(
+                    EMBEDDING_MODEL, excluded_hashes=failed_hashes, minute_only=True
+                )
+                if replacement is None:
+                    return None
+                current_key = replacement["api_key"]
+        except Exception as error:
+            logging.debug("Embedding quota unavailable: %s", type(error).__name__)
             return None
         request_attempt = start_workload_attempt(
             workload="embedding",
@@ -1452,10 +1476,15 @@ async def _search_memories_with_llm_judge_impl(
             "memory.relevance", (QUERY_EXPANSION_MODEL,), generate, initial_api_key=api_key
         )
         if judgements is None:
-            from app.repos.keys import reserve_gemini_key_usage
+            from app.repos.keys import reserve_available_gemini_key, reserve_gemini_key_usage
 
             if not await reserve_gemini_key_usage(hashlib.sha256(api_key.encode()).hexdigest(), QUERY_EXPANSION_MODEL):
-                return []
+                replacement = await reserve_available_gemini_key(
+                    QUERY_EXPANSION_MODEL, excluded_hashes={hashlib.sha256(api_key.encode()).hexdigest()}
+                )
+                if replacement is None:
+                    return []
+                api_key = replacement["api_key"]
             judgements = await generate(QUERY_EXPANSION_MODEL, api_key)
             try:
                 from app.repos.keys import get_key_status_manager

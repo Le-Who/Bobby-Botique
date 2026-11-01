@@ -184,6 +184,18 @@ async def validate_gemini_chat_model_capability(
     return GeminiModelValidationStatus.UNAVAILABLE
 
 
+async def get_admitted_live_api_client(model_name: str) -> tuple[genai.Client | None, str | None]:
+    """Admit one Live connection on an available project without shared RPD."""
+    import hashlib
+
+    from app.repos.keys import reserve_gemini_minute_usage
+
+    for key in settings.GEMINI_API_KEYS:
+        if await reserve_gemini_minute_usage(hashlib.sha256(key.encode()).hexdigest(), model_name):
+            return get_cached_genai_client(key), key
+    return None, None
+
+
 def get_live_api_client() -> genai.Client | None:
     """Return a Gemini Developer API client for the Live API.
 

@@ -26,6 +26,7 @@ _PREFIXES = (
     "process:",
     "prompt:",
     "model_limit:",
+    "model_rpm:",
     "catalog:",
     "catalog_baseline:",
     "legacy_model:",

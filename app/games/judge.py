@@ -341,10 +341,11 @@ async def _race_generate(
     from app.agent_use_cases import AgentRequestUseCase
     from app.errors import classify_key_error, extract_retry_after_seconds, user_friendly_error
     from app.providers.gemini import get_cached_genai_client
-    from app.repos.keys import get_key_status_manager
+    from app.repos.keys import get_key_status_manager, reserve_available_gemini_key
 
     use_case = AgentRequestUseCase()
     status_mgr = get_key_status_manager()
+    provider_failed = False
     prompt = render_prompt_text(
         get_prompt_text("crocodile.judge.classic"),
         W=target,
@@ -365,6 +366,7 @@ async def _race_generate(
         api_key: str, key_hash: str, model: str, timeout: float = _LLM_TIMEOUT_S
     ) -> GuessJudgement | None:
         """Single key attempt. On any error: classify → suspend key → return None."""
+        nonlocal provider_failed
         lease = await acquire_foreground_slot("judge", "ai_studio", model)
         if lease is None:
             return None
@@ -372,7 +374,10 @@ async def _race_generate(
             async with lease:
                 try:
                     if not await use_case.reserve_key_usage(key_hash, model, use_openrouter=False):
-                        return None
+                        replacement = await reserve_available_gemini_key(model, excluded_hashes={key_hash})
+                        if not replacement:
+                            return None
+                        api_key, key_hash = replacement["api_key"], replacement["key_hash"]
                 except Exception:
                     logger.debug("Judge quota admission unavailable")
                     return None
@@ -405,6 +410,7 @@ async def _race_generate(
             logger.debug("Judge returned invalid structured output (model=%s)", model)
             return None
         except Exception as exc:
+            provider_failed = True
             err_text = str(exc)
             logger.warning("Judge race call failed (model=%s): %s", model, exc)
             # Classify error and suspend key — prevents the same exhausted key
@@ -467,6 +473,7 @@ async def _race_generate(
             503 storms than the Gemini API endpoint.  Returns None on any error so
             the race degrades gracefully when Vertex AI is not configured or fails.
             """
+            nonlocal provider_failed
             vertex_client = get_vertex_client()
             if vertex_client is None:
                 return None
@@ -496,6 +503,7 @@ async def _race_generate(
                     submit_task(record_result("vertex_express", _PRIMARY_MODEL, "success"))
                     return GuessJudgement.model_validate(json.loads(resp_text))
             except Exception as exc:
+                provider_failed = True
                 logger.debug("Judge: Vertex AI attempt failed: %s", exc)
                 submit_task(record_result("vertex_express", _PRIMARY_MODEL, "transient", reason=str(exc)[:500]))
                 return None
@@ -547,8 +555,9 @@ async def _race_generate(
             return result
 
         # All Gemini keys + Vertex AI failed — open circuit
-        _primary_circuit_open_until = time.monotonic() + _PRIMARY_CIRCUIT_COOLDOWN_S
-        logger.warning(
+        if provider_failed:
+            _primary_circuit_open_until = time.monotonic() + _PRIMARY_CIRCUIT_COOLDOWN_S
+        logger.debug(
             "Judge: primary model %r all-fail — circuit opened for %.0fs, routing to %r",
             resolved_model,
             _PRIMARY_CIRCUIT_COOLDOWN_S,

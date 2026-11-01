@@ -10,6 +10,31 @@ from app.providers import imagen_provider as images
 
 
 @pytest.mark.asyncio
+async def test_image_minute_refusal_rotates_without_daily_charge(monkeypatch):
+    import hashlib
+
+    from app.providers.gemini_quota import GeminiMinuteQuota
+    from app.repos import keys
+
+    monkeypatch.setattr("app.cache.redis_client", None)
+    limiter = GeminiMinuteQuota()
+    monkeypatch.setattr(keys, "gemini_minute_quota", limiter)
+    monkeypatch.setattr(keys, "get_model_minute_limit", AsyncMock(return_value=1))
+    monkeypatch.setattr(images, "_KEY_DAY_BUCKET", {})
+    monkeypatch.setattr(images.settings, "GEMINI_API_KEYS", ["full", "free"])
+    monkeypatch.setattr(images.settings, "IMAGE_GEN_MAX_RETRIES", 1)
+    await keys.reserve_gemini_minute_usage(hashlib.sha256(b"full").hexdigest(), images.GEMINI_IMAGE_MODEL)
+    used = []
+    client = SimpleNamespace(
+        aio=SimpleNamespace(interactions=SimpleNamespace(create=AsyncMock(side_effect=TimeoutError())))
+    )
+    monkeypatch.setattr(images, "get_cached_genai_client", lambda key: used.append(key) or client)
+    await images.ImagenProvider().generate("cat")
+    assert used == ["free"]
+    assert await images._get_key_usage("full") == 0
+
+
+@pytest.mark.asyncio
 async def test_local_key_reservation_admits_only_remaining_slots(monkeypatch):
     monkeypatch.setattr("app.cache.redis_client", None)
     monkeypatch.setattr(images, "_KEY_DAY_BUCKET", {})

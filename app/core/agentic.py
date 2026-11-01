@@ -628,20 +628,26 @@ class AgenticSearch:
         if remaining <= 0:
             budget.reason = "deadline"
             raise BudgetExhausted("deadline")
-        attempt = start_workload_attempt(
-            workload="research_llm",
-            provider="gemini",
-            model=self.model_name,
-            api_key=self.api_key,
-            origin="agentic_synthesis" if synthesis else "agentic_loop",
-        )
+        attempt = None
         dispatched = False
         try:
             async with asyncio.timeout(remaining) as timeout:
-                if not await reserve_gemini_key_usage(
-                    hashlib.sha256(self.api_key.encode()).hexdigest(), self.model_name
-                ):
-                    raise RuntimeError("Research provider quota admission refused")
+                key_hash = hashlib.sha256(self.api_key.encode()).hexdigest()
+                if not await reserve_gemini_key_usage(key_hash, self.model_name):
+                    from app.repos.keys import reserve_available_gemini_key
+
+                    replacement = await reserve_available_gemini_key(self.model_name, excluded_hashes={key_hash})
+                    if replacement is None:
+                        raise RuntimeError("Research provider quota admission refused")
+                    self.api_key = replacement["api_key"]
+                    self.client = get_cached_genai_client(self.api_key)
+                attempt = start_workload_attempt(
+                    workload="research_llm",
+                    provider="gemini",
+                    model=self.model_name,
+                    api_key=self.api_key,
+                    origin="agentic_synthesis" if synthesis else "agentic_loop",
+                )
                 attempt.record_dispatch()
                 dispatched = True
                 response = await self.client.aio.models.generate_content(
@@ -652,7 +658,8 @@ class AgenticSearch:
         except asyncio.CancelledError:
             if dispatched:
                 budget.record_usage(None)
-            attempt.finish(outcome="cancelled", reason_code="cancelled", usage_uncertain=dispatched)
+            if attempt is not None:
+                attempt.finish(outcome="cancelled", reason_code="cancelled", usage_uncertain=dispatched)
             raise
         except Exception as error:
             if dispatched:
@@ -660,11 +667,13 @@ class AgenticSearch:
             # An SDK TimeoutError alone does not exhaust the request budget.
             if isinstance(error, TimeoutError) and timeout.expired():
                 budget.reason = "deadline"
-            attempt.fail(error, reason_code="deadline" if isinstance(error, TimeoutError) else "provider_error")
+            if attempt is not None:
+                attempt.fail(error, reason_code="deadline" if isinstance(error, TimeoutError) else "provider_error")
             raise
         raw = getattr(getattr(response, "usage_metadata", None), "total_token_count", None)
         usage = raw if type(raw) is int and raw >= 0 else None
         budget.record_usage(usage)
+        assert attempt is not None
         attempt.finish(outcome="succeeded", token_count=usage, usage_uncertain=usage is None)
         return response
 

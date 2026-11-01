@@ -1,4 +1,4 @@
-"""Shared durable catalogs and local Gemini requests-per-day controls.
+"""Shared durable catalogs and local Gemini request limits.
 
 The environment remains the catalog baseline. Runtime entries are explicit
 admin overrides, including an empty catalog or a ``None`` local RPD limit.
@@ -69,6 +69,16 @@ def validate_limit(model: str, limit: Any) -> int | None:
         raise ValueError("Этот счётчик поддерживает только Gemini RPD на ключ")
     if any(marker in model.lower() for marker in ("embedding", "-image", "-live")):
         raise ValueError("Этот исполнитель не использует общий Gemini RPD: image, embeddings и Live имеют другой путь")
+    if limit is not None and (type(limit) is not int or not 1 <= limit <= 1_000_000):
+        raise ValueError("Лимит — целое число 1…1000000 либо null (без локального ограничения)")
+    return limit
+
+
+def validate_rpm_limit(model: str, limit: Any) -> int | None:
+    """Minute admission includes specialized Gemini generation paths."""
+    validate_model_id(model)
+    if not model.startswith("gemini-"):
+        raise ValueError("Этот счётчик поддерживает только Gemini RPM на ключ/проект")
     if limit is not None and (type(limit) is not int or not 1 <= limit <= 1_000_000):
         raise ValueError("Лимит — целое число 1…1000000 либо null (без локального ограничения)")
     return limit
@@ -151,9 +161,10 @@ async def list_limits(
     snapshot = snapshot if snapshot is not None else await get_snapshot()
     models = set(settings.DAILY_LIMITS) | set(snapshot.values.get("catalog:gemini", settings.AVAILABLE_MODELS))
     models.update(key.removeprefix("model_limit:") for key in snapshot.values if key.startswith("model_limit:"))
+    models.update(key.removeprefix("model_rpm:") for key in snapshot.values if key.startswith("model_rpm:"))
     # Routes can use a model absent from both the public selector and DAILY_LIMITS.
     # Resolve against the same snapshot that supplies the displayed quota value.
-    excluded_capabilities = {"embedding", "image_output", "live", "provider_order", "music"}
+    excluded_capabilities = {"provider_order", "music"}
     if processes is not None:
         # GET already resolved dynamic baselines for its process inventory.
         # Reuse those rows so both sections agree without repeating DB reads.
@@ -172,22 +183,33 @@ async def list_limits(
                 baseline = await baseline_models(process_id) if raw is None or raw.get("inherit_user_model") else ()
                 models.update(resolve_policy_value(process_id, raw, baseline, revision=snapshot.revision).models)
     supported = []
+    rpd_supported = []
     for model in models:
+        try:
+            validate_rpm_limit(model, None)
+        except ValueError:
+            continue
+        supported.append(model)
         try:
             validate_limit(model, None)
         except ValueError:
             continue
-        supported.append(model)
-    limits = await get_model_daily_limits(supported, snapshot=snapshot)
+        rpd_supported.append(model)
+    limits = await get_model_daily_limits(rpd_supported, snapshot=snapshot)
     return [
         {
             "model": model,
-            "limit": limits[model],
+            "limit": limits.get(model),
+            "rpd_supported": model in rpd_supported,
             "source": "admin" if f"model_limit:{model}" in snapshot.values else "database/env",
-            "scope": "gemini_key_rpd",
+            "rpm_limit": snapshot.values.get(f"model_rpm:{model}"),
+            "rpm_source": "admin" if f"model_rpm:{model}" in snapshot.values else "default",
+            "scope": "gemini_key_rpd" if model in rpd_supported else "gemini_key_rpm",
             "note": (
                 "Общий счётчик Gemini на модель и ключ для text/ASR/TTS. "
                 "Изображения используют IMAGE_GEN_RPD_PER_KEY; embeddings и Live не резервируют этот счётчик."
+                if model in rpd_supported
+                else "Только локальный RPM на модель и ключ/проект. Суточный учёт этого пути настраивается отдельно."
             ),
         }
         for model in sorted(supported)
@@ -271,3 +293,16 @@ async def reset_limit(model: str, *, expected_revision: int, actor: str) -> Sett
     saved = await reset_value(f"model_limit:{model}", expected_revision=expected_revision, actor=actor)
     await invalidate_model_limit_cache(model)
     return saved
+
+
+async def save_rpm_limit(model: str, limit: Any, *, expected_revision: int, actor: str) -> SettingsSnapshot:
+    """Set the independent local minute limit with the shared revision fence."""
+    return await set_value(
+        f"model_rpm:{model}", validate_rpm_limit(model, limit), expected_revision=expected_revision, actor=actor
+    )
+
+
+async def reset_rpm_limit(model: str, *, expected_revision: int, actor: str) -> SettingsSnapshot:
+    """Restore the disabled default without changing daily usage or limits."""
+    validate_rpm_limit(model, None)
+    return await reset_value(f"model_rpm:{model}", expected_revision=expected_revision, actor=actor)

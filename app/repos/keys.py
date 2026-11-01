@@ -7,6 +7,7 @@ and daily/monthly limit enforcement.
 Extracted from app/database.py to isolate key-management domain logic.
 """
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -29,6 +30,7 @@ from app.database import (
     set_user_context,
 )
 from app.observability.redaction import sanitize_event
+from app.providers.gemini_quota import gemini_minute_quota
 from app.utils.time import get_pacific_tz
 
 _SAFE_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -312,12 +314,15 @@ async def _get_fresh_available_key(
     conn=None,
 ) -> dict[str, Any] | None:
     daily_limit = await get_model_daily_limit(model_name)
-    return await _gemini_km.get_fresh_available_key(
-        model_name,
-        daily_limit,
-        excluded_hashes=excluded_hashes,
-        conn=conn,
-    )
+    minute_limit = await get_model_minute_limit(model_name)
+    excluded = set(excluded_hashes or ())
+    while True:
+        key = await _gemini_km.get_fresh_available_key(model_name, daily_limit, excluded_hashes=excluded, conn=conn)
+        if not key or key["key_hash"] in excluded:
+            return None
+        if minute_limit is None or await gemini_minute_quota.available(f"{key['key_hash']}:{model_name}", minute_limit):
+            return key
+        excluded.add(key["key_hash"])
 
 
 async def invalidate_key_cache(model_name: str | None = None) -> None:
@@ -339,7 +344,7 @@ async def get_available_gemini_key(
         cached_key = None
         if model_name in db_manager._active_keys_cache:
             cached_key = db_manager._active_keys_cache[model_name]
-        if cached_key:
+        if cached_key and await get_model_minute_limit(model_name) is None:
             return cached_key
 
     if not db_manager.is_connected:
@@ -368,8 +373,7 @@ async def get_current_active_gemini_key(model_name: str) -> dict[str, Any] | Non
     Delegates to DailyKeyManager.get_fresh_available_key to avoid duplicating
     the key selection logic.
     """
-    daily_limit = await get_model_daily_limit(model_name)
-    return await _gemini_km.get_fresh_available_key(model_name, daily_limit)
+    return await _get_fresh_available_key(model_name)
 
 
 async def count_gemini_keys() -> int:
@@ -412,13 +416,66 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
             )
 
 
+async def get_model_minute_limit(model_name: str, *, snapshot=None) -> int | None:
+    from app.runtime_settings import models as runtime_models
+
+    snapshot = snapshot if snapshot is not None else await runtime_models.get_snapshot()
+    value = snapshot.values.get(f"model_rpm:{model_name}")
+    if value is not None and (type(value) is not int or not 1 <= value <= 1_000_000):
+        raise ValueError("Invalid Gemini RPM limit")
+    return value
+
+
+async def reserve_available_gemini_key(
+    model_name: str, *, excluded_hashes: set[str] | None = None, max_attempts: int = 10, minute_only: bool = False
+) -> dict[str, Any] | None:
+    """Choose and admit a replacement without treating local limits as failures.
+
+    Selection skips full minute windows. Recheck atomically for concurrent
+    selection races; each refused key is visited at most once.
+    """
+    excluded = set(excluded_hashes or ())
+    for _ in range(max_attempts):
+        key = await get_available_gemini_key(model_name, excluded_hashes=set(excluded))
+        if not key or key["key_hash"] in excluded:
+            return None
+        excluded.add(key["key_hash"])
+        reserve = reserve_gemini_minute_usage if minute_only else reserve_gemini_key_usage
+        if await reserve(key["key_hash"], model_name):
+            return key
+    return None
+
+
+async def reserve_gemini_minute_usage(key_hash: str, model_name: str) -> bool:
+    """Admission for embeddings, images and Live; their daily contracts differ."""
+    limit = await get_model_minute_limit(model_name)
+    if limit is None:
+        return True
+    reservation, _ = await gemini_minute_quota.reserve(f"{key_hash}:{model_name}", limit)
+    return reservation is not None
+
+
 async def reserve_gemini_key_usage(key_hash: str, model_name: str) -> bool:
-    """Reserve one Gemini RPD slot atomically before sending a request."""
+    """Reserve RPM before RPD. Local refusal never changes provider health."""
+    minute_limit = await get_model_minute_limit(model_name)
     daily_limit = await get_model_daily_limit(model_name)
-    current_usage = await _gemini_km.reserve_usage(key_hash, model_name, daily_limit)
+    scope = f"{key_hash}:{model_name}"
+    minute = None
+    if minute_limit is not None:
+        minute, _ = await gemini_minute_quota.reserve(scope, minute_limit, pending_for=30)
+        if minute is None:
+            return False
+    # Keep the minute reservation live through bounded daily storage work.
+    # Uncertain writes retain their slot; never open a second fallback budget.
+    async with asyncio.timeout(30):
+        current_usage = await _gemini_km.reserve_usage(key_hash, model_name, daily_limit)
     if current_usage is None:
+        if minute is not None:
+            await gemini_minute_quota.release_unsent(scope, minute)
         await invalidate_key_cache(model_name)
         return False
+    if minute is not None:
+        await gemini_minute_quota.commit(scope, minute)
 
     if daily_limit:
         threshold = max(1, int(daily_limit * settings.LIMIT_THRESHOLD_PERCENT))

@@ -41,12 +41,12 @@
 
   function matchesSubmittedSection(snapshot, payload) {
     if (snapshot.degraded || !Number.isSafeInteger(snapshot.revision) || snapshot.revision <= payload.expected_revision || payload.reset) return false;
-    const lists = {prompt:"prompts",process:"processes",catalog:"catalogs",limit:"limits",audio:"audio"};
+    const lists = {prompt:"prompts",process:"processes",catalog:"catalogs",limit:"limits",rpm:"limits",audio:"audio"};
     const items = payload.section === "command" ? snapshot.commands?.commands : snapshot[lists[payload.section]];
     const item = items?.find(item => String(item.id ?? item.provider ?? item.model) === payload.id);
     if (!item) return false;
     const value = payload.section === "prompt" ? item.text : payload.section === "catalog" ? item.models
-      : payload.section === "limit" ? item.limit : payload.section === "command" ? item.aliases
+      : payload.section === "rpm" ? item.rpm_limit : payload.section === "limit" ? item.limit : payload.section === "command" ? item.aliases
       : payload.section === "process" ? {models:item.models,strategy:item.strategy,inherit_user_model:item.inherit_user_model} : item.value;
     const canonical = value => Array.isArray(value) ? value.map(canonical)
       : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key,canonical(value[key])])) : value;
@@ -272,7 +272,7 @@
         return;
       }
     }
-    if (!reset && section === "limit" && payload.value !== null &&
+    if (!reset && (section === "limit" || section === "rpm") && payload.value !== null &&
       (!Number.isSafeInteger(payload.value) || payload.value <= 0)) {
       message(status, "Введите целое число больше нуля или оставьте поле пустым.", true);
       return;
@@ -780,26 +780,35 @@
     const node = card("limit", id);
     node.append(header({ title: id, source: item.source }, id));
     if (item.note) node.append(element("p", "control-note", item.note));
-    const field = element("label", "field", "Запросов на ключ в сутки");
-    const input = element("input");
-    input.type = "number";
-    input.min = "1";
-    input.step = "1";
-    input.placeholder = "Без локального предела";
-    const limitDraft = drafts.getDraft("limit", id);
-    input.value = limitDraft ? (limitDraft.value ?? "") : (item.limit ?? "");
-    field.append(input);
-    node.append(field);
-    const status = feedback(node);
-    input.addEventListener("input", () => {
-      const value = input.value === "" ? null : Number(input.value);
-      markDraft("limit", id, value, node, status);
-    });
-    const actions = actionRow(node);
-    actions.append(mutationButton("Сбросить", "quiet", () => save("limit", id, status, true)));
-    actions.append(mutationButton("Сохранить лимит", "save", () => save("limit", id, status, false)));
-    staleDraftControl(node, "limit", id, item.limit ?? null, status);
-    if (drafts.getDraft("limit", id)) message(status, `Черновик · исходная ревизия ${drafts.getDraft("limit", id).expected_revision}`);
+    for (const [section, label, value, source] of [
+      ["limit", "RPD · запросов на ключ в сутки", item.limit, item.source],
+      ["rpm", "RPM · запросов на ключ за 60 секунд", item.rpm_limit, item.rpm_source],
+    ]) {
+      if (section === "limit" && item.rpd_supported === false) continue;
+      const group = element("div", "limit-setting");
+      const field = element("label", "field", label);
+      const input = element("input");
+      input.type = "number";
+      input.min = "1";
+      input.max = "1000000";
+      input.step = "1";
+      input.placeholder = "Без локального предела";
+      const draft = drafts.getDraft(section, id);
+      input.value = draft ? (draft.value ?? "") : (value ?? "");
+      field.append(input);
+      group.append(field, element("p", "control-note", `Источник: ${source || "default"}`));
+      const status = feedback(group);
+      input.addEventListener("input", () => {
+        markDraft(section, id, input.value === "" ? null : Number(input.value), group, status);
+      });
+      const actions = actionRow(group);
+      const unit = section === "rpm" ? "RPM" : "RPD";
+      actions.append(mutationButton(`Сбросить ${unit}`, "quiet", () => save(section, id, status, true)));
+      actions.append(mutationButton(`Сохранить ${unit}`, "save", () => save(section, id, status, false)));
+      staleDraftControl(group, section, id, value ?? null, status);
+      if (draft) message(status, `Черновик · исходная ревизия ${draft.expected_revision}`);
+      node.append(group);
+    }
     return node;
   }
 
@@ -919,7 +928,7 @@
     const limitHolder = byId("limit-list");
     limitHolder.replaceChildren(addCustom("limit", limitHolder, limits, "model", renderLimit),
       ...limits.map(renderLimit));
-    drafts.entries("limit").forEach(([id]) => {
+    [...new Set([...drafts.entries("limit"), ...drafts.entries("rpm")].map(([id]) => id))].forEach((id) => {
       if (!limits.some((item) => String(item.model) === id)) limitHolder.append(renderLimit({ model: id, limit: null, source: "Новый" }));
     });
     renderHistory(Array.isArray(data.history) ? data.history : []);

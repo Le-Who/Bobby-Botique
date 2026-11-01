@@ -226,10 +226,10 @@ def _validated(data: dict[str, Any]) -> tuple[str, str, Any]:
             raise KeyError(identity)
         if not data.get("reset"):
             value = models.validate_catalog(identity, value)
-    elif section == "limit":
+    elif section in {"limit", "rpm"}:
         models.validate_model_id(identity)
         if not data.get("reset"):
-            value = models.validate_limit(identity, value)
+            value = (models.validate_rpm_limit if section == "rpm" else models.validate_limit)(identity, value)
     elif section == "audio":
         if identity not in audio.PROVIDERS:
             raise KeyError(identity)
@@ -266,7 +266,13 @@ def _validate_restored_values(values: Mapping[str, Any]) -> None:
             continue
         if section == "command_aliases":
             continue
-        _validated({"section": "limit" if section == "model_limit" else section, "id": identity, "value": value})
+        _validated(
+            {
+                "section": {"model_limit": "limit", "model_rpm": "rpm"}.get(section, section),
+                "id": identity,
+                "value": value,
+            }
+        )
     validate_alias_values(bot_instance.get_application(), values)
 
 
@@ -561,6 +567,12 @@ def register_controls(app, require_auth) -> None:
                     await models.reset_limit(identity, **options)
                     if data.get("reset")
                     else await models.save_limit(identity, value, **options)
+                )
+            elif section == "rpm":
+                snapshot = (
+                    await models.reset_rpm_limit(identity, **options)
+                    if data.get("reset")
+                    else await models.save_rpm_limit(identity, value, **options)
                 )
             elif section == "audio":
                 snapshot = (

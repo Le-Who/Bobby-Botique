@@ -190,3 +190,42 @@ async def test_command_aliases_save_conflict_reset_and_restore(monkeypatch):
     assert restored.status_code == 200
     row = (await (await client.get("/api/admin/controls/commands")).get_json())["commands"][0]
     assert row["aliases"] == ["/paint", "/рисуй", "нарисуй"]
+
+
+@pytest.mark.asyncio
+async def test_rpm_controls_save_conflict_disable_reset_and_restore(monkeypatch):
+    from app import web_controls
+    from app.runtime_settings import store
+    from app.web import quart_app
+    from tests.test_runtime_settings_store import Database
+
+    database = Database()
+    backend = store.RuntimeSettingsStore()
+    monkeypatch.setattr(store.db.db_manager, "pool", database)
+    monkeypatch.setattr(store, "set_value", backend.set_value)
+    monkeypatch.setattr(store, "reset_value", backend.reset_value)
+    monkeypatch.setattr(web_controls.models, "set_value", backend.set_value)
+    monkeypatch.setattr(web_controls.models, "reset_value", backend.reset_value)
+    client = quart_app.test_client()
+    async with client.session_transaction() as session:
+        session.update(authenticated=True, controls_csrf="test-csrf")
+
+    async def post(revision, **values):
+        return await client.post(
+            "/api/admin/controls",
+            json={"section": "rpm", "id": "gemini-test", "expected_revision": revision, **values},
+            headers={"X-CSRF-Token": "test-csrf"},
+        )
+
+    assert (await post(0, value=12)).status_code == 200
+    assert (await backend.get_snapshot(force=True)).values["model_rpm:gemini-test"] == 12
+    assert (await post(0, value=13)).status_code == 409
+    assert (await post(1, value=None)).status_code == 200
+    assert (await backend.get_snapshot(force=True)).values["model_rpm:gemini-test"] is None
+    assert (await post(2, reset=True)).status_code == 200
+    assert "model_rpm:gemini-test" not in (await backend.get_snapshot(force=True)).values
+    restored = await backend.restore_revision(
+        1, expected_revision=3, actor="admin", validate=web_controls._validate_restored_values
+    )
+    assert restored.values["model_rpm:gemini-test"] == 12
+    assert (await post(4, value=True)).status_code == 400

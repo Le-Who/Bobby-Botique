@@ -627,8 +627,16 @@ class ProviderRouter:
                     )
                     continue
                 if not reserved:
-                    last_error = RuntimeError(f"RPD limit reached for {model_name}")
-                    continue
+                    from app.repos.keys import reserve_available_gemini_key
+
+                    replacement = await reserve_available_gemini_key(
+                        model_name, excluded_hashes=excluded_keys | {key_hash}
+                    )
+                    if not replacement:
+                        last_error = RuntimeError(f"Local quota limit reached for {model_name}")
+                        continue
+                    excluded_keys.add(key_hash)
+                    key_hash, api_key = replacement["key_hash"], replacement["api_key"]
 
                 _log_key_request(
                     api_key,
@@ -1113,6 +1121,16 @@ class ProviderRouter:
                                     reserved_keys.append(key_data)
                                 else:
                                     failed_keys.add(key_hash)
+                                    from app.repos.keys import reserve_available_gemini_key
+
+                                    replacement = await reserve_available_gemini_key(
+                                        resolved_model,
+                                        excluded_hashes=failed_keys
+                                        | {candidate["key_hash"] for candidate in keys_to_race}
+                                        | {candidate["key_hash"] for candidate in reserved_keys},
+                                    )
+                                    if replacement:
+                                        reserved_keys.append(replacement)
                             keys_to_race = reserved_keys
 
                 except TimeoutError:
@@ -1653,7 +1671,14 @@ class ProviderRouter:
                 logging.warning("Model fallback RPD reservation failed: %s", exc)
                 reserved = False
             if not reserved:
-                continue
+                if is_gemini_chat_model_id(model_used):
+                    from app.repos.keys import reserve_available_gemini_key
+
+                    key_data = await reserve_available_gemini_key(model_used, excluded_hashes={key_data["key_hash"]})
+                    if not key_data:
+                        continue
+                else:
+                    continue
 
             _log_key_request(key_data["api_key"], model_used, use_openrouter)
             response_text, token_count = await use_case.get_ai_response(

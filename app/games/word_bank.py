@@ -1004,7 +1004,11 @@ async def resolve_custom_word_category(word: str) -> str:
             if not kd or not mdl:
                 continue
             if not await use_case.reserve_key_usage(kd["key_hash"], mdl):
-                continue
+                from app.repos.keys import reserve_available_gemini_key
+
+                kd = await reserve_available_gemini_key(mdl, excluded_hashes={kd["key_hash"]})
+                if not kd:
+                    continue
 
             response_text, _ = await asyncio.wait_for(
                 get_ai_response(

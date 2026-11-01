@@ -73,7 +73,17 @@ async def test_limits_include_configured_process_models_and_describe_only_shared
         ),
     )
     rows = {row["model"]: row for row in await models.list_limits(snapshot=snapshot)}
-    assert set(rows) == {"gemini-catalog-text", "gemini-next-text", "gemini-next-process"}
+    assert set(rows) == {
+        "gemini-catalog-text",
+        "gemini-next-text",
+        "gemini-next-process",
+        "gemini-baseline-text",
+        "gemini-next-image",
+        "gemini-3.1-flash-image",
+        "gemini-embedding-2-preview",
+    }
+    assert rows["gemini-next-image"]["rpd_supported"] is False
+    assert rows["gemini-embedding-2-preview"]["limit"] is None
     assert rows["gemini-next-text"]["limit"] == 25
     assert rows["gemini-next-text"]["source"] == "admin"
     assert rows["gemini-next-text"]["scope"] == "gemini_key_rpd"

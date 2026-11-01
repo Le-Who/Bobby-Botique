@@ -18,8 +18,8 @@ def test_ambiguous_save_confirmation_requires_new_revision_and_equal_section():
     script = r"""
 const assert=require('node:assert/strict');
 const {matchesSubmittedSection}=require('./app/static/js/controls.js');
-const snapshot={revision:8,prompts:[{id:'system',text:'saved'}],processes:[{id:'chat',models:['one'],strategy:'sequential',inherit_user_model:false}],catalogs:[{provider:'gemini',models:['one']}],limits:[{model:'one',limit:5}],audio:[{id:'gemini',value:{voices:[]}}],commands:{commands:[{id:'start',aliases:['go']}]}};
-for(const [section,id,value] of [['prompt','system','saved'],['process','chat',{inherit_user_model:false,models:['one'],strategy:'sequential'}],['catalog','gemini',['one']],['limit','one',5],['audio','gemini',{voices:[]}],['command','start',['go']]]){
+const snapshot={revision:8,prompts:[{id:'system',text:'saved'}],processes:[{id:'chat',models:['one'],strategy:'sequential',inherit_user_model:false}],catalogs:[{provider:'gemini',models:['one']}],limits:[{model:'one',limit:5,rpm_limit:2}],audio:[{id:'gemini',value:{voices:[]}}],commands:{commands:[{id:'start',aliases:['go']}]}};
+for(const [section,id,value] of [['prompt','system','saved'],['process','chat',{inherit_user_model:false,models:['one'],strategy:'sequential'}],['catalog','gemini',['one']],['limit','one',5],['rpm','one',2],['audio','gemini',{voices:[]}],['command','start',['go']]]){
  const payload={section,id,value,expected_revision:7};
  assert.equal(matchesSubmittedSection(snapshot,payload),true,section);
  assert.equal(matchesSubmittedSection({...snapshot,revision:7},payload),false,'unchanged revision');

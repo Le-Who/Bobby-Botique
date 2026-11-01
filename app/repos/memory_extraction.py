@@ -138,7 +138,7 @@ async def extract_graph_structured(
     from app.errors import classify_key_error, extract_retry_after_seconds
     from app.handlers.ai_core import _resolve_ai_request
     from app.providers.gemini import get_cached_genai_client
-    from app.repos.keys import get_key_status_manager, reserve_gemini_key_usage
+    from app.repos.keys import get_key_status_manager, reserve_available_gemini_key, reserve_gemini_key_usage
 
     prompt = render_prompt_text(get_prompt_text("memory.extract"), text=text[:4000])
     empty = GraphExtractionResult()
@@ -213,7 +213,12 @@ async def extract_graph_structured(
         # a healthy key or enter the SDK retry handler.
         try:
             if not await reserve_gemini_key_usage(current_key_hash, GRAPH_EXTRACTION_MODEL):
-                return empty
+                failed_keys.add(current_key_hash)
+                replacement = await reserve_available_gemini_key(GRAPH_EXTRACTION_MODEL, excluded_hashes=failed_keys)
+                if replacement is None:
+                    return empty
+                current_api_key = replacement["api_key"]
+                current_key_hash = replacement["key_hash"]
         except Exception as error:
             logging.debug("Graph extraction quota unavailable: %s", type(error).__name__)
             return empty
@@ -875,11 +880,16 @@ async def _resolve_ambiguous_conflict(
 
     import hashlib
 
-    from app.repos.keys import get_key_status_manager, reserve_gemini_key_usage
+    from app.repos.keys import get_key_status_manager, reserve_available_gemini_key, reserve_gemini_key_usage
 
     try:
         if not await reserve_gemini_key_usage(hashlib.sha256(api_key.encode()).hexdigest(), get_taxonomy_model()):
-            return "parallel"
+            replacement = await reserve_available_gemini_key(
+                get_taxonomy_model(), excluded_hashes={hashlib.sha256(api_key.encode()).hexdigest()}
+            )
+            if replacement is None:
+                return "parallel"
+            api_key = replacement["api_key"]
     except Exception as error:
         logging.debug("Memory conflict quota unavailable: %s", type(error).__name__)
         return "parallel"

@@ -213,6 +213,7 @@ async def test_limit_inventory_reuses_process_rows_with_inherited_baseline(contr
     assert [(row["model"], row["limit"]) for row in rows] == [
         ("gemini-inherited", 20),
         ("gemini-selected", 10),
+        ("gemini-test-live", None),
     ]
 
 
@@ -343,3 +344,72 @@ async def test_stale_reset_does_not_delete_legacy_override(controls, monkeypatch
     with pytest.raises(store.RevisionConflict):
         await models.reset_catalog("gemini", expected_revision=0, actor="admin")
     delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rpm_save_disable_reset_and_revision_are_independent_of_rpd(controls, monkeypatch):
+    monkeypatch.setattr("app.repos.keys.db_query", AsyncMock(return_value=[]))
+    backend, _ = controls
+    await models.save_rpm_limit("gemini-3.7-flash", 12, expected_revision=0, actor="admin")
+    assert backend.values == {"model_rpm:gemini-3.7-flash": 12}
+    rows = await models.list_limits(processes=[])
+    row = next(row for row in rows if row["model"] == "gemini-3.7-flash")
+    assert (row["rpm_limit"], row["rpm_source"], row["limit"]) == (12, "admin", 100)
+    with pytest.raises(store.RevisionConflict):
+        await models.reset_rpm_limit("gemini-3.7-flash", expected_revision=0, actor="admin")
+    await models.save_rpm_limit("gemini-3.7-flash", None, expected_revision=1, actor="admin")
+    assert backend.values["model_rpm:gemini-3.7-flash"] is None
+    await models.reset_rpm_limit("gemini-3.7-flash", expected_revision=2, actor="admin")
+    assert backend.values == {}
+    row = next(row for row in await models.list_limits(processes=[]) if row["model"] == "gemini-3.7-flash")
+    assert (row["rpm_limit"], row["rpm_source"]) == (None, "default")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model,value",
+    [
+        ("vendor/chat", 10),
+        ("gemini-3.7-flash", True),
+        ("gemini-3.7-flash", 0),
+        ("gemini-3.7-flash", 1000001),
+    ],
+)
+async def test_rpm_rejects_unsupported_models_and_invalid_values(controls, model, value):
+    backend, _ = controls
+    with pytest.raises(ValueError):
+        await models.save_rpm_limit(model, value, expected_revision=0, actor="admin")
+    assert backend.values == {}
+
+
+@pytest.mark.asyncio
+async def test_rpm_only_override_keeps_model_in_inventory(controls, monkeypatch):
+    monkeypatch.setattr("app.repos.keys.db_query", AsyncMock(return_value=[]))
+    backend, _ = controls
+    backend.values["model_rpm:gemini-retained-tts"] = 20
+    rows = {row["model"]: row for row in await models.list_limits(processes=[])}
+    assert rows["gemini-retained-tts"]["rpm_limit"] == 20
+
+
+@pytest.mark.asyncio
+async def test_specialized_gemini_models_offer_only_rpm_without_daily_reads(controls, monkeypatch):
+    backend, settings = controls
+    settings.AVAILABLE_MODELS = []
+    settings.DAILY_LIMITS = {}
+    daily_reads = AsyncMock(return_value={})
+    monkeypatch.setattr("app.repos.keys.get_model_daily_limits", daily_reads)
+    specialized = ["gemini-test-image", "gemini-test-live", "gemini-embedding-2"]
+    for revision, model in enumerate(specialized):
+        await models.save_rpm_limit(model, 10, expected_revision=revision, actor="admin")
+    rows = await models.list_limits(
+        processes=[
+            {"models": [model], "capabilities": [capability]}
+            for model, capability in zip(specialized, ["image_output", "live", "embedding"], strict=True)
+        ]
+    )
+    assert {row["model"] for row in rows} == set(specialized)
+    assert all(row["rpm_limit"] == 10 and row["limit"] is None and row["rpd_supported"] is False for row in rows)
+    daily_reads.assert_awaited_once_with([], snapshot=await backend.get_snapshot())
+    for model in specialized:
+        with pytest.raises(ValueError):
+            await models.save_limit(model, 10, expected_revision=3, actor="admin")
