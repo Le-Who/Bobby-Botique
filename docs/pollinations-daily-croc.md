@@ -46,6 +46,31 @@ Admin card regeneration (web and Telegram) and **Подготовить день
 
 ## Prepare an arbitrary day
 
+### Recovery from temporary text-provider failures
+
+Crocodile text calls permit at most two key attempts for timeout, network or
+overload errors. Each dispatch reserves its own model quota; the replacement
+excludes the failed key. The existing overall timeout remains bounded (normally
+30 seconds), with roughly two thirds available to the first attempt. Explicit
+model chains share the remaining deadline across candidates. Provider retry
+delays are respected within that deadline. The semantic judge retains its own
+retry loop and uses one key attempt per call. Caller cancellation propagates
+without penalizing a key or starting another request.
+
+The local word bank only supplies unused words of the requested difficulty.
+If that bank is exhausted and AI generation fails, preparation remains incomplete
+for the next hourly scheduler pass; it never reuses an old word or lowers difficulty.
+
+Trivia retries each question lane up to three times for recognized transient
+generation failures, waiting 15 and 30 seconds. A completed main lane is retained
+while the super lane retries. Publication is outside this retry loop. Exhausted
+transient failures set a 15-minute future-date cooldown, allowing the next hourly
+pass to recover; other failures retain the three-hour cooldown. Cancellation,
+quota exhaustion and invalid output are not retried by this wrapper. These bounds
+avoid an unbounded request storm during a provider outage.
+
+### Administrative preparation
+
 Choose a date in **Подготовка дня**, including a date absent from the calendar:
 
 - **Проверить готовность** reads persisted Easy/Hard assets only; it never creates puzzles or calls a model.

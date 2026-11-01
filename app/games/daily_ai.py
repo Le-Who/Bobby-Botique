@@ -17,6 +17,7 @@ from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 _JUDGE_ATTEMPT_TIMEOUT_S = 12.0
+_TEXT_RETRY_DELAY_S = 0.25
 DAILY_TEXT_MODEL_SETTING_KEY = "daily_croc_text_model"
 TEXT_MODEL_PROCESSES = {
     "words": "Генерация слов",
@@ -84,18 +85,24 @@ async def generate_daily_text_for(
     policy = await resolve_process(f"crocodile.{process}", (model,) if model else ())
     call_timeout = min(timeout, _JUDGE_ATTEMPT_TIMEOUT_S) if process == "judge" else timeout
 
-    async def generate(candidate: str) -> str:
+    async def generate(candidate: str, budget: float = call_timeout) -> str:
+        if process == "judge":
+            return await generate_daily_text(
+                prompt, candidate, timeout=budget, response_schema=response_schema, max_attempts=1
+            )
         if response_schema is None:
-            return await generate_daily_text(prompt, candidate, timeout=call_timeout)
-        return await generate_daily_text(prompt, candidate, timeout=call_timeout, response_schema=response_schema)
+            return await generate_daily_text(prompt, candidate, timeout=budget)
+        return await generate_daily_text(prompt, candidate, timeout=budget, response_schema=response_schema)
 
     if not policy.explicit:
         return await generate(model)
     async with asyncio.timeout(timeout):
+        deadline = asyncio.get_running_loop().time() + timeout
         last_error: Exception | None = None
-        for candidate in policy.models:
+        for index, candidate in enumerate(policy.models):
             try:
-                response = await generate(candidate)
+                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                response = await generate(candidate, min(call_timeout, remaining / (len(policy.models) - index)))
                 if response_schema is not None:
                     response_schema.model_validate_json(response)
                 else:
@@ -110,13 +117,18 @@ async def generate_daily_text_for(
 
 
 async def generate_daily_text(
-    prompt: str, model: str, timeout: float = 30.0, *, response_schema: type[BaseModel] | None = None
+    prompt: str,
+    model: str,
+    timeout: float = 30.0,
+    *,
+    response_schema: type[BaseModel] | None = None,
+    max_attempts: int = 2,
 ) -> str:
     """Call Google GenAI directly, preserving the selected Gemini model and quota accounting."""
     from google.genai import types
 
     from app.config import is_gemini_chat_model_id, settings
-    from app.errors import classify_key_error, extract_retry_after_seconds
+    from app.errors import ErrorCode, classify_error_from_exception, classify_key_error, extract_retry_after_seconds
     from app.observability.workload_events import observe_workload_call
     from app.providers.gemini import get_cached_genai_client
     from app.repos.keys import (
@@ -129,8 +141,11 @@ async def generate_daily_text(
     model = (model or settings.DEFAULT_MODEL).strip()
     if not is_gemini_chat_model_id(model):
         raise ValueError("Daily text generation requires a Gemini chat model")
+    if max_attempts not in (1, 2):
+        raise ValueError("Daily text generation permits one or two attempts")
 
     async with asyncio.timeout(timeout):
+        deadline = asyncio.get_running_loop().time() + timeout
         key_data = await get_available_gemini_key(model_name=model)
         if not key_data:
             raise RuntimeError("No Gemini key available for daily text generation")
@@ -138,46 +153,68 @@ async def generate_daily_text(
             key_data = await reserve_available_gemini_key(model, excluded_hashes={key_data["key_hash"]})
             if not key_data:
                 raise RuntimeError("Gemini quota exhausted for daily text generation")
-        client = get_cached_genai_client(key_data["api_key"])
-        try:
-            response = await observe_workload_call(
-                client.aio.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json", response_schema=response_schema, max_output_tokens=2048
-                    ),
-                ),
-                workload="daily_game_generation",
-                provider="gemini",
-                model=model,
-                api_key=key_data["api_key"],
-                key_hash=key_data["key_hash"],
-                origin="crocodile_daily_ai",
-                input_chars=len(prompt),
-            )
-        except Exception as exc:
-            # Reuse the existing cooldown/cache invalidation so the next request
-            # can select a healthy key without silently changing the model.
+        for attempt in range(max_attempts):
+            client = get_cached_genai_client(key_data["api_key"])
+            remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+            # Leave time for one admitted replacement, including its backoff.
+            # The judge already owns its retry loop and requests a single attempt.
+            attempt_timeout = remaining * 2 / 3 if attempt + 1 < max_attempts else remaining * 0.95
             try:
-                await get_key_status_manager().suspend_key(
-                    key_data["key_hash"],
-                    model,
-                    classify_key_error(exc),
-                    type(exc).__name__,
-                    retry_after_seconds=extract_retry_after_seconds(str(exc)),
+                response = await observe_workload_call(
+                    asyncio.wait_for(
+                        client.aio.models.generate_content(
+                            model=model,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                response_schema=response_schema,
+                                max_output_tokens=2048,
+                            ),
+                        ),
+                        timeout=attempt_timeout,
+                    ),
+                    workload="daily_game_generation",
+                    provider="gemini",
+                    model=model,
+                    api_key=key_data["api_key"],
+                    key_hash=key_data["key_hash"],
+                    origin="crocodile_daily_ai",
+                    input_chars=len(prompt),
                 )
-            except Exception as suspension_error:
-                logger.debug("Crocodile key cooldown failed: %s", type(suspension_error).__name__)
-            raise
-        text = getattr(response, "text", None)
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("Gemini returned empty daily text")
-        try:
-            await get_key_status_manager().record_success(key_data["key_hash"], model)
-        except Exception as health_error:
-            logger.debug("Crocodile key success recording failed: %s", type(health_error).__name__)
-        return text.strip()
+            except Exception as exc:
+                # An owned SDK timeout is now an exception here; caller cancellation
+                # still propagates without penalizing a key or starting another call.
+                try:
+                    await get_key_status_manager().suspend_key(
+                        key_data["key_hash"],
+                        model,
+                        classify_key_error(exc),
+                        type(exc).__name__,
+                        retry_after_seconds=extract_retry_after_seconds(str(exc)),
+                    )
+                except Exception as suspension_error:
+                    logger.debug("Crocodile key cooldown failed: %s", type(suspension_error).__name__)
+                if attempt + 1 >= max_attempts or classify_error_from_exception(exc) not in (
+                    ErrorCode.TIMEOUT,
+                    ErrorCode.NETWORK,
+                    ErrorCode.OVERLOADED,
+                ):
+                    raise
+                await asyncio.sleep(max(_TEXT_RETRY_DELAY_S, extract_retry_after_seconds(str(exc)) or 0.0))
+                replacement = await reserve_available_gemini_key(model, excluded_hashes={key_data["key_hash"]})
+                if not replacement:
+                    raise
+                key_data = replacement
+                continue
+            text = getattr(response, "text", None)
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("Gemini returned empty daily text")
+            try:
+                await get_key_status_manager().record_success(key_data["key_hash"], model)
+            except Exception as health_error:
+                logger.debug("Crocodile key success recording failed: %s", type(health_error).__name__)
+            return text.strip()
+    raise RuntimeError("Daily text attempts exhausted")
 
 
 def _json_object(text: str) -> dict:

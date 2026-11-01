@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import time
@@ -7,7 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.config import GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_FALLBACK_MODEL, normalize_gemini_runtime_model
-from app.errors import is_error_message, strip_error_tag
+from app.errors import classify_key_error, is_error_message, is_retryable_error, strip_error_tag
 from app.games.trivia_similarity import FactIdentity
 from app.process_policies import resolve_process
 from app.prompt_registry import get_prompt_text, register_controlled_text
@@ -22,6 +23,8 @@ TRIVIA_MODEL = GEMINI_ECONOMY_MODEL
 GENERATION_ATTEMPTS = 3
 TRIVIA_RETRY_MODEL = "gemini-3.6-flash"
 PREPARATION_RETRY_COOLDOWN_SECONDS = 3 * 60 * 60
+TRANSIENT_PREPARATION_COOLDOWN_SECONDS = 15 * 60
+GENERATION_RETRY_DELAYS = (15, 30)
 _preparation_cooldowns: dict[date, float] = {}
 
 
@@ -205,6 +208,55 @@ def has_complete_sibling(puzzle: repo.DailyTriviaPuzzle | None, part: str) -> bo
     return len(puzzle.super_questions) == 3 if part == "main" else len(puzzle.questions) == 5
 
 
+def _is_transient_generation_error(exc: Exception) -> bool:
+    if isinstance(exc, TimeoutError):
+        return True
+    return (
+        isinstance(exc, RuntimeError) and is_retryable_error(str(exc)) and classify_key_error(str(exc)) == "transient"
+    )
+
+
+async def _generate_lane_with_recovery(
+    puzzle_date: date, *, lane: str, model_name: str, rejected_facts: list[FactIdentity]
+) -> list[repo.TriviaQuestion]:
+    """Retry generation only; never replay publication or a successful sibling."""
+    from app.games.daily_execution import checkpoint
+
+    last_transient: Exception | None = None
+    for attempt in range(len(GENERATION_RETRY_DELAYS) + 1):
+        await checkpoint()
+        try:
+            return await generate_question_lane(
+                puzzle_date, lane=lane, model_name=model_name, rejected_facts=rejected_facts
+            )
+        except Exception as exc:
+            if _is_transient_generation_error(exc):
+                last_transient = exc
+            elif not (
+                last_transient is not None
+                and isinstance(exc, RuntimeError)
+                and str(exc) == "No Gemini keys available for the requested model plan"
+            ):
+                raise
+            # A prior transient failure can temporarily suspend every key. Keep
+            # that cause instead of turning its short recovery into a 3h cooldown.
+            if attempt == len(GENERATION_RETRY_DELAYS):
+                assert last_transient is not None
+                if last_transient is exc:
+                    raise
+                raise last_transient from exc
+            delay = GENERATION_RETRY_DELAYS[attempt]
+            logger.warning(
+                "trivia: transient generation failure for %s lane=%s; retry %d in %ds",
+                puzzle_date,
+                lane,
+                attempt + 1,
+                delay,
+            )
+            await asyncio.sleep(delay)
+    raise AssertionError("unreachable")
+
+
 async def prepare_daily_puzzle(
     puzzle_date: date, *, force: bool = False, mode: str = "all", expected_revision: int | None = None
 ) -> repo.DailyTriviaPuzzle:
@@ -250,12 +302,14 @@ async def _prepare_daily_puzzle(
 
         await checkpoint()
         questions = (
-            await generate_question_lane(puzzle_date, lane="main", model_name=model_name, rejected_facts=rejected_facts)
+            await _generate_lane_with_recovery(
+                puzzle_date, lane="main", model_name=model_name, rejected_facts=rejected_facts
+            )
             if regenerate_main
             else preserved_main
         )
         super_questions = (
-            await generate_question_lane(
+            await _generate_lane_with_recovery(
                 puzzle_date, lane="super", model_name=model_name, rejected_facts=rejected_facts
             )
             if regenerate_super
@@ -303,7 +357,12 @@ async def ensure_prepared_puzzles(
         except Exception as exc:
             logger.exception("trivia: preparation failed for %s", puzzle_date)
             if puzzle_date != start_date:
-                await _mark_preparation_cooldown(puzzle_date, str(exc))
+                if _is_transient_generation_error(exc):
+                    await _mark_preparation_cooldown(
+                        puzzle_date, str(exc), seconds=TRANSIENT_PREPARATION_COOLDOWN_SECONDS
+                    )
+                else:
+                    await _mark_preparation_cooldown(puzzle_date, str(exc))
             continue
         if puzzle_date != start_date:
             await _clear_preparation_cooldown(puzzle_date)
@@ -332,15 +391,17 @@ async def _is_preparation_cooling_down(puzzle_date: date) -> bool:
     return True
 
 
-async def _mark_preparation_cooldown(puzzle_date: date, reason: str) -> None:
+async def _mark_preparation_cooldown(
+    puzzle_date: date, reason: str, *, seconds: int = PREPARATION_RETRY_COOLDOWN_SECONDS
+) -> None:
     from app.cache import redis_client
 
-    _preparation_cooldowns[puzzle_date] = time.monotonic() + PREPARATION_RETRY_COOLDOWN_SECONDS
+    _preparation_cooldowns[puzzle_date] = time.monotonic() + seconds
     if redis_client:
         try:
             await redis_client.setex(
                 _preparation_cooldown_key(puzzle_date),
-                PREPARATION_RETRY_COOLDOWN_SECONDS,
+                seconds,
                 reason[:500],
             )
         except Exception as exc:

@@ -135,7 +135,7 @@ async def test_ensure_prepared_puzzles_continues_after_future_failure(monkeypatc
     ]
     assert attempted == expected_dates
     assert [puzzle.puzzle_date for puzzle in puzzles] == [day for day in expected_dates if day != failed_date]
-    mark_cooldown.assert_awaited_once_with(failed_date, "provider unavailable")
+    mark_cooldown.assert_awaited_once_with(failed_date, "provider unavailable", seconds=900)
 
 
 async def test_ensure_prepared_puzzles_skips_future_date_in_cooldown(monkeypatch) -> None:
@@ -283,6 +283,190 @@ async def test_generate_question_lane_preserves_tagged_provider_error(monkeypatc
         )
 
     router.execute_gemini_model_plan.assert_awaited_once()
+
+
+@pytest.mark.parametrize("failure", [TimeoutError(), RuntimeError(tag_error(ErrorCode.OVERLOADED, "503"))])
+async def test_preparation_retries_super_without_regenerating_main(monkeypatch, failure) -> None:
+    main = [_question(index, f"Main {index}") for index in range(5)]
+    super_questions = [_question(index, f"Super {index}") for index in range(3)]
+    generated = AsyncMock(side_effect=[main, failure, super_questions])
+    published = AsyncMock(return_value=object())
+    sleep = AsyncMock()
+    monkeypatch.setattr(repo, "get_puzzle", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.repos.settings_repo.get_global_setting", AsyncMock(return_value=game.TRIVIA_MODEL))
+    monkeypatch.setattr(game, "generate_question_lane", generated)
+    monkeypatch.setattr("app.games.daily_trivia_authoring.publish_authored_day", published)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+
+    result = await game.prepare_daily_puzzle(date(2026, 11, 3))
+
+    assert result is published.return_value
+    assert [call.kwargs["lane"] for call in generated.await_args_list] == ["main", "super", "super"]
+    assert published.await_args.kwargs["main"] is main
+    published.assert_awaited_once()
+    assert [call.args[0] for call in sleep.await_args_list] == [15]
+
+
+@pytest.mark.parametrize(
+    ("failure", "attempts", "delays"),
+    [
+        (TimeoutError(), 3, [15, 30]),
+        (RuntimeError(tag_error(ErrorCode.OVERLOADED, "503")), 3, [15, 30]),
+        (ValueError("invalid questions"), 1, []),
+        (RuntimeError("Local quota limit reached"), 1, []),
+        (RuntimeError("401 invalid key"), 1, []),
+        (RuntimeError("No Gemini keys available for the requested model plan"), 1, []),
+        (asyncio.CancelledError(), 1, []),
+    ],
+)
+async def test_preparation_generation_retry_is_bounded_and_selective(monkeypatch, failure, attempts, delays) -> None:
+    generated = AsyncMock(side_effect=failure)
+    published = AsyncMock()
+    sleep = AsyncMock()
+    monkeypatch.setattr(repo, "get_puzzle", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.repos.settings_repo.get_global_setting", AsyncMock(return_value=game.TRIVIA_MODEL))
+    monkeypatch.setattr(game, "generate_question_lane", generated)
+    monkeypatch.setattr("app.games.daily_trivia_authoring.publish_authored_day", published)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+
+    with pytest.raises(type(failure)):
+        await game.prepare_daily_puzzle(date(2026, 11, 3))
+
+    assert generated.await_count == attempts
+    assert [call.args[0] for call in sleep.await_args_list] == delays
+    published.assert_not_awaited()
+
+
+@pytest.mark.parametrize("recover", [True, False])
+async def test_transient_key_suspension_preserves_retry_and_short_cooldown(monkeypatch, recover) -> None:
+    from app import cache
+
+    future = date(2026, 11, 3)
+    today = repo.DailyTriviaPuzzle(
+        puzzle_date=date(2026, 11, 2),
+        questions=[_question(index, f"Main {index}") for index in range(5)],
+        super_questions=[_question(index, f"Super {index}") for index in range(3)],
+        status="ready",
+        prepared_at=None,
+    )
+    transient = RuntimeError(tag_error(ErrorCode.OVERLOADED, "503"))
+    no_keys = RuntimeError("No Gemini keys available for the requested model plan")
+    responses = [transient, no_keys]
+    responses.extend([today.questions, today.super_questions] if recover else [no_keys])
+    generated = AsyncMock(side_effect=responses)
+    published = AsyncMock(return_value=SimpleNamespace(puzzle_date=future))
+    redis = AsyncMock()
+    redis.exists.return_value = False
+    sleep = AsyncMock()
+    monkeypatch.setattr(cache, "redis_client", redis)
+    monkeypatch.setattr(game, "_preparation_cooldowns", {})
+    monkeypatch.setattr(repo, "get_puzzle", AsyncMock(side_effect=[today, None]))
+    monkeypatch.setattr("app.repos.settings_repo.get_global_setting", AsyncMock(return_value=game.TRIVIA_MODEL))
+    monkeypatch.setattr(game, "generate_question_lane", generated)
+    monkeypatch.setattr("app.games.daily_trivia_authoring.publish_authored_day", published)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+
+    result = await game.ensure_prepared_puzzles(now=datetime(2026, 11, 2), days_ahead=1)
+
+    assert [call.args[0] for call in sleep.await_args_list] == [15, 30]
+    if recover:
+        assert [puzzle.puzzle_date for puzzle in result] == [today.puzzle_date, future]
+        published.assert_awaited_once()
+        redis.setex.assert_not_awaited()
+    else:
+        assert [puzzle.puzzle_date for puzzle in result] == [today.puzzle_date]
+        assert generated.await_count == 3
+        published.assert_not_awaited()
+        redis.setex.assert_awaited_once_with(game._preparation_cooldown_key(future), 900, str(transient))
+
+
+@pytest.mark.parametrize("failure", [TimeoutError(), RuntimeError("503 unavailable")])
+async def test_transient_preparation_recovers_at_next_hourly_run(monkeypatch, failure) -> None:
+    from app import cache
+
+    clock = [1000.0]
+    prepared_dates = []
+    future = date(2026, 11, 3)
+
+    async def prepare(puzzle_date):
+        prepared_dates.append(puzzle_date)
+        if puzzle_date == future and clock[0] == 1000:
+            raise failure
+        return SimpleNamespace(puzzle_date=puzzle_date)
+
+    monkeypatch.setattr(cache, "redis_client", None)
+    monkeypatch.setattr(game, "_preparation_cooldowns", {})
+    monkeypatch.setattr(game.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(game, "prepare_daily_puzzle", prepare)
+    await game.ensure_prepared_puzzles(now=datetime(2026, 11, 2), days_ahead=1)
+    assert await game._is_preparation_cooling_down(future)
+    clock[0] += 3600
+    result = await game.ensure_prepared_puzzles(now=datetime(2026, 11, 2, 1), days_ahead=1)
+    assert prepared_dates.count(future) == 2
+    assert future in [puzzle.puzzle_date for puzzle in result]
+    assert not await game._is_preparation_cooling_down(future)
+
+
+@pytest.mark.parametrize("message", ["Local quota limit reached", "401 invalid key"])
+async def test_transient_recovery_stops_when_quota_or_permanent_error_follows(monkeypatch, message) -> None:
+    terminal = RuntimeError(message)
+    generated = AsyncMock(side_effect=[TimeoutError(), terminal])
+    sleep = AsyncMock()
+    monkeypatch.setattr(game, "generate_question_lane", generated)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+
+    with pytest.raises(RuntimeError) as caught:
+        await game._generate_lane_with_recovery(
+            date(2026, 11, 3), lane="main", model_name=game.TRIVIA_MODEL, rejected_facts=[]
+        )
+
+    assert caught.value is terminal
+    assert generated.await_count == 2
+    assert [call.args[0] for call in sleep.await_args_list] == [15]
+
+
+async def test_preparation_does_not_retry_uncertain_publication(monkeypatch) -> None:
+    generated = AsyncMock(side_effect=[[_question(1, "Main")], [_question(1, "Super")]])
+    published = AsyncMock(side_effect=TimeoutError())
+    monkeypatch.setattr(repo, "get_puzzle", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.repos.settings_repo.get_global_setting", AsyncMock(return_value=game.TRIVIA_MODEL))
+    monkeypatch.setattr(game, "generate_question_lane", generated)
+    monkeypatch.setattr("app.games.daily_trivia_authoring.publish_authored_day", published)
+
+    with pytest.raises(TimeoutError):
+        await game.prepare_daily_puzzle(date(2026, 11, 3))
+
+    published.assert_awaited_once()
+    assert generated.await_count == 2
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_seconds"),
+    [(TimeoutError(), 900), (RuntimeError("Local quota limit reached"), 10800)],
+)
+async def test_preparation_cooldown_uses_same_duration_in_redis_and_locally(monkeypatch, failure, expected_seconds):
+    from app import cache
+
+    redis = AsyncMock()
+    clock = [1000.0]
+    future = date(2026, 11, 3)
+
+    async def prepare(puzzle_date):
+        if puzzle_date == future:
+            raise failure
+        return SimpleNamespace(puzzle_date=puzzle_date)
+
+    monkeypatch.setattr(cache, "redis_client", redis)
+    monkeypatch.setattr(game, "_preparation_cooldowns", {})
+    monkeypatch.setattr(game.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(game, "prepare_daily_puzzle", prepare)
+    redis.exists.return_value = False
+    await game.ensure_prepared_puzzles(now=datetime(2026, 11, 2), days_ahead=1)
+    redis.setex.assert_awaited_once_with(game._preparation_cooldown_key(future), expected_seconds, str(failure))
+    clock[0] += expected_seconds - 1
+    assert await game._is_preparation_cooling_down(future)
+    clock[0] += 1
+    assert not await game._is_preparation_cooling_down(future)
 
 
 def test_trivia_similarity_module_exists() -> None:

@@ -493,8 +493,8 @@ async def _create_puzzle_if_missing_with_conn(
         if unused:
             chosen_topic_raw = candidate_cat
             break
-    # If ALL categories are exhausted just use today's slot — the AI
-    # word-generation fallback inside pick_random_word_for_topic will kick in.
+    # Exhausted banks require the AI candidate prepared before this transaction.
+    # Without one, fail closed rather than repeat a word or call a provider here.
 
     topic = resolve_topic(chosen_topic_raw)
 
