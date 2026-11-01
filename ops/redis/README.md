@@ -62,7 +62,8 @@ requires stopping writers, restoring into a separate owned volume, verifying
 contents/expirations, then switching the bot under the deploy lock.
 
 The monitor timer runs every minute and records bounded metadata in `status/`.
-It checks PING, latency, memory (80% threshold), AOF persistence, available disk
+It checks PING, maximum latency over a short redis-cli sample (excluding Docker
+exec startup overhead), memory (80% threshold), AOF persistence, available disk
 (1 GiB threshold), backup age (two hours), backup failures and archive size.
 Failure, including a monitor status older than three minutes, is reflected in
 the status stream and the private Grafana

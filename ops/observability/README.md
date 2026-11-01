@@ -23,7 +23,8 @@ short-lived migration and release containers remain outside collection.
 The Redis source reads only the dedicated status-log container. Its filesystem
 and backup checks run in bounded systemd jobs, independently of the bot. A stale
 monitor document produces an explicit error after three minutes. The dashboard
-shows probe wall time (including Docker exec overhead), memory and backup age;
+shows maximum PING latency in a short local sample (excluding Docker exec
+startup overhead), memory and backup age;
 it contains no Redis values, key names or credentials. See
 [Redis operations](../redis/README.md) for retention and restore procedures.
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -486,13 +487,23 @@ class Maintenance:
         issues = result["issues"]
         try:
             self.live_owned()
-            start = self.monotonic()
             result["ping_ok"] = self.redis("PING") == "PONG"
-            result["ping_ms"] = round((self.monotonic() - start) * 1000, 2)
             if not result["ping_ok"]:
                 issues.append("ping_failed")
-            elif result["ping_ms"] > 250:
-                issues.append("ping_slow")
+            else:
+                # Non-interactive redis-cli exits after this sampling interval.
+                # Its maximum PING RTT excludes Docker exec startup overhead.
+                fields = self.redis("--latency", "-i", "0.1").split()
+                if len(fields) != 4:
+                    raise MaintenanceError("invalid_latency")
+                minimum, maximum, average, samples = map(float, fields)
+                if not all(math.isfinite(value) for value in (minimum, maximum, average, samples)) or not (
+                    0 <= minimum <= average <= maximum and samples >= 1
+                ):
+                    raise MaintenanceError("invalid_latency")
+                result["ping_ms"] = maximum
+                if maximum > 250:
+                    issues.append("ping_slow")
             info = self.info("memory", "persistence")
             used, maximum = number(info.get("used_memory")), number(info.get("maxmemory"))
             if maximum == 0:

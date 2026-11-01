@@ -38,6 +38,7 @@ class Docker:
         self.aof_status = "ok"
         self.owned = True
         self.removed = []
+        self.latency = "0 1 0.27 11"
 
     def __call__(self, command, *, timeout=30, capture=True, file_limit=None):
         self.calls.append(command)
@@ -71,6 +72,8 @@ class Docker:
                 return "Background saving started"
             if operation == "PING":
                 return "PONG"
+            if operation == "--latency":
+                return self.latency
             assert operation == "INFO"
             return (
                 f"rdb_bgsave_in_progress:0\nrdb_saves:{self.saves}\n"
@@ -124,6 +127,26 @@ def snapshot(root, when, size=20):
     path = directory / f"redis-{when.strftime('%Y%m%dT%H%M%S%fZ')}.rdb"
     path.write_bytes(b"x" * size)
     return path
+
+
+@pytest.mark.parametrize("latency,slow", [("0 1 0.27 11", False), ("0 300 27.27 11", True)])
+def test_monitor_measures_redis_latency_without_docker_startup(setup, latency, slow):
+    service, docker, root = setup
+    snapshot(root, NOW)
+    docker.latency = latency
+    ticks = iter([0, 0.8])
+    service.monotonic = lambda: next(ticks)
+    result = service.monitor()
+    assert result["ping_ms"] == float(latency.split()[1])
+    assert ("ping_slow" in result["issues"]) is slow
+
+
+@pytest.mark.parametrize("latency", ["", "ERR denied", "0 nan 0 10", "0 1 0 0"])
+def test_monitor_rejects_invalid_latency_sample(setup, latency):
+    service, docker, root = setup
+    snapshot(root, NOW)
+    docker.latency = latency
+    assert "redis_unavailable" in service.monitor()["issues"]
 
 
 def test_backup_publishes_only_validated_snapshot_and_private_status(setup):
