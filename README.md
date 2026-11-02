@@ -230,6 +230,14 @@ Configuration is explicitly read from environment variables in `app/config.py` a
 > that role before enabling `FORCE ROW LEVEL SECURITY`; the current code does
 > not yet provide that two-role bootstrap automatically.
 
+> **Supabase Data API:** the bot accesses PostgreSQL directly. The game, natal
+> report and tarot tables protected by [migration 079](scripts/migrations/079_secure_application_tables.sql),
+> and the roles catalog, do not grant access to the `anon` or `authenticated`
+> API roles. A future Data API client requires deliberately reviewed grants and
+> RLS policies; the bot's transaction-local settings are not Supabase Auth IDs.
+> [Migration 081](scripts/migrations/081_enable_rls_before_startup.sql) enables
+> RLS on every expected application table before runtime policy setup.
+
 > **Migrating from Supabase to a local DB:**
 > ```bash
 > # 1. Dump from Supabase

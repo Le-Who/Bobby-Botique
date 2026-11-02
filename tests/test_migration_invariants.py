@@ -122,6 +122,13 @@ def test_runtime_rls_config_covers_every_table_enabled_by_migrations() -> None:
     assert rls_tables <= RLS_CONFIG.keys()
 
 
+def test_every_application_table_has_runtime_rls_configuration() -> None:
+    from app.db.rls import RLS_CONFIG
+    from app.db.schema import EXPECTED_TABLES
+
+    assert EXPECTED_TABLES <= RLS_CONFIG.keys()
+
+
 def test_user_rls_template_explicitly_checks_inserted_and_updated_rows() -> None:
     from app.db.rls import RLS_POLICY_USER
 

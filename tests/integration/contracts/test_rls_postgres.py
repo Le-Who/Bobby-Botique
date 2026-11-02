@@ -1,5 +1,6 @@
 """ST-03: effective row security under an actual nonowner/NOBYPASSRLS role."""
 
+from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
@@ -7,8 +8,35 @@ import pytest
 
 from app.database import set_user_context
 from app.db.rls import setup_row_level_security
+from app.db.schema import EXPECTED_TABLES
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+_DATA_API_RESTRICTED_TABLES = (
+    "natal_reports",
+    "crocodile_daily_preferences",
+    "crocodile_daily_results",
+    "crocodile_daily_result_messages",
+    "crocodile_daily_prompt_messages",
+    "crocodile_player_activity",
+    "daily_2048_results",
+    "daily_2048_prompt_messages",
+    "daily_trivia_preferences",
+    "daily_trivia_results",
+    "daily_trivia_super_results",
+    "daily_trivia_prompt_messages",
+    "crocodile_daily_days",
+    "crocodile_daily_puzzles",
+    "daily_2048_puzzles",
+    "daily_trivia_puzzles",
+    "daily_trivia_facts",
+    "daily_trivia_question_variants",
+    "daily_trivia_puzzle_revisions",
+    "daily_trivia_question_occurrences",
+    "daily_trivia_used_keys",
+    "tarot_daily_readings",
+    "tarot_daily_generation",
+)
 
 
 @pytest.fixture
@@ -36,6 +64,112 @@ async def configure(connection):
         return await connection.fetch(sql, *params)
 
     await setup_row_level_security(query)
+
+
+async def test_all_application_tables_have_rls_before_runtime_setup(db_conn):
+    rows = await db_conn.fetch(
+        """SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relname = ANY($1::text[])""",
+        list(EXPECTED_TABLES),
+    )
+    assert {row["relname"] for row in rows if row["relrowsecurity"]} == EXPECTED_TABLES
+    assert all(not row["relforcerowsecurity"] for row in rows)
+
+
+async def test_runtime_provisions_rls_for_every_application_table(db_conn):
+    await configure(db_conn)
+    rows = await db_conn.fetch(
+        """SELECT c.relname, c.relrowsecurity
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'public' AND c.relname = ANY($1::text[])""",
+        list(EXPECTED_TABLES),
+    )
+    protected = {row["relname"] for row in rows if row["relrowsecurity"]}
+    assert protected == EXPECTED_TABLES
+
+
+async def test_security_migration_revokes_api_role_grants(db_conn):
+    # This suite uses an explicitly ephemeral local server and a cloned DB.
+    # Create the Supabase roles only when absent and remove only those we own.
+    created_roles = []
+    tables = (*_DATA_API_RESTRICTED_TABLES, "roles")
+    try:
+        for role in ("anon", "authenticated"):
+            if not await db_conn.fetchval("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1)", role):
+                await db_conn.execute(f'CREATE ROLE "{role}" NOLOGIN')
+                created_roles.append(role)
+        table_list = ", ".join(f'public."{table}"' for table in tables)
+        await db_conn.execute(f"GRANT ALL PRIVILEGES ON TABLE {table_list} TO PUBLIC, anon, authenticated")
+        migration = Path(__file__).resolve().parents[3] / "scripts/migrations/079_secure_application_tables.sql"
+        await db_conn.execute(migration.read_text(encoding="utf-8"))
+        for role in ("anon", "authenticated"):
+            for table in tables:
+                for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+                    assert not await db_conn.fetchval(
+                        "SELECT has_table_privilege($1, $2, $3)", role, f"public.{table}", privilege
+                    ), (role, table, privilege)
+    finally:
+        for role in created_roles:
+            await db_conn.execute(f'DROP OWNED BY "{role}"')
+            await db_conn.execute(f'DROP ROLE "{role}"')
+
+
+async def test_memory_functions_resolve_extensions_without_mutable_search_paths(db_conn):
+    names = [
+        "bump_memory_epoch_on_ltm_disable",
+        "delete_derived_memory_on_source_removal",
+        "recompute_memory_edge_after_source_removal",
+        "delete_orphaned_memory_edge",
+        "recompute_memory_node_after_source_removal",
+        "delete_stale_orphaned_memory_nodes",
+    ]
+    rows = await db_conn.fetch(
+        """SELECT p.proname, p.proconfig FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname = 'public' AND p.proname = ANY($1::text[])""",
+        names,
+    )
+    assert {row["proname"] for row in rows} == set(names)
+    for row in rows:
+        assert row["proconfig"] == ["search_path=pg_catalog, public, extensions, pg_temp"]
+
+
+async def test_natal_report_rls_isolates_tenants(contract_pool, db_conn, tenant_role):
+    # This contract runs only in the disposable database cloned by this suite.
+    await db_conn.execute(f'GRANT SELECT, INSERT ON public.natal_reports TO "{tenant_role}"')
+    await db_conn.execute("INSERT INTO public.users(user_id) VALUES (84001), (84002) ON CONFLICT DO NOTHING")
+    own_id, foreign_id = uuid4().hex, uuid4().hex
+    await db_conn.execute(
+        """INSERT INTO public.natal_reports(report_id, user_id, chart_json, svg, sections_json)
+           VALUES ($1, 84001, '{}'::jsonb, '<svg/>', '{}'::jsonb),
+                  ($2, 84002, '{}'::jsonb, '<svg/>', '{}'::jsonb)""",
+        own_id,
+        foreign_id,
+    )
+    async with contract_pool.acquire() as connection, connection.transaction():
+        await connection.execute(f'SET LOCAL ROLE "{tenant_role}"')
+        await set_user_context(84001, False, conn=connection)
+        visible = await connection.fetch(
+            "SELECT report_id FROM public.natal_reports WHERE report_id = ANY($1::text[])",
+            [own_id, foreign_id],
+        )
+        assert [row["report_id"] for row in visible] == [own_id]
+        with pytest.raises(asyncpg.InsufficientPrivilegeError, match="row-level security"):
+            async with connection.transaction():
+                await connection.execute(
+                    """INSERT INTO public.natal_reports(report_id, user_id, chart_json, svg, sections_json)
+                       VALUES ($1, 84002, '{}'::jsonb, '<svg/>', '{}'::jsonb)""",
+                    uuid4().hex,
+                )
+        await set_user_context(0, True, conn=connection)
+        assert (
+            await connection.fetchval(
+                "SELECT count(*) FROM public.natal_reports WHERE report_id = ANY($1::text[])",
+                [own_id, foreign_id],
+            )
+            == 2
+        )
 
 
 @pytest.mark.parametrize("table", ["long_term_memory", "memory_node_sources", "private_data_leases"])

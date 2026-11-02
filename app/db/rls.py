@@ -137,6 +137,35 @@ RLS_CONFIG = {
     "horoscope_subscriptions": [{"name": "horoscope_subscriptions_policy", "template": RLS_POLICY_USER}],
     "tarot_daily_subscriptions": [{"name": "tarot_daily_subscriptions_policy", "template": RLS_POLICY_USER}],
     "user_achievements": [{"name": "user_achievements_policy", "template": RLS_POLICY_USER}],
+    "natal_reports": [{"name": "natal_reports_policy", "template": RLS_POLICY_USER}],
+    "crocodile_daily_preferences": [{"name": "crocodile_daily_preferences_policy", "template": RLS_POLICY_USER}],
+    "crocodile_daily_results": [{"name": "crocodile_daily_results_policy", "template": RLS_POLICY_USER}],
+    "crocodile_daily_result_messages": [
+        {"name": "crocodile_daily_result_messages_policy", "template": RLS_POLICY_USER}
+    ],
+    "crocodile_daily_prompt_messages": [
+        {"name": "crocodile_daily_prompt_messages_policy", "template": RLS_POLICY_USER}
+    ],
+    "crocodile_player_activity": [{"name": "crocodile_player_activity_policy", "template": RLS_POLICY_USER}],
+    "daily_2048_results": [{"name": "daily_2048_results_policy", "template": RLS_POLICY_USER}],
+    "daily_2048_prompt_messages": [{"name": "daily_2048_prompt_messages_policy", "template": RLS_POLICY_USER}],
+    "daily_trivia_preferences": [{"name": "daily_trivia_preferences_policy", "template": RLS_POLICY_USER}],
+    "daily_trivia_results": [{"name": "daily_trivia_results_policy", "template": RLS_POLICY_USER}],
+    "daily_trivia_super_results": [{"name": "daily_trivia_super_results_policy", "template": RLS_POLICY_USER}],
+    "daily_trivia_prompt_messages": [{"name": "daily_trivia_prompt_messages_policy", "template": RLS_POLICY_USER}],
+    "crocodile_daily_days": [{"name": "crocodile_daily_days_policy", "template": RLS_POLICY_ADMIN}],
+    "crocodile_daily_puzzles": [{"name": "crocodile_daily_puzzles_policy", "template": RLS_POLICY_ADMIN}],
+    "daily_2048_puzzles": [{"name": "daily_2048_puzzles_policy", "template": RLS_POLICY_ADMIN}],
+    "daily_trivia_puzzles": [{"name": "daily_trivia_puzzles_policy", "template": RLS_POLICY_ADMIN}],
+    "daily_trivia_facts": [{"name": "daily_trivia_facts_policy", "template": RLS_POLICY_ADMIN}],
+    "daily_trivia_question_variants": [{"name": "daily_trivia_question_variants_policy", "template": RLS_POLICY_ADMIN}],
+    "daily_trivia_puzzle_revisions": [{"name": "daily_trivia_puzzle_revisions_policy", "template": RLS_POLICY_ADMIN}],
+    "daily_trivia_question_occurrences": [
+        {"name": "daily_trivia_question_occurrences_policy", "template": RLS_POLICY_ADMIN}
+    ],
+    "daily_trivia_used_keys": [{"name": "daily_trivia_used_keys_policy", "template": RLS_POLICY_ADMIN}],
+    "tarot_daily_readings": [{"name": "tarot_daily_readings_policy", "template": RLS_POLICY_ADMIN}],
+    "tarot_daily_generation": [{"name": "tarot_daily_generation_policy", "template": RLS_POLICY_ADMIN}],
     "global_settings": [{"name": "global_settings_policy", "template": RLS_POLICY_ADMIN}],
     "broadcast_journal_coverage": [{"name": "broadcast_journal_coverage_admin_policy", "template": RLS_POLICY_ADMIN}],
     "broadcast_batches": [{"name": "broadcast_batches_admin_policy", "template": RLS_POLICY_ADMIN}],

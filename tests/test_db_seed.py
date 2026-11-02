@@ -66,3 +66,14 @@ async def test_insert_initial_data_prunes_stale_key_rows():
     assert any("INSERT INTO api_keys" in sql and len(data) == 2 for sql, data in upsert_calls)
     assert any("INSERT INTO tavily_api_keys" in sql and len(data) == 1 for sql, data in upsert_calls)
     assert any("INSERT INTO openrouter_api_keys" in sql and len(data) == 1 for sql, data in upsert_calls)
+
+
+@pytest.mark.asyncio
+async def test_seed_does_not_recreate_duplicate_conversation_index():
+    from app.db.seed import insert_initial_data
+
+    query = AsyncMock()
+    settings = _SeedSettings(GEMINI_API_KEYS=[], TAVILY_API_KEYS=[], OPENROUTER_API_KEYS=[])
+    await insert_initial_data(query, AsyncMock(), settings)
+
+    assert all("idx_conversation_messages_conv_id" not in call.args[0] for call in query.call_args_list)
