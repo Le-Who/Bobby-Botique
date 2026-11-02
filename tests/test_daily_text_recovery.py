@@ -120,7 +120,9 @@ async def test_sdk_deadline_is_cooled_down_before_recovery(provider, monkeypatch
         return SimpleNamespace(text='{"ok":true}')
 
     provider.install(generate)
-    assert await daily_ai.generate_daily_text("prompt", "gemini-test", timeout=0.1) == '{"ok":true}'
+    # Leave room for Windows timer resolution and captured logging after the
+    # first SDK call times out; this test checks recovery, not sub-100-ms latency.
+    assert await daily_ai.generate_daily_text("prompt", "gemini-test", timeout=1.0) == '{"ok":true}'
     assert cancelled.is_set()
     assert provider.health.suspend_key.await_args.args[2] == "transient"
 

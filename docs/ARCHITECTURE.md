@@ -135,6 +135,17 @@ retries and independent concurrency ownership.
 The first visible text wins; all other lanes are cancelled and awaited. Router
 deadlines leave key health unchanged; provider errors retain their dispositions.
 
+Explicit sequential interactive chat plans keep their configured model order.
+Before visible text, each model receives a share of the remaining route budget
+based on the number of models still in that plan. With two models and a 20-second
+route cap, the first receives up to ten seconds, including key lookup, reservation
+and key retries; the backup receives the remaining time. An initial key race that
+ends without text and reports `OVERLOADED` advances directly to the next configured
+model instead of spending more attempts on the overloaded model. Key-specific
+quota/auth failures still rotate keys. Single-model, inline and deferred routes
+retain their existing budgets. A model timeout does not reset the route deadline
+or penalize a silent key; cancellation cleanup is awaited before advancing.
+
 Winner key-health persistence runs in a separate request-owned task with a
 one-second best-effort cap; it cannot hold the first visible delta. Other health
 writes use the remaining first-text budget. Cancellation cleanup is awaited and

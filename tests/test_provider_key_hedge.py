@@ -643,8 +643,9 @@ async def test_switching_models_shares_the_original_first_text_deadline(monkeypa
 
     assert len(events) == 1 and isinstance(events[0], StreamFailed)
     assert events[0].code is ErrorCode.TIMEOUT
-    assert remaining[0] == pytest.approx(0.05)
-    assert all(value == pytest.approx(0.01) for value in remaining[1:])
+    # The primary receives half the shared budget. Its simulated 40 ms
+    # still leaves only the original 10 ms for the backup, without a reset.
+    assert remaining == pytest.approx([0.025, 0.0, 0.01])
     assert calls == 3
     assert closed == set(started)
     assert all(task.done() for task in tasks)

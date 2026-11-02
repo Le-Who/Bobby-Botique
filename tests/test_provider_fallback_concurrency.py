@@ -138,7 +138,7 @@ async def test_key_rotation_after_failed_primary_pair_dispatches_one_reserve(mon
 
 
 @pytest.mark.asyncio
-async def test_exhausted_model_rotates_to_single_key_fallback(monkeypatch):
+async def test_overloaded_model_rotates_to_single_key_fallback(monkeypatch):
     async def script(model, key, started):
         if model == PRIMARY:
             yield overload()
@@ -150,7 +150,7 @@ async def test_exhausted_model_rotates_to_single_key_fallback(monkeypatch):
     events = [event async for event in ProviderRouter().stream(request((PRIMARY, BACKUP)))]
 
     assert events == [TextDelta("fallback model"), complete(BACKUP)]
-    assert Counter(model for model, _ in started) == {PRIMARY: 6, BACKUP: 1}
+    assert Counter(model for model, _ in started) == {PRIMARY: 2, BACKUP: 1}
     assert peak[BACKUP] == 1
     assert sorted(closed) == sorted(started)
     assert not any(active.values())
