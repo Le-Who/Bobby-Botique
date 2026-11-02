@@ -68,8 +68,10 @@ register_controlled_text("trivia.deduplicate", SEMANTIC_DUPLICATE_PROMPT, "Daily
 def build_semantic_judge(*, router=None, model_name: str) -> SemanticJudge:
     """Create the semantic stage used after deterministic shortlisting."""
     provider_router = router or get_provider_router()
+    preferred_model = model_name
 
     async def judge(first_claim: str, second_claim: str) -> tuple[bool, float, str]:
+        nonlocal preferred_model
         prompt = f"Факт A: {first_claim}\nФакт B: {second_claim}"
 
         def parse_response(response_text: str) -> SemanticDuplicateJudgement:
@@ -93,13 +95,24 @@ def build_semantic_judge(*, router=None, model_name: str) -> SemanticJudge:
                     timeout=30.0,
                 )
             else:
+                used_model: str | None = None
+
+                def record_model_used(model: str) -> None:
+                    nonlocal used_model
+                    used_model = model
+
                 response_text, _ = await provider_router.get_response(
-                    preferred_model=model_name,
+                    preferred_model=preferred_model,
                     history=history,
                     system_instruction=get_prompt_text("trivia.deduplicate"),
                     timeout=30.0,
+                    on_model_used=record_model_used,
                 )
                 parsed = parse_response(response_text)
+                if used_model is not None:
+                    # Reuse a validated fallback for later pairs in this run,
+                    # without changing explicit policies or persisted defaults.
+                    preferred_model = used_model
         except SemanticAuditUnavailableError:
             raise
         except Exception as exc:

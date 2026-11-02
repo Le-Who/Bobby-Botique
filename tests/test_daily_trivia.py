@@ -658,6 +658,84 @@ async def test_semantic_duplicate_judge_parses_strict_json() -> None:
     assert router.get_response.await_count == 1
 
 
+async def test_semantic_judge_reuses_validated_fallback_only_within_one_run() -> None:
+    from app.games import daily_trivia_authoring as authoring
+
+    router = AsyncMock()
+    requested_models = []
+
+    async def respond(*, preferred_model, on_model_used=None, **kwargs):
+        requested_models.append(preferred_model)
+        if on_model_used:
+            on_model_used("gemini-3.6-flash")
+        return '{"is_duplicate": false, "confidence": 0.98, "reason": "Different facts"}', None
+
+    router.get_response.side_effect = respond
+    judge = authoring.build_semantic_judge(router=router, model_name="gemini-3.8-flash")
+    assert await judge("A", "B") == (False, 0.98, "Different facts")
+    assert await judge("C", "D") == (False, 0.98, "Different facts")
+    next_run = authoring.build_semantic_judge(router=router, model_name="gemini-3.8-flash")
+    await next_run("E", "F")
+
+    assert requested_models == ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.8-flash"]
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_semantic_judge_does_not_promote_invalid_or_cancelled_response(cancel) -> None:
+    from app.games import daily_trivia_authoring as authoring
+
+    router = AsyncMock()
+    requested_models = []
+
+    async def respond(*, preferred_model, on_model_used=None, **kwargs):
+        requested_models.append(preferred_model)
+        if on_model_used:
+            on_model_used("gemini-3.6-flash")
+        if len(requested_models) == 1:
+            if cancel:
+                raise asyncio.CancelledError
+            return '{"is_duplicate": false, "confidence": 2, "reason": "Invalid confidence"}', None
+        return '{"is_duplicate": true, "confidence": 0.98, "reason": "Same fact"}', None
+
+    router.get_response.side_effect = respond
+    judge = authoring.build_semantic_judge(router=router, model_name="gemini-3.8-flash")
+    with pytest.raises(asyncio.CancelledError if cancel else authoring.SemanticAuditUnavailableError):
+        await judge("A", "B")
+    assert await judge("C", "D") == (True, 0.98, "Same fact")
+    assert requested_models == ["gemini-3.8-flash", "gemini-3.8-flash"]
+
+
+async def test_semantic_judge_preserves_explicit_model_order_after_fallback(monkeypatch) -> None:
+    from app.games import daily_trivia_authoring as authoring
+
+    router = AsyncMock()
+    explicit_models = ("gemini-3.8-flash", "gemini-3.6-flash")
+    policy = SimpleNamespace(explicit=False, models=explicit_models)
+    monkeypatch.setattr(authoring, "resolve_process", AsyncMock(side_effect=lambda *args: policy))
+
+    async def respond(*, on_model_used=None, **kwargs):
+        if on_model_used:
+            on_model_used("gemini-3.6-flash")
+        return '{"is_duplicate": false, "confidence": 0.98, "reason": "Different facts"}', None
+
+    plans = []
+
+    async def execute(model_plan, history, *, parse_response, **kwargs):
+        plans.append(tuple(model_plan))
+        return parse_response('{"is_duplicate": false, "confidence": 0.98, "reason": "Different facts"}')
+
+    router.get_response.side_effect = respond
+    router.execute_gemini_model_plan.side_effect = execute
+    judge = authoring.build_semantic_judge(router=router, model_name="gemini-3.8-flash")
+    await judge("A", "B")
+    policy.explicit = True
+    await judge("C", "D")
+    await judge("E", "F")
+
+    assert plans == [explicit_models, explicit_models]
+    assert router.get_response.await_count == 1
+
+
 def test_puzzle_serialization_exposes_revision_and_lane_readiness() -> None:
     puzzle = repo.DailyTriviaPuzzle(
         puzzle_date=date(2026, 8, 3),

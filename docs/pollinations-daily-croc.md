@@ -75,6 +75,15 @@ pass to recover; other failures retain the three-hour cooldown. Cancellation,
 quota exhaustion and invalid output are not retried by this wrapper. These bounds
 avoid an unbounded request storm during a provider outage.
 
+Trivia still runs the global bank audit and all applicable pairwise duplicate
+checks before publication. With inherited model routing, the pairwise judge
+reuses the model that most recently returned a validated verdict for later pairs
+in the same validation run. This avoids repeatedly waiting on a failing primary
+after its fallback succeeds. Invalid responses and cancelled requests do not
+change that preference. Each new run starts with its configured model, and an
+explicit `daily.trivia.deduplicate` model plan retains its configured order.
+This does not change stored model settings, quota accounting or duplicate checks.
+
 ### Administrative preparation
 
 Choose a date in **Подготовка дня**, including a date absent from the calendar:
