@@ -29,6 +29,7 @@ from app.config import (
 from app.errors import (
     ErrorCode,
     classify_key_error,
+    extract_error_code,
     is_error_message,
     is_key_related_error,
     is_retryable_error,
@@ -251,6 +252,7 @@ class ProviderRouter:
         *,
         _is_fallback: bool = False,
         on_model_used: Callable[[str], None] | None = None,
+        preserve_transient_errors: bool = False,
     ) -> tuple[str, int | None]:
         """
         Get AI response with automatic key rotation and health-aware selection.
@@ -285,6 +287,25 @@ class ProviderRouter:
         failed_keys: set[str] = set()
         all_permanent: bool = True  # Track if ALL failures are permanent (model-level)
         had_transient: bool = False
+        last_transient: str | None = None
+        had_nontransient_failure = False
+        last_nontransient: str | None = None
+
+        def note_failure(response: str) -> None:
+            nonlocal last_transient, had_nontransient_failure, last_nontransient
+            if extract_error_code(response) in {ErrorCode.TIMEOUT, ErrorCode.NETWORK, ErrorCode.OVERLOADED}:
+                last_transient = response
+            else:
+                had_nontransient_failure = True
+                last_nontransient = response
+
+        def retained_transient() -> str | None:
+            return last_transient if preserve_transient_errors and not had_nontransient_failure else None
+
+        def recovery_failure() -> str | None:
+            # Opted-in background callers distinguish a cooling pool from real
+            # quota/configuration failures before deciding whether to wait.
+            return (last_nontransient or last_transient) if preserve_transient_errors else None
 
         for attempt in range(max_key_retries):
             key_data, model_used, resolution = await use_case.resolve_ai_request(
@@ -318,6 +339,7 @@ class ProviderRouter:
                             timeout=timeout,
                             _is_fallback=True,
                             on_model_used=on_model_used,
+                            preserve_transient_errors=preserve_transient_errors,
                         )
                     # ── Cross-provider fallback: FreeTheAI → Gemini ──────────
                     if is_freetheai_model(preferred_model) and not _is_fallback:
@@ -339,7 +361,10 @@ class ProviderRouter:
                             timeout=timeout,
                             _is_fallback=True,
                             on_model_used=on_model_used,
+                            preserve_transient_errors=preserve_transient_errors,
                         )
+                    if failure := recovery_failure():
+                        return failure, None
                     return (
                         tag_error(
                             ErrorCode.KEYS_EXHAUSTED,
@@ -366,6 +391,8 @@ class ProviderRouter:
                         ),
                         None,
                     )
+                if failure := recovery_failure():
+                    return failure, None
                 return (
                     tag_error(
                         ErrorCode.KEYS_EXHAUSTED,
@@ -386,6 +413,7 @@ class ProviderRouter:
                 logging.warning("Failed to reserve provider usage before request: %s", exc)
                 reserved = False
             if not reserved:
+                note_failure(tag_error(ErrorCode.GENERIC, "Provider usage admission unavailable"))
                 failed_keys.add(key_data["key_hash"])
                 logging.info(
                     "KEY_EVENT key_reservation_rejected key=%s… model=%s",
@@ -416,6 +444,7 @@ class ProviderRouter:
             except Exception as exc:
                 failed_keys.add(key_data["key_hash"])
                 response_text = user_friendly_error(exc)
+                note_failure(response_text)
                 error_category = classify_key_error(response_text)
                 if error_category == "transient":
                     had_transient = True
@@ -450,6 +479,7 @@ class ProviderRouter:
                 failed_keys.add(key_data["key_hash"])
                 error_category = classify_key_error(response_text)
 
+                note_failure(response_text)
                 if error_category == "transient":
                     had_transient = True
                 if error_category != "permanent":
@@ -513,7 +543,7 @@ class ProviderRouter:
                     preferred_model,
                     fallback_model,
                 )
-                return await self.get_response(
+                fallback_result = await self.get_response(
                     fallback_model,
                     history,
                     system_instruction=system_instruction,
@@ -525,13 +555,21 @@ class ProviderRouter:
                     timeout=timeout,
                     _is_fallback=True,
                     on_model_used=on_model_used,
+                    preserve_transient_errors=preserve_transient_errors,
                 )
+                if preserve_transient_errors and last_nontransient and is_error_message(fallback_result[0]):
+                    return last_nontransient, None
+                if (transient := retained_transient()) and extract_error_code(
+                    fallback_result[0]
+                ) == ErrorCode.KEYS_EXHAUSTED:
+                    return transient, None
+                return fallback_result
 
         # All keys failed for the preferred model. If every failure was
         # "permanent" (API_KEY_INVALID — Google rejects the key for this
         # specific model), try alternative models before giving up.
         if all_permanent and failed_keys:
-            fallback_result = await self._try_model_fallback(
+            permanent_fallback_result = await self._try_model_fallback(
                 preferred_model,
                 history,
                 system_instruction,
@@ -542,8 +580,11 @@ class ProviderRouter:
                 status_mgr,
                 on_model_used=on_model_used,
             )
-            if fallback_result is not None:
-                return fallback_result
+            if permanent_fallback_result is not None:
+                return permanent_fallback_result
+
+        if failure := recovery_failure():
+            return failure, None
 
         is_or = (
             use_openrouter

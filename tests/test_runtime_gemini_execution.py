@@ -211,7 +211,7 @@ async def test_cancellation_stops_model_chain_and_health_writes(monkeypatch, key
 
 
 @pytest.mark.asyncio
-async def test_total_deadline_cancels_sdk_without_trying_reserve_or_penalizing_key(monkeypatch, key_health):
+async def test_total_deadline_cancels_reservation_without_dispatch_or_penalizing_key(monkeypatch, key_health):
     from app.runtime_settings import gemini_execution
 
     monkeypatch.setattr(
@@ -223,18 +223,156 @@ async def test_total_deadline_cancels_sdk_without_trying_reserve_or_penalizing_k
         "app.repos.keys.get_available_gemini_key",
         AsyncMock(return_value={"api_key": "test-key", "key_hash": "test-hash"}),
     )
-    reservation = AsyncMock(return_value=True)
-    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reservation)
     stopped = asyncio.Event()
 
-    async def execute(model, key):
+    async def reserve(*args):
         try:
             await asyncio.Event().wait()
         finally:
             stopped.set()
 
+    reservation = AsyncMock(side_effect=reserve)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reservation)
+    execute = AsyncMock()
     with pytest.raises(TimeoutError):
         await gemini_execution.run_gemini_override("memory.extract", (), execute, timeout=0.01)
     assert stopped.is_set()
     reservation.assert_awaited_once()
+    execute.assert_not_awaited()
     key_health.suspend_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_owned_attempt_timeout_leaves_budget_for_healthy_replacement(monkeypatch, key_health):
+    from app.runtime_settings import gemini_execution
+
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy(("gemini-chosen",), "sequential", True)),
+    )
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(return_value={"api_key": "healthy", "key_hash": "healthy-hash"}),
+    )
+    reserved = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserved)
+    stopped = asyncio.Event()
+    attempts = []
+
+    async def execute(model, key):
+        attempts.append((model, key))
+        if key == "slow":
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+        return "checked"
+
+    assert (
+        await gemini_execution.run_gemini_override("memory.extract", (), execute, initial_api_key="slow", timeout=0.3)
+        == "checked"
+    )
+    assert stopped.is_set()
+    assert attempts == [("gemini-chosen", "slow"), ("gemini-chosen", "healthy")]
+    assert reserved.await_count == 2
+    assert key_health.suspend_key.await_args.args[2:4] == ("transient", "TimeoutError")
+    key_health.record_success.assert_awaited_once_with("healthy-hash", "gemini-chosen")
+
+
+@pytest.mark.asyncio
+async def test_owned_attempt_timeout_leaves_budget_for_configured_reserve_model(monkeypatch, key_health):
+    from app.runtime_settings import gemini_execution
+
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy(("gemini-slow", "gemini-reserve"), "sequential", True)),
+    )
+
+    async def select(model, **kwargs):
+        if model == "gemini-slow":
+            return None
+        return {"api_key": "healthy", "key_hash": "healthy-hash"}
+
+    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", select)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", AsyncMock(return_value=True))
+    attempts = []
+
+    async def execute(model, key):
+        attempts.append((model, key))
+        if model == "gemini-slow":
+            await asyncio.Event().wait()
+        return "checked"
+
+    assert (
+        await gemini_execution.run_gemini_override("memory.extract", (), execute, initial_api_key="slow", timeout=0.3)
+        == "checked"
+    )
+    assert attempts == [("gemini-slow", "slow"), ("gemini-reserve", "healthy")]
+    key_health.record_success.assert_awaited_once_with("healthy-hash", "gemini-reserve")
+
+
+@pytest.mark.asyncio
+async def test_external_deadline_does_not_suspend_or_try_another_key(monkeypatch, key_health):
+    from app.runtime_settings import gemini_execution
+
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy(("gemini-first", "gemini-second"), "sequential", True)),
+    )
+    reserved = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserved)
+    execute = AsyncMock(side_effect=lambda *_args: None)
+    stopped = asyncio.Event()
+
+    async def slow(model, key):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    execute.side_effect = slow
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.01):
+            await gemini_execution.run_gemini_override("memory.extract", (), execute, initial_api_key="slow", timeout=1)
+    assert stopped.is_set()
+    assert execute.await_count == reserved.await_count == 1
+    key_health.suspend_key.assert_not_awaited()
+    key_health.record_success.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_spent_model_budget_during_admission_skips_sdk_without_penalizing_key(monkeypatch, key_health):
+    from app.runtime_settings import gemini_execution
+
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy(("gemini-first", "gemini-second"), "sequential", True)),
+    )
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(return_value={"api_key": "healthy", "key_hash": "healthy-hash"}),
+    )
+
+    async def reserve(key_hash, model):
+        if model == "gemini-first":
+            await asyncio.sleep(0.2)
+        return True
+
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
+    attempts = []
+
+    async def execute(model, key):
+        attempts.append(model)
+        return "checked"
+
+    assert (
+        await gemini_execution.run_gemini_override("memory.extract", (), execute, initial_api_key="slow", timeout=0.3)
+        == "checked"
+    )
+    assert attempts == ["gemini-second"]
+    key_health.suspend_key.assert_not_awaited()
+    key_health.record_success.assert_awaited_once_with("healthy-hash", "gemini-second")

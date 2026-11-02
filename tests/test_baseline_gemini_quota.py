@@ -128,14 +128,23 @@ def baseline_call(monkeypatch):
 async def test_consolidation_fallback_rotates_after_first_request_fills_minute(baseline_call, monkeypatch):
     case = baseline_call
     replacement = {"api_key": "replacement", "key_hash": hashlib.sha256(b"replacement").hexdigest()}
-    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", AsyncMock(return_value=replacement))
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(
+            side_effect=[
+                {"api_key": "test-key", "key_hash": hashlib.sha256(b"test-key").hexdigest()},
+                replacement,
+            ]
+        ),
+    )
     case.reservation_results.extend([True, False, True])
-    case.responses.extend(["invalid JSON", "- Alice codes"])
+    case.responses.extend(["invalid JSON", '{"facts":[{"text":"Alice codes","source_ids":[17]}]}'])
     result = await case.invoke("consolidate")
-    assert result["facts"] == ["Alice codes"]
+    assert result["facts"] == [{"text": "Alice codes", "source_ids": [17]}]
     assert [event[0] for event in case.events] == ["reserve", "sdk", "reserve", "reserve", "sdk"]
     assert case.events[3][1] == replacement["key_hash"]
     case.health.suspend_key.assert_not_awaited()
+    case.health.record_success.assert_awaited_once_with(replacement["key_hash"], case.events[3][2])
 
 
 @pytest.mark.asyncio
@@ -147,7 +156,15 @@ async def test_consolidation_replacement_failure_never_penalizes_initial_key(
 
     case = baseline_call
     replacement = {"api_key": "replacement", "key_hash": hashlib.sha256(b"replacement").hexdigest()}
-    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", AsyncMock(return_value=replacement))
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(
+            side_effect=[
+                {"api_key": "test-key", "key_hash": hashlib.sha256(b"test-key").hexdigest()},
+                replacement,
+            ]
+        ),
+    )
     case.reservation_results.extend([True, False, True])
     error = (
         APIError(429, {"error": {"message": "Quota exceeded retryDelay:47s"}})
@@ -232,9 +249,9 @@ async def test_consolidation_parse_fallback_requires_its_own_reservation(baselin
 @pytest.mark.asyncio
 async def test_consolidation_successful_parse_fallback_counts_both_attempts(baseline_call):
     case = baseline_call
-    case.responses.extend(["invalid JSON", "- Alice codes"])
+    case.responses.extend(["invalid JSON", '{"facts":[{"text":"Alice codes","source_ids":[17]}]}'])
     result = await case.invoke("consolidate")
-    assert result["facts"] == ["Alice codes"]
+    assert result["facts"] == [{"text": "Alice codes", "source_ids": [17]}]
     assert [event[0] for event in case.events] == ["reserve", "sdk", "reserve", "sdk"]
 
 

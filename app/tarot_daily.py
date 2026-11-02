@@ -10,7 +10,14 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 from app import database as db
-from app.errors import ErrorCode, extract_error_code, is_error_message, tag_error
+from app.errors import (
+    ErrorCode,
+    classify_error_from_exception,
+    extract_error_code,
+    extract_retry_after_seconds,
+    is_error_message,
+    tag_error,
+)
 from app.games.daily_execution import checkpoint
 from app.process_policies import ResolvedPolicy, resolve_process, validate_policy
 from app.prompt_registry import get_prompt_text, register_controlled_text
@@ -34,6 +41,7 @@ TAROT_DAILY_MODEL = "gemini-3.5-flash-lite"
 TAROT_DAILY_RPM = 15
 TAROT_DAILY_REQUEST_INTERVAL_SECONDS = 60.0 / TAROT_DAILY_RPM
 TAROT_DAILY_MAX_KEY_RETRIES = 4
+TAROT_DAILY_RETRY_DELAYS = (15.0, 30.0)
 TAROT_DAILY_LANGUAGE = "ru"
 TAROT_DAILY_SYSTEM_PROMPT = (
     "Ты — мистический таролог. Ты заранее готовишь универсальный текст для карты дня.\n"
@@ -58,6 +66,7 @@ _STOP_BATCH_ERROR_CODES = frozenset(
         ErrorCode.NO_KEYS,
     }
 )
+_TRANSIENT_ERROR_CODES = frozenset({ErrorCode.TIMEOUT, ErrorCode.OVERLOADED, ErrorCode.NETWORK})
 
 _local_locks: weakref.WeakValueDictionary[tuple[date, str], asyncio.Lock] = weakref.WeakValueDictionary()
 
@@ -286,36 +295,15 @@ async def prepare_daily_readings(
                     nonlocal successful_model
                     successful_model = model_name
 
-                if policy.explicit:
-                    try:
-                        result = await router.execute_gemini_model_plan(
-                            policy.models,
-                            history,
-                            parse_response=lambda text: text,
-                            system_instruction=instruction,
-                            max_keys=max_key_retries,
-                            thinking_level="low",
-                            timeout=45,
-                            on_model_used=_record_model,
-                        )
-                    except Exception as exc:
-                        code = (
-                            ErrorCode.KEYS_EXHAUSTED
-                            if "No Gemini keys available" in str(exc)
-                            else extract_error_code(str(exc)) or ErrorCode.GENERIC
-                        )
-                        result = tag_error(code, "Prepared tarot daily provider unavailable")
-                else:
-                    result, _tokens = await router.get_response(
-                        preferred_model=baseline_model,
-                        history=history,
-                        system_instruction=instruction,
-                        use_openrouter=False,
-                        max_key_retries=max_key_retries,
-                        thinking_level="low",
-                        timeout=45,
-                        on_model_used=_record_model,
-                    )
+                result = await _generate_card_with_recovery(
+                    router=router,
+                    policy=policy,
+                    history=history,
+                    instruction=instruction,
+                    max_key_retries=max_key_retries,
+                    on_model_used=_record_model,
+                    sleep=sleep,
+                )
                 if not result or not result.strip() or is_error_message(result):
                     failed += 1
                     _consecutive_failures += 1
@@ -384,6 +372,86 @@ async def prepare_daily_readings(
             failed=failed,
             remaining=len(variants) - generated - skipped - failed,
         )
+
+
+async def _generate_card_with_recovery(
+    *,
+    router,
+    policy: ResolvedPolicy,
+    history: list,
+    instruction: str,
+    max_key_retries: int,
+    on_model_used: Callable[[str], None],
+    sleep: Callable[[float], Awaitable[object]],
+) -> str:
+    """Retry one missing interpretation; persistence stays outside recovery."""
+    last_transient: str | None = None
+    last_retry_after: int | None = None
+    for attempt in range(len(TAROT_DAILY_RETRY_DELAYS) + 1):
+        await checkpoint()
+        temporarily_unavailable = False
+        retry_after = None
+        try:
+            if policy.explicit:
+                result = await router.execute_gemini_model_plan(
+                    policy.models,
+                    history,
+                    parse_response=lambda text: text,
+                    system_instruction=instruction,
+                    max_keys=max_key_retries,
+                    thinking_level="low",
+                    timeout=45,
+                    on_model_used=on_model_used,
+                )
+            else:
+                result, _tokens = await router.get_response(
+                    preferred_model=policy.models[0],
+                    history=history,
+                    system_instruction=instruction,
+                    use_openrouter=False,
+                    max_key_retries=max_key_retries,
+                    thinking_level="low",
+                    timeout=45,
+                    on_model_used=on_model_used,
+                    preserve_transient_errors=True,
+                )
+        except Exception as exc:
+            temporarily_unavailable = (
+                policy.explicit and str(exc) == "No Gemini keys available for the requested model plan"
+            )
+            code = (
+                ErrorCode.KEYS_EXHAUSTED
+                if temporarily_unavailable
+                else extract_error_code(str(exc)) or classify_error_from_exception(exc)
+            )
+            if not policy.explicit and code not in _TRANSIENT_ERROR_CODES:
+                raise
+            retry_after = extract_retry_after_seconds(str(exc))
+            result = tag_error(code, "Prepared tarot daily provider unavailable")
+
+        result_code = extract_error_code(result or "")
+        if result_code in _TRANSIENT_ERROR_CODES:
+            last_transient = result
+            last_retry_after = retry_after or extract_retry_after_seconds(result)
+        elif last_transient is not None and (
+            temporarily_unavailable or (not policy.explicit and result_code == ErrorCode.KEYS_EXHAUSTED)
+        ):
+            # A transient failure can briefly suspend the whole model pool.
+            # Opt-in routing preserves actual quota/configuration failures,
+            # leaving KEYS_EXHAUSTED for selection without a provider request.
+            result = last_transient
+        else:
+            return result
+        if attempt == len(TAROT_DAILY_RETRY_DELAYS):
+            return result
+        delay = max(TAROT_DAILY_RETRY_DELAYS[attempt], last_retry_after or 0)
+        logger.warning(
+            "Tarot prep: transient card generation failure; retry %d in %.0fs",
+            attempt + 1,
+            delay,
+        )
+        await sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def _should_stop_batch_after_error(text: str | None) -> bool:

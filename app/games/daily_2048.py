@@ -3,11 +3,16 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+import asyncpg
+
 from app.repos import daily_2048 as repo
+
+logger = logging.getLogger(__name__)
 
 Direction = str
 Board = list[list[int]]
@@ -182,11 +187,36 @@ async def ensure_prepared_puzzles(
     *, now: datetime | None = None, days_ahead: int = repo.DAILY_2048_PREP_DAYS_AHEAD
 ) -> list[repo.Daily2048Puzzle]:
     start_date = repo.today_puzzle_date(now)
-    # ⚡ Perf: was a sequential for-loop calling ensure_puzzle() one-by-one.
-    # asyncio.gather() issues all DB queries concurrently — total latency drops
-    # from sum(RTTs) to max(RTT), saving ~7× round-trips for the default 7-day window.
+
+    async def prepare_date(puzzle_date: date) -> repo.Daily2048Puzzle | None:
+        for attempt in range(2):
+            try:
+                # ensure_puzzle reads first and inserts only at revision zero,
+                # so a retry also recovers an uncertain commit without replacing it.
+                return await repo.ensure_puzzle(puzzle_date)
+            except (TimeoutError, ConnectionError, asyncpg.PostgresConnectionError) as exc:
+                if attempt == 0:
+                    logger.warning(
+                        "daily 2048 preparation retry date=%s error_type=%s", puzzle_date, type(exc).__name__
+                    )
+                    await asyncio.sleep(1)
+                    continue
+                if puzzle_date == start_date:
+                    raise
+                logger.warning("daily 2048 preparation deferred date=%s error_type=%s", puzzle_date, type(exc).__name__)
+        return None
+
+    # Prepare dates concurrently, but a future-date outage must not block today's delivery.
     dates = [start_date + timedelta(days=offset) for offset in range(max(0, days_ahead) + 1)]
-    return list(await asyncio.gather(*[repo.ensure_puzzle(d) for d in dates]))
+    tasks = [asyncio.create_task(prepare_date(puzzle_date)) for puzzle_date in dates]
+    try:
+        puzzles = await asyncio.gather(*tasks)
+        return [puzzle for puzzle in puzzles if puzzle is not None]
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def get_daily_state(

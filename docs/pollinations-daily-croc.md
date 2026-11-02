@@ -46,6 +46,24 @@ Admin card regeneration (web and Telegram) and **Подготовить день
 
 ## Prepare an arbitrary day
 
+Daily 2048 builds its challenge locally and does not call an AI provider or consume
+model quota. Automatic preparation retries a date once after one second for a
+database timeout or connection failure. It reads an existing challenge before any
+revision-zero insertion, so a lost commit acknowledgment recovers the saved puzzle.
+After exhausted transient failures, future dates are deferred without suppressing
+today's ready challenge. Today's failure and nontransient errors still propagate;
+peer tasks are cancelled and awaited when preparation exits exceptionally.
+
+Daily Tarot retries an individual interpretation for timeout, network and 503
+failures up to three generation rounds, with 15- and 30-second delays or a longer
+provider retry delay. Existing per-request timeouts and key-attempt caps remain;
+the administrative job owns its overall 30-minute execution budget. Routing opts
+into retaining the actual failure category, so a temporary cooldown is distinct
+from real quota or credential failure. Initial key unavailability does not start
+a retry loop. Already saved interpretations are skipped during ordinary preparation;
+generation retries do not replay persistence, progress updates or delivery. Content
+revision and ownership checks still fence writes, and cancellation propagates.
+
 ### Recovery from temporary text-provider failures
 
 Crocodile text calls permit at most two key attempts for timeout, network or

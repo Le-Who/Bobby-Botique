@@ -36,6 +36,7 @@ async def run_gemini_override[T](
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be finite and positive")
     async with asyncio.timeout(timeout):
+        deadline = asyncio.get_running_loop().time() + timeout
         return await _run_gemini_override(
             process_id,
             baseline,
@@ -43,6 +44,7 @@ async def run_gemini_override[T](
             initial_api_key=initial_api_key,
             max_key_attempts=max_key_attempts,
             use_baseline=use_baseline,
+            deadline=deadline,
         )
 
 
@@ -54,6 +56,7 @@ async def _run_gemini_override[T](
     initial_api_key: str | None = None,
     max_key_attempts: int = 3,
     use_baseline: bool = False,
+    deadline: float,
 ) -> T | None:
     """Run configured models in order, rotating keys for provider failures.
 
@@ -62,8 +65,9 @@ async def _run_gemini_override[T](
     their own local limits. Key attempts are bounded for each model, including
     reservation races. Domain parsing failures advance to the next model without
     penalizing a key. The public wrapper owns the total deadline; cancellation and
-    reservation infrastructure errors propagate. There is no implicit provider
-    or baseline fallback.
+    reservation infrastructure errors propagate. Each model receives a share of
+    the remaining deadline; each SDK attempt leaves time for a replacement key.
+    There is no implicit provider or baseline fallback.
     """
     from app.errors import (
         classify_error_from_exception,
@@ -83,8 +87,13 @@ async def _run_gemini_override[T](
 
     last_error: Exception | None = None
     for index, model in enumerate(policy.models):
+        now = asyncio.get_running_loop().time()
+        model_deadline = now + max(0.0, deadline - now) / (len(policy.models) - index)
         excluded_hashes: set[str] = set()
         for key_attempt in range(max_key_attempts):
+            if asyncio.get_running_loop().time() >= model_deadline:
+                last_error = TimeoutError("Gemini model budget exhausted before dispatch")
+                break
             if index == 0 and key_attempt == 0 and initial_api_key:
                 key = initial_api_key
                 key_hash = hashlib.sha256(key.encode()).hexdigest()
@@ -103,8 +112,16 @@ async def _run_gemini_override[T](
             if not await reserve_gemini_key_usage(key_hash, model):
                 last_error = RuntimeError(f"Gemini RPD limit reached for {model}")
                 continue
+            remaining = model_deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                last_error = TimeoutError("Gemini model budget exhausted during admission")
+                break
             try:
-                result = await execute(model, key)
+                attempt_timeout = remaining * 2 / 3 if key_attempt + 1 < max_key_attempts else remaining * 0.95
+                # Only this owned attempt deadline becomes a recoverable error.
+                # Caller cancellation and the whole-chain deadline propagate.
+                async with asyncio.timeout(attempt_timeout):
+                    result = await execute(model, key)
                 if result is None:
                     raise ValueError("Configured Gemini attempt returned an empty result")
             except Exception as error:

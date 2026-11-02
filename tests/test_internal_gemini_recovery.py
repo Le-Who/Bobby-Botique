@@ -1,5 +1,6 @@
 """Internal workloads reserve each dispatch and recover without poisoning keys."""
 
+import asyncio
 import hashlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -13,7 +14,14 @@ from app.process_policies import ResolvedPolicy
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("explicit", [False, True])
-@pytest.mark.parametrize("error", [APIError(429, {"error": {"message": "Quota exceeded"}}), httpx.ReadTimeout("slow")])
+@pytest.mark.parametrize(
+    "error",
+    [
+        APIError(429, {"error": {"message": "Quota exceeded"}}),
+        APIError(503, {"error": {"message": "UNAVAILABLE"}}),
+        httpx.ReadTimeout("slow"),
+    ],
+)
 async def test_consolidation_rotates_provider_failure_instead_of_retrying_plain_text(monkeypatch, explicit, error):
     from app.repos import memory_consolidation as consolidation
     from app.runtime_settings import gemini_execution
@@ -154,16 +162,207 @@ async def test_consolidation_invalid_structure_uses_reserved_format_fallback(mon
         AsyncMock(return_value=ResolvedPolicy(("gemini-test",), "sequential", False)),
     )
     reservations = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(return_value={"api_key": "fake-key", "key_hash": hashlib.sha256(b"fake-key").hexdigest()}),
+    )
     health = SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
     monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reservations)
     monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: health)
-    generate = AsyncMock(side_effect=[SimpleNamespace(text=raw), SimpleNamespace(text="- checked fact")])
+    generate = AsyncMock(
+        side_effect=[
+            SimpleNamespace(text=raw),
+            SimpleNamespace(text='{"facts":[{"text":"checked fact","source_ids":[17]}]}'),
+        ]
+    )
     client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
     monkeypatch.setattr("app.providers.gemini.get_cached_genai_client", lambda _: client)
     assert await consolidation._extract_graph("synthetic", "fake-key") == {
-        "facts": ["checked fact"],
+        "facts": [{"text": "checked fact", "source_ids": [17]}],
         "entities": [],
         "relations": [],
     }
     assert reservations.await_count == generate.await_count == 2
     health.suspend_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_consolidation_repair_rotates_503_and_restores_only_the_answering_key(monkeypatch):
+    from app.repos import memory_consolidation as consolidation
+    from app.runtime_settings import gemini_execution
+
+    model = "gemini-test"
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy((model,), "sequential", False)),
+    )
+    selected = AsyncMock(
+        side_effect=[
+            {"api_key": "initial", "key_hash": hashlib.sha256(b"initial").hexdigest()},
+            {"api_key": "healthy", "key_hash": "healthy-hash"},
+        ]
+    )
+    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", selected)
+    reserved = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserved)
+    health = SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: health)
+    attempts = []
+
+    def client(key):
+        async def generate(**kwargs):
+            attempts.append((key, kwargs["config"].response_mime_type))
+            if len(attempts) == 1:
+                return SimpleNamespace(text="invalid JSON")
+            if key == "initial":
+                raise APIError(503, {"error": {"message": "UNAVAILABLE"}})
+            return SimpleNamespace(text='{"facts":[{"text":"Alice codes","source_ids":[17]}]}')
+
+        return SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+
+    monkeypatch.setattr("app.providers.gemini.get_cached_genai_client", client)
+    result = await consolidation._extract_graph("[memory_id=17] Alice codes", "initial")
+    assert result == {"facts": [{"text": "Alice codes", "source_ids": [17]}], "entities": [], "relations": []}
+    assert attempts == [
+        ("initial", "application/json"),
+        ("initial", "application/json"),
+        ("healthy", "application/json"),
+    ]
+    assert reserved.await_count == 3
+    health.suspend_key.assert_awaited_once_with(
+        hashlib.sha256(b"initial").hexdigest(), model, "transient", "APIError", retry_after_seconds=None
+    )
+    health.record_success.assert_awaited_once_with("healthy-hash", model)
+
+
+@pytest.mark.asyncio
+async def test_consolidation_repair_does_not_reuse_suspended_primary_key(monkeypatch):
+    from app.repos import memory_consolidation as consolidation
+    from app.runtime_settings import gemini_execution
+
+    model = "gemini-test"
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy((model,), "sequential", False)),
+    )
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(return_value={"api_key": "replacement", "key_hash": "replacement-hash"}),
+    )
+    reserved = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserved)
+    health = SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: health)
+    attempts = []
+
+    def client(key):
+        async def generate(**kwargs):
+            attempts.append(key)
+            if key == "initial":
+                raise APIError(503, {"error": {"message": "UNAVAILABLE"}})
+            if attempts.count("replacement") == 1:
+                return SimpleNamespace(text="invalid JSON")
+            return SimpleNamespace(text='{"facts":[{"text":"Alice codes","source_ids":[17]}]}')
+
+        return SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+
+    monkeypatch.setattr("app.providers.gemini.get_cached_genai_client", client)
+    assert (await consolidation._extract_graph("[memory_id=17] Alice codes", "initial"))["facts"] == [
+        {"text": "Alice codes", "source_ids": [17]}
+    ]
+    assert attempts == ["initial", "replacement", "replacement"]
+    assert reserved.await_count == 3
+    health.suspend_key.assert_awaited_once_with(
+        hashlib.sha256(b"initial").hexdigest(), model, "transient", "APIError", retry_after_seconds=None
+    )
+    health.record_success.assert_awaited_once_with("replacement-hash", model)
+
+
+@pytest.mark.asyncio
+async def test_consolidation_hung_sdk_recovers_before_extraction_deadline(monkeypatch):
+    from app.repos import memory_consolidation as consolidation
+    from app.runtime_settings import gemini_execution
+
+    model = "gemini-test"
+    monkeypatch.setattr(consolidation, "_EXTRACTION_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy((model,), "sequential", False)),
+    )
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(return_value={"api_key": "healthy", "key_hash": "healthy-hash"}),
+    )
+    reserved = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserved)
+    health = SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: health)
+    stopped = asyncio.Event()
+    attempts = []
+
+    def client(key):
+        async def generate(**kwargs):
+            attempts.append(key)
+            if key == "slow":
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    stopped.set()
+            return SimpleNamespace(text='{"facts":[{"text":"Alice codes","source_ids":[17]}]}')
+
+        return SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+
+    monkeypatch.setattr("app.providers.gemini.get_cached_genai_client", client)
+    result = await consolidation._extract_graph("[memory_id=17] Alice codes", "slow")
+    assert result["facts"] == [{"text": "Alice codes", "source_ids": [17]}]
+    assert stopped.is_set()
+    assert attempts == ["slow", "healthy"]
+    assert reserved.await_count == 2
+    assert health.suspend_key.await_args.args[2:4] == ("transient", "TimeoutError")
+    health.record_success.assert_awaited_once_with("healthy-hash", model)
+
+
+@pytest.mark.asyncio
+async def test_consolidation_cancellation_closes_sdk_without_repair_or_health_writes(monkeypatch):
+    from app.repos import memory_consolidation as consolidation
+    from app.runtime_settings import gemini_execution
+
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy(("gemini-test",), "sequential", False)),
+    )
+    reserved = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserved)
+    health = SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: health)
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+    events = []
+    monkeypatch.setattr(
+        "app.observability.workload_events.emit", lambda event, **fields: events.append((event, fields))
+    )
+
+    async def generate(**kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    monkeypatch.setattr("app.providers.gemini.get_cached_genai_client", lambda _: client)
+    task = asyncio.create_task(consolidation._extract_graph("[memory_id=17] Alice codes", "initial"))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert stopped.is_set()
+    assert reserved.await_count == 1
+    health.suspend_key.assert_not_awaited()
+    health.record_success.assert_not_awaited()
+    terminals = [fields for name, fields in events if name == "workload.attempt_finished"]
+    assert len(terminals) == 1 and terminals[0]["outcome"] == "cancelled"

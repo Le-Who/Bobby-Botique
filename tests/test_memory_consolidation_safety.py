@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.process_policies import ResolvedPolicy
 from app.repos import memory as memory_repo
 from app.repos import memory_consolidation as consolidation
 
@@ -732,3 +733,83 @@ async def test_consolidation_persists_exact_derivation_and_edge_provenance(monke
     _, edge_args = next((sql, args) for sql, args in statements if "INSERT INTO memory_edge_sources" in sql)
     assert edge_args[1] == [9002]
     assert 9001 not in edge_args[1]
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_repair_commits_exact_sources_once(monkeypatch):
+    from app.runtime_settings import gemini_execution
+
+    raw = [_raw_memory(1)]
+    conn = _ConsolidationConnection(snapshot_rows=raw, inserted_fact_ids=[9001])
+    _install_db(monkeypatch, conn)
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy(("gemini-test",), "sequential", False)),
+    )
+    monkeypatch.setattr(memory_repo, "_get_embedding", AsyncMock(return_value=[0.1, 0.2]))
+    reservations = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(return_value={"api_key": "test-key", "key_hash": "test-hash"}),
+    )
+    health = SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reservations)
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: health)
+    generate = AsyncMock(
+        side_effect=[
+            SimpleNamespace(text="invalid JSON"),
+            SimpleNamespace(text='{"facts":[{"text":"Alice codes","source_ids":[1]}],"entities":[],"relations":[]}'),
+        ]
+    )
+    client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    monkeypatch.setattr("app.providers.gemini.get_cached_genai_client", lambda _: client)
+
+    assert await consolidation.consolidate_memories(42, "test-key", _prefetched_memories=raw, expected_epoch=7) == 1
+    assert reservations.await_count == generate.await_count == 2
+    inserts = [args for _, sql, args in conn.calls if "INSERT INTO long_term_memory" in sql]
+    assert len(inserts) == 1 and inserts[0][1] == "Alice codes"
+    derivation_args = next(args for _, sql, args in conn.calls if "INSERT INTO memory_derivation_sources" in sql)
+    assert derivation_args[:2] == ([9001], [1])
+    assert len([sql for _, sql, _ in conn.calls if "SET consolidated_at" in sql]) == 1
+    health.suspend_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_exhausted_provider_recovery_preserves_raw_sources_without_embeddings(monkeypatch):
+    from google.genai.errors import APIError
+
+    from app.runtime_settings import gemini_execution
+
+    raw = [_raw_memory(1)]
+    conn = _ConsolidationConnection(snapshot_rows=raw)
+    _install_db(monkeypatch, conn)
+    monkeypatch.setattr(
+        gemini_execution,
+        "resolve_process",
+        AsyncMock(return_value=ResolvedPolicy(("gemini-test",), "sequential", False)),
+    )
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(
+            side_effect=[
+                {"api_key": "second", "key_hash": "second-hash"},
+                {"api_key": "third", "key_hash": "third-hash"},
+            ]
+        ),
+    )
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "app.repos.keys.get_key_status_manager",
+        lambda: SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock()),
+    )
+    generate = AsyncMock(side_effect=APIError(503, {"error": {"message": "UNAVAILABLE"}}))
+    client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    monkeypatch.setattr("app.providers.gemini.get_cached_genai_client", lambda _: client)
+    embeddings = AsyncMock(return_value=[0.1, 0.2])
+    monkeypatch.setattr(memory_repo, "_get_embedding", embeddings)
+
+    assert await consolidation.consolidate_memories(42, "test-key", _prefetched_memories=raw, expected_epoch=7) == 0
+    assert generate.await_count == 3
+    embeddings.assert_not_awaited()
+    assert not any("INSERT INTO" in sql or "SET consolidated_at" in sql for _, sql, _ in conn.calls)
