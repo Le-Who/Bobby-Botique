@@ -463,9 +463,10 @@ async def observed_counts(channel, *, day=None, mode="delivery"):
 async def purge_retained_recipients():
     async with transaction() as conn:
         # At most 1000 rows per maintenance call; attempts cascade with snapshots.
+        # A fixed statement cutoff lets the existing created_at index bound the scan.
         return await conn.execute("""DELETE FROM public.broadcast_recipients WHERE (batch_id,recipient_id,channel) IN
             (SELECT batch_id,recipient_id,channel FROM public.broadcast_recipients
-             WHERE created_at<clock_timestamp()-INTERVAL '30 days' ORDER BY created_at LIMIT 1000)""")
+             WHERE created_at<statement_timestamp()-INTERVAL '30 days' ORDER BY created_at LIMIT 1000)""")
 
 
 async def acknowledge_horoscope(user_id, variant, recipient):

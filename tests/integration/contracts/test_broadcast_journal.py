@@ -1,6 +1,8 @@
 """Real PostgreSQL commits, ownership fences, erasure and admin-only journal RLS."""
 
 import asyncio
+import json
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
@@ -135,6 +137,45 @@ async def test_personal_retention_30_days_does_not_remove_anonymous_aggregate(co
     await repo.purge_retained_recipients()
     assert await repo.recipients(str(batch["batch_id"])) == []
     assert await repo.read_batch(str(batch["batch_id"])) is not None
+
+
+@pytest.mark.asyncio
+async def test_retention_uses_index_bound_when_only_recent_recipients_exist(contract_pool, monkeypatch):
+    async with contract_pool.acquire() as conn, conn.transaction():
+        # Copy the real indexes without copying foreign keys or personal rows.
+        await conn.execute(
+            "CREATE TEMP TABLE retention_candidates "
+            "(LIKE public.broadcast_recipients INCLUDING DEFAULTS INCLUDING INDEXES) ON COMMIT DROP"
+        )
+        await conn.execute(
+            """INSERT INTO retention_candidates(batch_id,recipient_id,channel,privacy_epoch,created_at)
+               SELECT $1,n,'tarot',7,statement_timestamp()-INTERVAL '1 day'
+               FROM generate_series(1,10000) n""",
+            uuid4(),
+        )
+        await conn.execute("ANALYZE retention_candidates")
+        plans = []
+
+        class RetentionConnection:
+            async def execute(self, query):
+                query = query.replace("public.broadcast_recipients", "pg_temp.retention_candidates")
+                plans.append(json.loads(await conn.fetchval("EXPLAIN (FORMAT JSON) " + query))[0]["Plan"])
+                return await conn.execute(query)
+
+        @asynccontextmanager
+        async def retention_transaction():
+            yield RetentionConnection()
+
+        monkeypatch.setattr(repo, "transaction", retention_transaction)
+        assert await repo.purge_retained_recipients() == "DELETE 0"
+        nodes = list(plans)
+        indexed_cutoff = False
+        while nodes:
+            node = nodes.pop()
+            indexed_cutoff |= "created_at" in node.get("Index Cond", "")
+            nodes.extend(node.get("Plans", []))
+        assert indexed_cutoff, "Retention must seek to its cutoff instead of filtering every recent row"
+        assert await conn.fetchval("SELECT COUNT(*) FROM retention_candidates") == 10000
 
 
 @pytest.mark.asyncio
