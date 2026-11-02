@@ -984,6 +984,7 @@ class ProviderRouter:
         use_case = AgentRequestUseCase()
         if first_text_deadline is None:
             first_text_deadline = asyncio.get_running_loop().time() + request.first_text_timeout_seconds
+        model_deadline = first_text_deadline
         status_mgr = get_key_status_manager()
         model_queue = list(model_plan or request.models)
         attempted_models: set[str] = set()
@@ -1025,7 +1026,7 @@ class ProviderRouter:
 
                     report_vertex_error(RuntimeError(failure.diagnostic))
                 elif not is_opencode_model(model_name) and not is_freetheai_model(model_name):
-                    async with asyncio.timeout(max(0.0, first_text_deadline - asyncio.get_running_loop().time())):
+                    async with asyncio.timeout(max(0.0, model_deadline - asyncio.get_running_loop().time())):
                         await status_mgr.suspend_key(
                             key_hash,
                             model_name,
@@ -1047,7 +1048,7 @@ class ProviderRouter:
             except TimeoutError:
                 logging.debug("Typed-stream winner key-health update exceeded its best-effort budget")
 
-        def _first_text_timeout(model_name: str, race_id: str) -> StreamFailed:
+        def _first_text_timeout(model_name: str, race_id: str, *, timeout_seconds: float | None = None) -> StreamFailed:
             from app.observability.events import emit
 
             emit(
@@ -1057,7 +1058,8 @@ class ProviderRouter:
                 race_id=race_id,
                 actual_model=model_name,
                 reason_code=ErrorCode.TIMEOUT.value,
-                timeout_seconds=request.first_text_timeout_seconds,
+                timeout_seconds=request.first_text_timeout_seconds if timeout_seconds is None else timeout_seconds,
+                route_timeout_seconds=request.first_text_timeout_seconds,
             )
             return StreamFailed(
                 code=ErrorCode.TIMEOUT,
@@ -1077,6 +1079,22 @@ class ProviderRouter:
                 continue
             attempted_models.add(preferred_model)
 
+            # A sequential chat plan must give its configured backups a chance
+            # within the same route deadline, even if a primary key never replies.
+            reserve_fallback_time = (
+                request.route_strategy == "sequential"
+                and request.workload is Workload.INTERACTIVE
+                and not request.allow_deferred
+                and bool(model_queue)
+            )
+            now = asyncio.get_running_loop().time()
+            model_deadline = first_text_deadline
+            model_timeout_seconds = max(0.0, first_text_deadline - now)
+            if reserve_fallback_time:
+                remaining_models = len(set(model_queue) - attempted_models)
+                model_timeout_seconds /= remaining_models + 1
+                model_deadline = now + model_timeout_seconds
+
             failed_keys: set[str] = set()
             model_had_transient = False
             model_all_permanent = True
@@ -1085,7 +1103,7 @@ class ProviderRouter:
             remaining_key_attempts = key_attempt_limit
 
             for attempt in range(2 * request.key_attempt_rounds):
-                if remaining_key_attempts <= 0 or asyncio.get_running_loop().time() >= first_text_deadline:
+                if remaining_key_attempts <= 0 or asyncio.get_running_loop().time() >= model_deadline:
                     break
                 keys_to_race: list[dict] = []
                 resolved_model: str | None = None
@@ -1099,7 +1117,7 @@ class ProviderRouter:
                 key_count = min(2 if racing_primary else 1, remaining_key_attempts)
 
                 try:
-                    async with asyncio.timeout(max(0.0, first_text_deadline - asyncio.get_running_loop().time())):
+                    async with asyncio.timeout(max(0.0, model_deadline - asyncio.get_running_loop().time())):
                         for _race_idx in range(key_count):
                             if resolved_model is not None and resolved_model != preferred_model:
                                 break
@@ -1175,7 +1193,9 @@ class ProviderRouter:
                             keys_to_race = reserved_keys
 
                 except TimeoutError:
-                    last_failure = _first_text_timeout(resolved_model or preferred_model, race_id)
+                    last_failure = _first_text_timeout(
+                        resolved_model or preferred_model, race_id, timeout_seconds=model_timeout_seconds
+                    )
                     model_had_transient = True
                     model_all_permanent = False
                     break
@@ -1303,7 +1323,7 @@ class ProviderRouter:
                     candidates: list[dict] = keys_to_race,
                     excluded_keys: set[str] = failed_keys,
                     race_model: str = model_used,
-                    deadline: float = first_text_deadline,
+                    deadline: float = model_deadline,
                     provider_race_id: str = race_id,
                     attempt_number: int = attempt + 1,
                     race_tasks: list[asyncio.Task[None]] = tasks,
@@ -1352,24 +1372,24 @@ class ProviderRouter:
                 try:
                     while winner_idx is None and len(done) < len(tasks):
                         try:
-                            deadline = (
-                                first_text_deadline if hedge_checked else min(first_text_deadline, hedge_deadline)
-                            )
+                            deadline = model_deadline if hedge_checked else min(model_deadline, hedge_deadline)
                             race_idx, race_event, race_error, race_done = await asyncio.wait_for(
                                 queue.get(), timeout=max(0.0, deadline - asyncio.get_running_loop().time())
                             )
                         except TimeoutError:
                             if (
                                 not hedge_checked
-                                and hedge_deadline < first_text_deadline
-                                and asyncio.get_running_loop().time() < first_text_deadline
+                                and hedge_deadline < model_deadline
+                                and asyncio.get_running_loop().time() < model_deadline
                             ):
                                 # The soft timer adds one reserve; existing requests
                                 # remain eligible and retain their key health.
                                 hedge_checked = True
                                 tasks.append(asyncio.create_task(run_reserve(len(keys_to_race))))
                                 continue
-                            timeout_failure = _first_text_timeout(model_used, race_id)
+                            timeout_failure = _first_text_timeout(
+                                model_used, race_id, timeout_seconds=model_timeout_seconds
+                            )
                             race_timeout = timeout_failure
                             for index in range(len(keys_to_race)):
                                 pre_text_terminals.setdefault(index, timeout_failure)
@@ -1447,6 +1467,13 @@ class ProviderRouter:
                             last_failure = race_timeout
                             model_had_transient = True
                             model_all_permanent = False
+                        if reserve_fallback_time and any(
+                            isinstance(terminal, StreamFailed) and terminal.code is ErrorCode.OVERLOADED
+                            for terminal in pre_text_terminals.values()
+                        ):
+                            # No key produced text. Repeating model-overload
+                            # errors across more keys only delays the next model.
+                            break
                         continue
 
                     for index, task in enumerate(tasks):
