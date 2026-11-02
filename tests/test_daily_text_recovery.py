@@ -12,6 +12,57 @@ from app.games import daily_ai
 from app.process_policies import ResolvedPolicy
 
 
+@pytest.mark.asyncio
+async def test_used_word_is_rejected_with_feedback_then_new_candidate_accepted(monkeypatch):
+    prompts = []
+
+    async def generate(process, prompt, model):
+        assert (process, model) == ("words", "gemini-test")
+        prompts.append(prompt)
+        return '{"word":"бобёр"}' if len(prompts) == 1 else '{"word":"утконос"}'
+
+    monkeypatch.setattr(daily_ai, "generate_daily_text_for", generate)
+    assert await daily_ai.generate_daily_word("Животные", "hard", {"бобер"}, "gemini-test") == "утконос"
+    assert len(prompts) == 2
+    assert "бобёр" not in prompts[0]
+    assert "бобёр" in prompts[1]
+    assert prompts[1] != prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_repeated_used_word_stops_after_three_candidates(monkeypatch):
+    generate = AsyncMock(return_value='{"word":"бобёр"}')
+    monkeypatch.setattr(daily_ai, "generate_daily_text_for", generate)
+    assert await daily_ai.generate_daily_word("Животные", "hard", {"бобер"}, "gemini-test") is None
+    assert generate.await_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", ['{"word":"telescope"}', '{"word":42}', "bad json", '{"word":""}'])
+async def test_invalid_word_does_not_start_candidate_retry(monkeypatch, response):
+    generate = AsyncMock(return_value=response)
+    monkeypatch.setattr(daily_ai, "generate_daily_text_for", generate)
+    assert await daily_ai.generate_daily_word("Животные", "hard", set(), "gemini-test") is None
+    generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_word_provider_failure_stops_candidate_recovery(monkeypatch):
+    generate = AsyncMock(side_effect=['{"word":"бобёр"}', TimeoutError()])
+    monkeypatch.setattr(daily_ai, "generate_daily_text_for", generate)
+    assert await daily_ai.generate_daily_word("Животные", "hard", {"бобер"}, "gemini-test") is None
+    assert generate.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_word_candidate_recovery_propagates_cancellation(monkeypatch):
+    generate = AsyncMock(side_effect=['{"word":"бобёр"}', asyncio.CancelledError()])
+    monkeypatch.setattr(daily_ai, "generate_daily_text_for", generate)
+    with pytest.raises(asyncio.CancelledError):
+        await daily_ai.generate_daily_word("Животные", "hard", {"бобер"}, "gemini-test")
+    assert generate.await_count == 2
+
+
 @pytest.fixture
 def provider(monkeypatch):
     attempts = []

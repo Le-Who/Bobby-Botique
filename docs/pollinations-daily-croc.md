@@ -58,6 +58,12 @@ retry loop and uses one key attempt per call. Caller cancellation propagates
 without penalizing a key or starting another request.
 
 The local word bank only supplies unused words of the requested difficulty.
+When AI returns a valid word that was already used (including an е/ё spelling
+variant), word selection requests a different candidate with explicit rejection
+feedback. This allows at most three candidate generations, each through the same
+configured model chain and quota admission, for at most 90 seconds of provider-call
+budgets at the default timeout. Malformed content or an exhausted provider call
+ends candidate recovery immediately; duplicate content does not penalize a key.
 If that bank is exhausted and AI generation fails, preparation remains incomplete
 for the next hourly scheduler pass; it never reuses an old word or lowers difficulty.
 
