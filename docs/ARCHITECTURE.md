@@ -91,26 +91,28 @@ Avoid static file-size/module-count maps: they drift without helping identify ow
 
 ## Provider latency
 
-`GenerationRequest.first_text_timeout_seconds` defines one deadline across all
-keys, rotations and model fallbacks, including both hedged model lanes. It is
-separate from transport/completion limits. These are interface policy caps, not
-provider SLAs or measured deployment p95s:
+Interactive requests have no application deadline for first text or for silence
+between text chunks: `GenerationRequest.first_text_timeout_seconds` and
+`stream_idle_timeout_seconds` are `None`. They remain owned until a provider outcome
+or request-owner cancellation (including user stop, supersession and shutdown).
+Independent SDK/HTTP transport failures still end an attempt and use the normal
+key/model recovery path. Bounded workflows retain interface policy caps:
 
 | Request context | First visible text cap | Inline completion cap |
 | --- | --- | --- |
-| Gemini Flash chat, low or explicit off | 12 s | — |
-| Gemini Flash chat, auto/default or medium | 20 s | — |
-| High reasoning, or other model families | 30 s | — |
-| Quick Search / provider Search grounding | 20 s | — |
+| Interactive chat, any thinking level/model | No application deadline | — |
+| Deferred retry, Flash low/off | 12 s | — |
+| Deferred retry, Flash auto/medium | 20 s | — |
+| Deferred retry, high or other model families | 30 s | — |
+| Quick Search | 20 s | — |
 | Inline text, any reasoning level | 6 s | 12 s |
 | Inline with Search grounding | 10 s | 20 s |
 
 Google recommends low thinking for latency-sensitive chat and explains that
 [3.8 Flash medium/high performs more reasoning](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.8).
 These recommendations do not establish this deployment's latency distribution.
-The timer values are interface policy choices; long-context or high-reasoning
-requests can hit them. Real provider load and transport failures remain separate
-causes. Select a measured reserve delay from workload/model/thinking/context
+Provider load and transport failures remain separate causes of latency. Select a
+measured reserve delay from workload/model/thinking/context
 histograms when operational evidence is available.
 
 Only the primary attempt may start a pair of keys. Later key rotations and model
@@ -136,23 +138,21 @@ The first visible text wins; all other lanes are cancelled and awaited. Router
 deadlines leave key health unchanged; provider errors retain their dispositions.
 
 Explicit sequential interactive chat plans keep their configured model order.
-Before visible text, each model receives a share of the remaining route budget
-based on the number of models still in that plan. With two models and a 20-second
-route cap, the first receives up to ten seconds, including key lookup, reservation
-and key retries; the backup receives the remaining time. An initial key race that
+Waiting alone does not cancel a pending model or start the next model. A healthy
+late response remains eligible. An initial key race that
 ends without text and reports `OVERLOADED` advances directly to the next configured
 model instead of spending more attempts on the overloaded model. Key-specific
-quota/auth failures still rotate keys. Single-model, inline and deferred routes
-retain their existing budgets. A model timeout does not reset the route deadline
-or penalize a silent key; cancellation cleanup is awaited before advancing.
+quota/auth failures still rotate keys. Inline, search and deferred routes retain
+their existing budgets. Bounded route deadlines do not penalize a silent key;
+cancellation cleanup is awaited before advancing.
 
 Winner key-health persistence runs in a separate request-owned task with a
 one-second best-effort cap; it cannot hold the first visible delta. Other health
 writes use the remaining first-text budget. Cancellation cleanup is awaited and
-may extend completion past a deadline. After text begins, silence is limited to
-10 seconds between chunks (five for inline); a stall yields a typed after-text
-timeout, preserving partial delivery. Transport/completion timeouts still apply
-independently, including the 120-second non-inline transport allowance.
+may extend completion past a bounded workflow's deadline. Inline silence is
+limited to five seconds and other bounded workflows to ten; a stall preserves
+partial delivery. Interactive streams keep waiting across quiet intervals.
+SDK/HTTP transport timeouts still apply independently.
 
 Inline queries return their selectable placeholders before generation. After
 selection, a usable completed standby wins immediately, without the former

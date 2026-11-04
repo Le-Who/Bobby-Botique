@@ -51,13 +51,14 @@ def test_generation_request_is_immutable_and_normalizes_models():
 @pytest.mark.parametrize(
     "workload,thinking,grounding,first_text,completion",
     [
-        (Workload.INTERACTIVE, ThinkingLevel.LOW, GroundingMode.NONE, 12.0, 120.0),
-        (Workload.INTERACTIVE, ThinkingLevel.OFF, GroundingMode.NONE, 12.0, 120.0),
-        (Workload.INTERACTIVE, ThinkingLevel.MEDIUM, GroundingMode.NONE, 20.0, 120.0),
-        (Workload.INTERACTIVE, None, GroundingMode.NONE, 20.0, 120.0),
-        (Workload.INTERACTIVE, ThinkingLevel.HIGH, GroundingMode.NONE, 30.0, 120.0),
+        (Workload.INTERACTIVE, ThinkingLevel.LOW, GroundingMode.NONE, None, 120.0),
+        (Workload.INTERACTIVE, ThinkingLevel.OFF, GroundingMode.NONE, None, 120.0),
+        (Workload.INTERACTIVE, ThinkingLevel.MEDIUM, GroundingMode.NONE, None, 120.0),
+        (Workload.INTERACTIVE, None, GroundingMode.NONE, None, 120.0),
+        (Workload.INTERACTIVE, ThinkingLevel.HIGH, GroundingMode.NONE, None, 120.0),
         (Workload.QUICK_SEARCH, ThinkingLevel.LOW, GroundingMode.NONE, 20.0, 120.0),
-        (Workload.INTERACTIVE, ThinkingLevel.LOW, GroundingMode.PROVIDER_SEARCH_REQUIRED, 20.0, 120.0),
+        (Workload.INTERACTIVE, ThinkingLevel.LOW, GroundingMode.PROVIDER_SEARCH_REQUIRED, None, 120.0),
+        (Workload.DEFERRED_RETRY, ThinkingLevel.LOW, GroundingMode.NONE, 12.0, 120.0),
         (Workload.INLINE, ThinkingLevel.LOW, GroundingMode.NONE, 6.0, 12.0),
         (Workload.INLINE, ThinkingLevel.HIGH, GroundingMode.NONE, 6.0, 12.0),
         (Workload.INLINE, ThinkingLevel.LOW, GroundingMode.PROVIDER_SEARCH_REQUIRED, 10.0, 20.0),
@@ -66,8 +67,8 @@ def test_generation_request_is_immutable_and_normalizes_models():
 def test_latency_policy_separates_first_visible_text_from_completion(
     workload, thinking, grounding, first_text, completion
 ):
-    # A workload or thinking branch must not inherit a long transport timeout
-    # as its blank-screen budget, especially inline/high and grounded/low.
+    # Interactive work stays owned until completion/cancellation. Telegram's
+    # expiring inline workflow and background retries retain bounded deadlines.
     request = GenerationRequest(
         models=("gemini-3.8-flash",),
         turns=(PromptTurn(PromptRole.USER, (TextPart("question"),)),),
@@ -77,6 +78,9 @@ def test_latency_policy_separates_first_visible_text_from_completion(
     )
     assert request.first_text_timeout_seconds == first_text
     assert request.provider_timeout_seconds == completion
+    assert request.stream_idle_timeout_seconds == (
+        None if workload is Workload.INTERACTIVE else 5.0 if workload is Workload.INLINE else 10.0
+    )
 
 
 @pytest.mark.parametrize(
