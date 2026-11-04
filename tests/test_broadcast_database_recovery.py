@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, Mock
 
 import asyncpg
 import pytest
+from asyncpg.pool import PoolConnectionProxy
+from asyncpg.transaction import Transaction
 
 from app import broadcast_jobs as jobs
 from app.repos import broadcast_jobs as journal
@@ -168,3 +170,150 @@ async def test_periodic_recovery_does_not_hide_schema_errors_or_cancellation(mon
     monkeypatch.setattr(jobs, "service", SimpleNamespace(recover=recover))
     with pytest.raises(error_type):
         await jobs.recover_broadcast_jobs()
+
+
+@pytest.fixture
+def native_pool(monkeypatch):
+    def install(*, stage="context", detach=True, cleanup_entered=None):
+        connections = []
+
+        class NativeConnection:
+            def __init__(self):
+                self.ordinal = len(connections) + 1
+                self.closed = False
+                self.proxy = None
+                self._pool_release_ctr = 0
+                self._top_xact = None
+                self._protocol = SimpleNamespace(is_in_transaction=lambda: False)
+
+            def _set_proxy(self, proxy):
+                self.proxy = proxy
+
+            def is_closed(self):
+                return self.closed
+
+            def drop_transport(self):
+                self.closed = True
+                if detach and self.proxy is not None:
+                    self.proxy._detach()
+
+            def transaction(self):
+                transaction = Transaction(self, None, False, False)
+                if self.ordinal == 1 and stage == "before_begin":
+                    self.drop_transport()
+                if stage in {"release_misuse", "released_closed_misuse"}:
+                    self._pool_release_ctr += 1
+                if stage == "released_closed_misuse":
+                    self.drop_transport()
+                return transaction
+
+            async def execute(self, query):
+                if stage == "open_interface":
+                    raise asyncpg.InterfaceError("synthetic interface misuse on a live connection")
+                if stage == "cancel_rollback" and query == "ROLLBACK;":
+                    cleanup_entered.set()
+                    await asyncio.Event().wait()
+                return "OK"
+
+        @asynccontextmanager
+        async def acquire(**kwargs):
+            raw = NativeConnection()
+            connections.append(raw)
+            try:
+                yield PoolConnectionProxy(None, raw)
+            finally:
+                if stage == "cancel_release" and raw.ordinal == 1:
+                    cleanup_entered.set()
+                    await asyncio.Event().wait()
+
+        async def context(*args, **kwargs):
+            raw = connections[-1]
+            if raw.ordinal == 1 and stage == "context":
+                raw.drop_transport()
+                raise asyncpg.ConnectionDoesNotExistError("synthetic context connection loss")
+            if raw.ordinal == 1 and stage in {"cancel_rollback", "cancel_release"}:
+                raise TimeoutError("synthetic setup timeout before owner cancellation")
+
+        async def clear_context(**kwargs):
+            if stage == "cancel_clear":
+                connections[-1].drop_transport()
+                cleanup_entered.set()
+                await asyncio.Event().wait()
+
+        monkeypatch.setattr(journal.db.db_manager, "pool", SimpleNamespace(acquire=acquire))
+        monkeypatch.setattr(journal.db, "set_user_context", AsyncMock(side_effect=context))
+        monkeypatch.setattr(journal.db, "clear_user_context", AsyncMock(side_effect=clear_context))
+        monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+        return connections
+
+    return install
+
+
+@pytest.mark.parametrize("stage", ["before_begin", "context"])
+@pytest.mark.parametrize("detach", [False, True])
+async def test_native_closed_connection_guard_during_setup_retries(native_pool, stage, detach):
+    connections = native_pool(stage=stage, detach=detach)
+    async with journal.transaction():
+        assert connections[-1].ordinal == 2
+    assert len(connections) == 2
+
+
+@pytest.mark.parametrize("detach", [False, True])
+async def test_native_rollback_cannot_mask_original_body_failure(native_pool, detach):
+    connections = native_pool(stage="body", detach=detach)
+    original = asyncpg.ConnectionDoesNotExistError("synthetic body connection loss")
+    with pytest.raises(asyncpg.ConnectionDoesNotExistError) as caught:
+        async with journal.transaction():
+            connections[-1].drop_transport()
+            raise original
+    assert caught.value is original
+    assert len(connections) == 1
+
+
+@pytest.mark.parametrize("detach", [False, True])
+async def test_native_rollback_cannot_turn_owner_cancellation_into_failure(native_pool, detach):
+    connections = native_pool(stage="body", detach=detach)
+    entered = asyncio.Event()
+
+    async def operation():
+        async with journal.transaction():
+            connections[-1].drop_transport()
+            entered.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(operation())
+    await entered.wait()
+    task.cancel("owner stop")
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+    assert len(connections) == 1
+
+
+@pytest.mark.parametrize("stage", ["open_interface", "release_misuse", "released_closed_misuse"])
+async def test_native_interface_misuse_stays_fatal(native_pool, stage):
+    connections = native_pool(stage=stage)
+    with pytest.raises(asyncpg.InterfaceError):
+        async with journal.transaction():
+            pytest.fail("interface misuse must not enter the body")
+    assert len(connections) == 1
+
+
+@pytest.mark.parametrize("stage", ["cancel_rollback", "cancel_release", "cancel_clear"])
+async def test_new_owner_cancellation_during_cleanup_wins_over_earlier_failure(native_pool, stage):
+    entered = asyncio.Event()
+    connections = native_pool(stage=stage, cleanup_entered=entered)
+    bodies = []
+
+    async def operation():
+        async with journal.transaction():
+            bodies.append(connections[-1].ordinal)
+
+    task = asyncio.create_task(operation())
+    await entered.wait()
+    task.cancel("owner stop during cleanup")
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+    assert len(connections) == 1
+    assert bodies == ([1] if stage == "cancel_clear" else [])

@@ -94,6 +94,10 @@ administrator-context setup up to three times on transient connection loss or
 database restart. Each attempt acquires a fresh pool lease with a ten-second
 acquisition timeout; retry waits are 0.25 and 0.5 seconds. Once the caller enters
 the transaction body, errors and uncertain commits propagate without replay.
+The boundary snapshots asyncpg's native connection before a lost socket can
+detach its pool proxy. Verified closure can normalize a native guard error;
+live-connection interface errors and released-lease misuse stay fatal. Original
+setup/body exceptions and owner cancellation survive transaction cleanup.
 Caller-supplied connections retain their caller's transaction ownership. The
 scheduled recovery adapter records `broadcast.recovery_deferred` on transient
 storage failure and leaves reconciliation to the next tick. It reports no
