@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
+import asyncpg
 import pytest
 
 from app.broadcast_delivery import DeliveryResult
@@ -13,6 +14,56 @@ from app.queue_contracts import AdmissionState, QueueAdmission
 from app.repos import broadcast_jobs as repo
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.asyncio
+async def test_lost_begin_reconnects_without_replaying_transaction_body(
+    contract_database_url, contract_pool, monkeypatch
+):
+    first_begin = True
+    disconnected = []
+
+    class DisconnectAtBegin(asyncpg.Connection):
+        async def execute(self, query, *args, **kwargs):
+            nonlocal first_begin
+            if first_begin and query.strip() == "BEGIN;":
+                first_begin = False
+                backend = self.get_server_pid()
+                marker = "SELECT pg_sleep(10) /* synthetic-broadcast-BEGIN */"
+
+                async def disconnect_only_this_connection():
+                    async with contract_pool.acquire() as controller:
+                        async with asyncio.timeout(5):
+                            while not await controller.fetchval(
+                                "SELECT state='active' AND query=$2 FROM pg_stat_activity WHERE pid=$1", backend, marker
+                            ):
+                                await asyncio.sleep(0.01)
+                        assert await controller.fetchval("SELECT pg_terminate_backend($1)", backend)
+                        disconnected.append(backend)
+
+                killer = asyncio.create_task(disconnect_only_this_connection())
+                try:
+                    return await super().execute(marker)
+                finally:
+                    await killer
+            return await super().execute(query, *args, **kwargs)
+
+    pool = await asyncpg.create_pool(
+        contract_database_url, min_size=0, max_size=1, connection_class=DisconnectAtBegin, statement_cache_size=0
+    )
+    monkeypatch.setattr(repo.db.db_manager, "pool", pool)
+    bodies = []
+    try:
+        async with repo.transaction() as connection:
+            bodies.append(connection.get_server_pid())
+            assert await connection.fetchval("SELECT current_setting('app.is_admin')") == "true"
+            assert await connection.fetchval("SELECT 1") == 1
+        assert len(disconnected) == len(bodies) == 1
+        assert disconnected[0] != bodies[0]
+        async with pool.acquire() as connection:
+            assert await connection.fetchval("SELECT NULLIF(current_setting('app.is_admin',true),'')") is None
+    finally:
+        await asyncio.wait_for(pool.close(), timeout=10)
 
 
 async def make_batch(pool, *, users=(2097102801,), channel="tarot", mode="offer", scheduled=False, operation_id=None):

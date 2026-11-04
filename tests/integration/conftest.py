@@ -78,7 +78,7 @@ def force_test_db_conn(db_conn, monkeypatch):
         _closed = False
 
         @contextlib.asynccontextmanager
-        async def acquire(self):
+        async def acquire(self, *, timeout=None):
             yield db_conn
 
         async def close(self):

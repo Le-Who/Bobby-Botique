@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from uuid import UUID, uuid4, uuid5
 
 from app import database as db
+from app.errors import TRANSIENT_DATABASE_ERRORS
 
 CHANNELS = frozenset({"daily_challenge", "horoscope", "tarot"})
 OUTCOMES = frozenset({"sent", "failed", "skipped", "unknown_delivery"})
@@ -20,12 +22,33 @@ async def transaction(conn=None):
         return
     if db.db_manager.pool is None:
         raise RuntimeError("broadcast_database_unavailable")
-    async with db.db_manager.pool.acquire() as acquired, acquired.transaction():
-        await db.set_user_context(0, True, conn=acquired)
+    for attempt in range(3):
+        body_entered = False
         try:
-            yield acquired
-        finally:
-            await db.clear_user_context(conn=acquired)
+            async with db.db_manager.pool.acquire(timeout=10) as acquired, acquired.transaction():
+                await db.set_user_context(0, True, conn=acquired)
+                body_entered = True
+                try:
+                    yield acquired
+                finally:
+                    await db.clear_user_context(conn=acquired)
+            return
+        except TRANSIENT_DATABASE_ERRORS as error:
+            # A lost BEGIN/context setup is safe to retry on a new lease. Once
+            # the caller starts work, even a failed COMMIT may have taken effect.
+            if body_entered or attempt == 2:
+                raise
+            from app.observability.events import emit
+
+            emit(
+                "broadcast.transaction_retry_scheduled",
+                level="warning",
+                operation="broadcast.transaction_setup",
+                attempt=attempt + 1,
+                next_attempt=attempt + 2,
+                error_type=type(error).__name__,
+            )
+            await asyncio.sleep(0.25 * 2**attempt)
 
 
 def subscription_fingerprint(row, variant):

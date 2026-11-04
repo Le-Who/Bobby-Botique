@@ -56,7 +56,8 @@ notifications have their own lifecycle path. Rate limiting does not remove the
 primary structured incident; alerts carry bounded redacted descriptions and
 correlation fingerprints rather than private message/provider content.
 
-The global Telegram error owner classifies expected network/timeouts, transient
+The global Telegram error owner classifies expected network/timeouts (including
+raw asyncpg connection loss and database restart), transient
 limits and user/document input errors as warnings with `error_code` and a safe
 user-facing message. These do not consume the incident alert budget. Key/config
 and exhausted-quota failures request administrator attention at warning severity;
