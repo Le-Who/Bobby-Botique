@@ -82,12 +82,27 @@ Telegram update → bot.py / handlers → context + provider routing
 | Daily products | `app/games/`: Crocodile, 2048, trivia and shared daily AI authoring; matching handlers/repositories own Telegram delivery and storage. `crocodile_daily_preferences.daily_game` stores a player's optional choice; the admin mode is the fallback. The scheduler prepares all three games, with a seven-day lookahead for the admin default and tomorrow for the others. |
 | Daily preparation | `app/games/admin_jobs.py` and `app/web_daily_jobs.py`: typed managed jobs, preflight, progress and readiness calendar; `daily_preparation.py`: persisted readiness and read-only legacy ownership checks; `crocodile_daily.py`: automatic image quota and explicit admin bypass |
 | Managed jobs | `app/queue_contracts.py`, `queue_runtime.py`, `queue_store.py`, `queue_lua.py`: typed admission/outcomes, local/Redis parity, atomic owner-fenced lifecycle, fixed workload lanes and bounded retention |
-| Broadcast delivery | `app/broadcast_jobs.py`, `broadcast_delivery.py`, `repos/broadcast_jobs.py`, `web_broadcast_jobs.py`: bounded batch admission, recipient/privacy snapshots, attempt receipts, read-only recovery and restricted retry; existing channel senders retain message construction |
+| Broadcast delivery | `app/broadcast_jobs.py`, `broadcast_delivery.py`, `repos/broadcast_jobs.py`, `web_broadcast_jobs.py`: bounded batch admission, recipient/privacy snapshots, attempt receipts, reconciliation without replaying sends and restricted retry; existing channel senders retain message construction |
 | Astrology | `app/astro.py`, horoscope handlers, `app/tarot*.py`, `app/natal/`: horoscopes, tarot, natal calculation/reporting |
 | Web surfaces | `app/web.py`: dashboard/admin; `app/web_miniapp.py`: Mini App APIs and live/game flows; `app/web_reader.py`, `app/web_natal.py`: long reads/reports |
 | Observability | `app/observability/`: envelope, context, redaction, writer, lifecycle mappings, operational metrics and incident export; `app/utils/logging_config.py`: bootstrap/compatibility; `app/request_context.py`: adapter; `app/metrics.py`: product metrics; `app/prometheus.py`: runtime exporter |
 
 Avoid static file-size/module-count maps: they drift without helping identify owners.
+
+Broadcast journal transactions retry connection acquisition, `BEGIN` and local
+administrator-context setup up to three times on transient connection loss or
+database restart. Each attempt acquires a fresh pool lease with a ten-second
+acquisition timeout; retry waits are 0.25 and 0.5 seconds. Once the caller enters
+the transaction body, errors and uncertain commits propagate without replay.
+The boundary snapshots asyncpg's native connection before a lost socket can
+detach its pool proxy. Verified closure can normalize a native guard error;
+live-connection interface errors and released-lease misuse stay fatal. Original
+setup/body exceptions and owner cancellation survive transaction cleanup.
+Caller-supplied connections retain their caller's transaction ownership. The
+scheduled recovery adapter records `broadcast.recovery_deferred` on transient
+storage failure and leaves reconciliation to the next tick. It reports no
+recovered count for a partially completed failed pass. Schema/programming errors
+and cancellation propagate normally.
 
 ## Provider latency
 

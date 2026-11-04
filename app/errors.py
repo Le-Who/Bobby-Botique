@@ -17,10 +17,19 @@ from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import Any
 
+import asyncpg
 import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest, RetryAfter, TimedOut
 from telegram.error import NetworkError as TelegramNetworkError
+
+POSTGRES_CONNECTION_ERRORS = (
+    asyncpg.PostgresConnectionError,
+    asyncpg.AdminShutdownError,
+    asyncpg.CrashShutdownError,
+    asyncpg.CannotConnectNowError,
+)
+TRANSIENT_DATABASE_ERRORS = (*POSTGRES_CONNECTION_ERRORS, ConnectionError, TimeoutError)
 
 # =============================================================================
 # TYPED EXCEPTION HIERARCHY
@@ -374,6 +383,7 @@ NETWORK_ERROR_MSG = tag_error(ErrorCode.NETWORK, "🌐 Ошибка сети. П
 _EXCEPTION_TYPE_MAP: dict[type, ErrorCode] = {
     TimeoutError: ErrorCode.TIMEOUT,
     ConnectionError: ErrorCode.NETWORK,
+    **dict.fromkeys(POSTGRES_CONNECTION_ERRORS, ErrorCode.NETWORK),
     httpx.TimeoutException: ErrorCode.TIMEOUT,
     httpx.TransportError: ErrorCode.NETWORK,
     TimedOut: ErrorCode.TIMEOUT,

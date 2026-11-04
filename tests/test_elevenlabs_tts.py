@@ -18,6 +18,14 @@ from app.providers.elevenlabs_tts import (
 )
 
 
+@pytest.fixture(autouse=True)
+def baseline_audio_config(monkeypatch):
+    """HTTP contract tests own their input; admin overrides have separate tests."""
+    from app.runtime_settings.audio import baseline_config
+
+    monkeypatch.setattr(elevenlabs_tts, "get_config", AsyncMock(side_effect=baseline_config))
+
+
 class TrackedStream(httpx.AsyncByteStream):
     def __init__(self, chunks=(), *, wait_after_chunks=False):
         self.chunks = chunks

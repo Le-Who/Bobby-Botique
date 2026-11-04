@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from uuid import UUID, uuid4, uuid5
 
+import asyncpg
+
 from app import database as db
+from app.errors import TRANSIENT_DATABASE_ERRORS
 
 CHANNELS = frozenset({"daily_challenge", "horoscope", "tarot"})
 OUTCOMES = frozenset({"sent", "failed", "skipped", "unknown_delivery"})
@@ -20,12 +24,64 @@ async def transaction(conn=None):
         return
     if db.db_manager.pool is None:
         raise RuntimeError("broadcast_database_unavailable")
-    async with db.db_manager.pool.acquire() as acquired, acquired.transaction():
-        await db.set_user_context(0, True, conn=acquired)
+    for attempt in range(3):
+        body_entered = False
+        primary_error: BaseException | None = None
         try:
-            yield acquired
-        finally:
-            await db.clear_user_context(conn=acquired)
+            async with db.db_manager.pool.acquire(timeout=10) as acquired:
+                # asyncpg detaches the pool proxy as soon as its socket closes.
+                # Keep the native connection and lease generation before awaits.
+                native = getattr(acquired, "_con", acquired)
+                release_counter = getattr(native, "_pool_release_ctr", None)
+                try:
+                    async with acquired.transaction():
+                        try:
+                            await db.set_user_context(0, True, conn=acquired)
+                            body_entered = True
+                            yield acquired
+                        except BaseException as error:
+                            primary_error = error
+                            raise
+                        finally:
+                            if body_entered:
+                                try:
+                                    await db.clear_user_context(conn=acquired)
+                                except asyncio.CancelledError as error:
+                                    primary_error = error
+                                    raise
+                except asyncio.CancelledError as error:
+                    primary_error = error
+                    raise
+                except asyncpg.InterfaceError as error:
+                    if (
+                        native is not None
+                        and native.is_closed()
+                        and getattr(native, "_pool_release_ctr", None) == release_counter
+                    ):
+                        raise ConnectionError("broadcast_database_connection_lost") from error
+                    raise
+            return
+        except BaseException as error:
+            if isinstance(error, asyncio.CancelledError):
+                raise
+            failure = primary_error if primary_error is not None else error
+            # A lost BEGIN/context setup is safe to retry on a new lease. Once
+            # the caller starts work, even a failed COMMIT may have taken effect.
+            if not isinstance(failure, TRANSIENT_DATABASE_ERRORS) or body_entered or attempt == 2:
+                if failure is error:
+                    raise
+                raise failure from error
+            from app.observability.events import emit
+
+            emit(
+                "broadcast.transaction_retry_scheduled",
+                level="warning",
+                operation="broadcast.transaction_setup",
+                attempt=attempt + 1,
+                next_attempt=attempt + 2,
+                error_type=type(failure).__name__,
+            )
+            await asyncio.sleep(0.25 * 2**attempt)
 
 
 def subscription_fingerprint(row, variant):

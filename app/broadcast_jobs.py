@@ -13,6 +13,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
 from app.broadcast_delivery import DeliveryOwner, DeliveryResult
+from app.errors import TRANSIENT_DATABASE_ERRORS
 from app.queue_contracts import (
     TERMINAL_STATES,
     AdmissionState,
@@ -619,7 +620,21 @@ async def observed_channel_counts(channel, **kwargs):
 
 
 async def recover_broadcast_jobs(limit=100):
-    return await service.recover(limit)
+    try:
+        return await service.recover(limit)
+    except TRANSIENT_DATABASE_ERRORS as error:
+        from app.observability.events import record_exception
+
+        record_exception(
+            "broadcast.recovery_deferred",
+            error,
+            operation="broadcast.recovery",
+            level="warning",
+            fields={"reason_code": "database_unavailable"},
+        )
+        # Earlier batches may already have been reconciled. Do not report an
+        # invented recovered count, or replay deliveries to recover storage.
+        return {"deferred": True, "reason_code": "database_unavailable"}
 
 
 async def execute_broadcast_batch(batch_id):

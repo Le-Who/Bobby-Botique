@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import asyncpg
 import httpx
 import pytest
 from telegram import Message, Update
@@ -57,6 +58,9 @@ async def test_global_error_handler_correlates_admin_alert_without_raw_error_mes
         (InputValidationError("synthetic private input"), ErrorCode.INVALID_REQUEST, None),
         (UserLimitExceededError("synthetic user throttle"), ErrorCode.USER_RATE_LIMIT, None),
         (DocumentProcessingError("synthetic document failure"), ErrorCode.DOCUMENT, None),
+        (asyncpg.ConnectionDoesNotExistError("synthetic closed database connection"), ErrorCode.NETWORK, None),
+        (asyncpg.AdminShutdownError("synthetic database maintenance"), ErrorCode.NETWORK, None),
+        (asyncpg.UndefinedTableError("synthetic schema bug"), ErrorCode.GENERIC, AlertSeverity.CRITICAL),
         (ConfigurationError("synthetic provider unavailable"), ErrorCode.NO_KEYS, AlertSeverity.WARNING),
         (AuthenticationError("synthetic credential rejected"), ErrorCode.INVALID_KEY, AlertSeverity.WARNING),
         (APIQuotaExceededError("synthetic provider quota"), ErrorCode.QUOTA_EXCEEDED, AlertSeverity.WARNING),
