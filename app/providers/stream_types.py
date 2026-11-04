@@ -208,6 +208,19 @@ class GenerationRequest:
         return 1.0 if self.workload is Workload.INLINE else 3.0
 
     @property
+    def recovers_transient_errors(self) -> bool:
+        """Keep caller-owned Lite chats alive through temporary provider failures."""
+        return (
+            self.workload is Workload.INTERACTIVE
+            and not self.allow_deferred
+            and self.first_text_timeout_seconds is None
+            and all(
+                model.removeprefix("models/") in {"gemini-3.1-flash-lite", "gemini-3.5-flash-lite"}
+                for model in self.models
+            )
+        )
+
+    @property
     def stream_idle_timeout_seconds(self) -> float | None:
         """Maximum silence between visible chunks once streaming has started."""
         if self.workload is Workload.INTERACTIVE:
