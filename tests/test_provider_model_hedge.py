@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -173,7 +174,7 @@ async def test_failed_model_lanes_start_next_fallback_without_waiting_for_full_c
 
 
 @pytest.mark.asyncio
-async def test_all_failed_model_lanes_emit_one_failure_terminal(monkeypatch) -> None:
+async def test_all_failed_model_lanes_emit_one_failure_terminal_per_wave(monkeypatch) -> None:
     from app.providers import router as router_module
 
     monkeypatch.setattr(router_module, "MODEL_HEDGE_DELAY_SECONDS", 0.01)
@@ -196,10 +197,56 @@ async def test_all_failed_model_lanes_emit_one_failure_terminal(monkeypatch) -> 
         patch("app.repos.keys.get_key_status_manager", return_value=AsyncMock()),
         patch("app.providers.base.get_provider_for_model", return_value=Provider()),
     ):
-        events = [event async for event in ProviderRouter().stream(_request())]
+        request = _request()
+        events = [event async for event in ProviderRouter()._stream_hedged(request, list(request.models), float("inf"))]
 
     assert len(events) == 1
     assert isinstance(events[0], StreamFailed)
+
+
+@pytest.mark.asyncio
+async def test_failed_lite_model_wave_recovers_without_repeating_user_admission(monkeypatch):
+    from app.providers import router as router_module
+
+    monkeypatch.setattr(router_module, "MODEL_HEDGE_DELAY_SECONDS", 0.01)
+    monkeypatch.setattr(router_module, "_ordered_gemini_fallback_models", lambda model: [])
+    monkeypatch.setattr(router_module, "_interactive_retry_delay", lambda round_number: 0.01)
+    calls = []
+
+    class Provider:
+        provider_name = "gemini"
+
+        async def stream(self, request, *, model_name):
+            calls.append(model_name)
+            if len(calls) <= 2:
+                yield StreamFailed(
+                    code=router_module.ErrorCode.OVERLOADED,
+                    phase=FailurePhase.BEFORE_TEXT,
+                    retry=RetryDisposition.TRY_NEXT_KEY,
+                    key=KeyDisposition.TRANSIENT_FAILURE,
+                    diagnostic="HTTP 503",
+                )
+            else:
+                yield TextDelta("recovered model")
+                yield _completion(model_name)
+
+    router = ProviderRouter()
+    admission = AsyncMock(return_value=True)
+    monkeypatch.setattr(router._rate_limiter, "check_rate_limit", admission)
+    request = replace(_request(), scope=RequestScope(user_id=123))
+
+    async def collect():
+        return [event async for event in router.stream(request)]
+
+    with (
+        patch("app.agent_use_cases.AgentRequestUseCase", return_value=ModelKeys()),
+        patch("app.repos.keys.get_key_status_manager", return_value=AsyncMock()),
+        patch("app.providers.base.get_provider_for_model", return_value=Provider()),
+    ):
+        events = await asyncio.wait_for(collect(), 1)
+    assert events == [TextDelta("recovered model"), _completion(request.models[0])]
+    assert len(calls) == 3
+    admission.assert_awaited_once_with(123)
 
 
 @pytest.mark.asyncio

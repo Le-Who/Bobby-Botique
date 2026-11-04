@@ -102,7 +102,7 @@ def _install_transport(monkeypatch, stream):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("allow_key_race", [True, False])
-async def test_overloaded_primary_moves_to_configured_backup_without_exhausting_keys(monkeypatch, allow_key_race):
+async def test_overloaded_primary_tries_its_key_budget_before_configured_backup(monkeypatch, allow_key_race):
     async def stream(model, key, active):
         if model == PRIMARY:
             yield _failure()
@@ -116,8 +116,8 @@ async def test_overloaded_primary_moves_to_configured_backup_without_exhausting_
     events = [event async for event in ProviderRouter().stream(request)]
 
     assert events == [TextDelta("backup answer"), _completion(BACKUP)]
-    assert [model for model, _ in calls] == [PRIMARY] * (2 if allow_key_race else 1) + [BACKUP]
-    assert health.suspend_key.await_count == (2 if allow_key_race else 1)
+    assert [model for model, _ in calls] == [PRIMARY] * 6 + [BACKUP]
+    assert health.suspend_key.await_count == 6
     assert all(call.args[2] == "transient" for call in health.suspend_key.await_args_list)
     assert not active and len(closed) == len(calls)
 

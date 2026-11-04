@@ -11,8 +11,9 @@ import inspect
 import logging
 import math
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from contextlib import aclosing
+from enum import Enum, auto
 from typing import Any, TypeVar
 
 from app.config import (
@@ -62,6 +63,33 @@ _ParsedResponse = TypeVar("_ParsedResponse")
 MODEL_HEDGE_DELAY_SECONDS = 3.0
 KEY_RACE_HEDGE_DELAY_SECONDS = 3.0
 KEY_HEALTH_UPDATE_TIMEOUT_SECONDS = 1.0
+
+
+class _ReservePhase(Enum):
+    DISABLED = auto()
+    WAITING = auto()
+    PREPARING = auto()
+    EXHAUSTED = auto()
+
+
+def _interactive_retry_delay(recovery_round: int) -> float:
+    return float(min(15, 2 ** min(recovery_round, 4)))
+
+
+def _retryable_interactive_failure(failure: StreamFailed) -> bool:
+    if failure.phase is not FailurePhase.BEFORE_TEXT:
+        return False
+    if failure.code is ErrorCode.RATE_LIMIT and failure.key is KeyDisposition.UNCHANGED:
+        return False
+    return (
+        failure.code is ErrorCode.KEYS_EXHAUSTED
+        or failure.key is KeyDisposition.RATE_LIMITED
+        or failure.retry is RetryDisposition.RETRY_LATER
+        or (
+            failure.code in {ErrorCode.OVERLOADED, ErrorCode.TIMEOUT, ErrorCode.NETWORK}
+            and failure.retry is not RetryDisposition.DO_NOT_RETRY
+        )
+    )
 
 
 def _deadline_after(timeout: float | None) -> float:
@@ -765,23 +793,51 @@ class ProviderRouter:
 
     @observe_generation
     async def stream(self, request: GenerationRequest):
-        """Race two model lanes for interactive chat; retain serial paths elsewhere."""
+        """Own one logical response, including recovery before its first text."""
         first_text_deadline = _deadline_after(request.first_text_timeout_seconds)
         hedge_models = self._interactive_hedge_models(request)
-        if hedge_models:
-            async with aclosing(self._stream_hedged(request, hedge_models, first_text_deadline)) as events:
-                async for event in events:
-                    yield event
-            return
-        async with aclosing(
-            self._stream_serial(
-                request,
-                enable_model_fallback=request.allow_model_fallback,
-                first_text_deadline=first_text_deadline,
+        recovery_round = 0
+        visible_text = False
+        while True:
+            retry_failure: StreamFailed | None = None
+            source = (
+                self._stream_hedged(request, hedge_models, first_text_deadline, check_rate_limit=recovery_round == 0)
+                if hedge_models
+                else self._stream_serial(
+                    request,
+                    enable_model_fallback=request.allow_model_fallback,
+                    first_text_deadline=first_text_deadline,
+                    check_rate_limit=recovery_round == 0,
+                )
             )
-        ) as events:
-            async for event in events:
-                yield event
+            async with aclosing(source) as events:
+                async for event in events:
+                    if isinstance(event, TextDelta):
+                        visible_text = True
+                    if (
+                        request.recovers_transient_errors
+                        and not visible_text
+                        and isinstance(event, StreamFailed)
+                        and _retryable_interactive_failure(event)
+                    ):
+                        retry_failure = event
+                        break
+                    yield event
+            if retry_failure is None:
+                return
+            recovery_round += 1
+            delay = _interactive_retry_delay(recovery_round)
+            from app.observability.events import emit
+
+            emit(
+                "provider.recovery_scheduled",
+                operation="provider.request",
+                actual_model=request.models[0],
+                recovery_round=recovery_round,
+                retry_delay_seconds=delay,
+                reason_code=retry_failure.code.value,
+            )
+            await asyncio.sleep(delay)
 
     @staticmethod
     def _interactive_hedge_models(request: GenerationRequest) -> list[str]:
@@ -801,10 +857,17 @@ class ProviderRouter:
         )
         return models if len(models) > 1 else []
 
-    async def _stream_hedged(self, request: GenerationRequest, models: list[str], first_text_deadline: float):
+    async def _stream_hedged(
+        self,
+        request: GenerationRequest,
+        models: list[str],
+        first_text_deadline: float,
+        *,
+        check_rate_limit: bool = True,
+    ):
         """Start a backup after a short delay, and keep at most two model lanes."""
         scope = request.scope
-        if scope.user_id and not await self._rate_limiter.check_rate_limit(scope.user_id):
+        if check_rate_limit and scope.user_id and not await self._rate_limiter.check_rate_limit(scope.user_id):
             yield StreamFailed(
                 code=ErrorCode.RATE_LIMIT,
                 phase=FailurePhase.BEFORE_TEXT,
@@ -833,7 +896,7 @@ class ProviderRouter:
                         first_text_deadline=first_text_deadline,
                         primary_key_race=primary,
                         allow_key_hedge=False,
-                        max_key_attempts=2 if primary else None,
+                        max_key_attempts=2 if primary and not request.recovers_transient_errors else None,
                     )
                 ) as events:
                     async for event in events:
@@ -1091,6 +1154,7 @@ class ProviderRouter:
                 and request.workload is Workload.INTERACTIVE
                 and not request.allow_deferred
                 and bool(model_queue)
+                and not request.recovers_transient_errors
             )
             model_deadline = first_text_deadline
             model_timeout_seconds = _remaining_timeout(model_deadline)
@@ -1230,6 +1294,7 @@ class ProviderRouter:
                 )
 
                 queue: asyncio.Queue[tuple[int, GenerationEvent | None, BaseException | None, bool]] = asyncio.Queue()
+                race_keys = dict(enumerate(keys_to_race))
 
                 async def _race_provider(
                     idx: int,
@@ -1284,7 +1349,7 @@ class ProviderRouter:
                 async def run_key(
                     index: int,
                     *,
-                    candidates: list[dict] = keys_to_race,
+                    candidates: dict[int, dict] = race_keys,
                     race_model: str = model_used,
                     requested_model: str = preferred_model,
                     attempt_number: int = attempt + 1,
@@ -1310,17 +1375,37 @@ class ProviderRouter:
                 race_timeout: StreamFailed | None = None
                 done: set[int] = set()
                 next_model_failure: tuple[int, StreamFailed] | None = None
+
+                def live_key_count(
+                    candidates: dict[int, dict] = race_keys,
+                    terminals: dict[int, GenerationEvent] = pre_text_terminals,
+                    finished: set[int] = done,
+                ) -> int:
+                    return sum(index not in terminals and index not in finished for index in candidates)
+
                 hedge_deadline = asyncio.get_running_loop().time() + min(
                     KEY_RACE_HEDGE_DELAY_SECONDS, request.key_hedge_delay_seconds
                 )
-                hedge_checked = not (racing_primary and allow_key_hedge) or remaining_key_attempts <= 0
+                rolling_recovery = request.recovers_transient_errors and request.allow_key_race
+                parallel_key_limit = key_attempt_limit if allow_key_hedge else (2 if primary_key_race else 1)
+                initial_key_slots = len(keys_to_race)
+                reserve_phase = (
+                    _ReservePhase.WAITING
+                    if remaining_key_attempts > 0
+                    and (
+                        (racing_primary and allow_key_hedge)
+                        or (rolling_recovery and live_key_count() < parallel_key_limit)
+                    )
+                    else _ReservePhase.DISABLED
+                )
                 health_task: asyncio.Task[None] | None = None
                 winner_finished = False
 
                 async def run_reserve(
                     index: int,
+                    reason_code: str,
                     *,
-                    candidates: list[dict] = keys_to_race,
+                    candidates: dict[int, dict] = race_keys,
                     excluded_keys: set[str] = failed_keys,
                     race_model: str = model_used,
                     deadline: float = model_deadline,
@@ -1330,22 +1415,31 @@ class ProviderRouter:
                     done_indices: set[int] = done,
                     race_queue: asyncio.Queue = queue,
                     run: Callable[[int], Awaitable[None]] = run_key,
+                    rolling: bool = rolling_recovery,
+                    live: Callable[[], int] = live_key_count,
+                    parallel_limit: int = parallel_key_limit,
                 ) -> None:
-                    nonlocal remaining_key_attempts
+                    nonlocal remaining_key_attempts, reserve_phase, hedge_deadline
                     started = False
                     try:
                         # Resolve in an owned lane so a slow storage lookup cannot
                         # block the original's first text or the model deadline.
-                        excluded = excluded_keys | {key["key_hash"] for key in candidates}
-                        key_data, backup_model, _ = await use_case.resolve_exact_ai_request(
-                            race_model, excluded_key_hashes=excluded
-                        )
-                        if not key_data or backup_model != race_model:
+                        while True:
+                            excluded = excluded_keys | {key["key_hash"] for key in candidates.values()}
+                            key_data, backup_model, _ = await use_case.resolve_exact_ai_request(
+                                race_model, excluded_key_hashes=excluded
+                            )
+                            if not key_data or backup_model != race_model:
+                                return
+                            reserved = await use_case.reserve_key_usage(key_data["key_hash"], race_model, None)
+                            if reserved:
+                                break
+                            if not rolling:
+                                return
+                            excluded_keys.add(key_data["key_hash"])
+                        if asyncio.get_running_loop().time() >= deadline:
                             return
-                        reserved = await use_case.reserve_key_usage(key_data["key_hash"], race_model, None)
-                        if not reserved or asyncio.get_running_loop().time() >= deadline:
-                            return
-                        candidates.append(key_data)
+                        candidates[index] = key_data
                         remaining_key_attempts -= 1
                         from app.observability.events import emit
 
@@ -1355,9 +1449,21 @@ class ProviderRouter:
                             race_id=provider_race_id,
                             actual_model=race_model,
                             attempt_number=attempt_number,
-                            active_attempts=len(race_tasks) - len(done_indices),
+                            active_attempts=sum(not task.done() for task in race_tasks),
+                            reason_code=reason_code,
                         )
                         started = True
+                        reserve_phase = (
+                            _ReservePhase.WAITING
+                            if rolling and remaining_key_attempts > 0 and live() < parallel_limit
+                            else _ReservePhase.DISABLED
+                        )
+                        hedge_deadline = asyncio.get_running_loop().time() + min(
+                            KEY_RACE_HEDGE_DELAY_SECONDS, request.key_hedge_delay_seconds
+                        )
+                        # Wake the owner after preparation so it can schedule the
+                        # next soft hedge while this provider remains eligible.
+                        race_queue.put_nowait((index, None, None, False))
                         await run(index)
                     except asyncio.CancelledError:
                         raise
@@ -1367,31 +1473,65 @@ class ProviderRouter:
                         logging.warning("Typed stream reserve-key resolution or usage reservation failed")
                     finally:
                         if not started:
+                            reserve_phase = (
+                                _ReservePhase.WAITING
+                                if rolling and remaining_key_attempts > 0 and live() < parallel_limit
+                                else _ReservePhase.EXHAUSTED
+                            )
+                            hedge_deadline = asyncio.get_running_loop().time() + min(
+                                KEY_RACE_HEDGE_DELAY_SECONDS, request.key_hedge_delay_seconds
+                            )
                             race_queue.put_nowait((index, None, None, True))
+
+                def start_reserve(
+                    reason_code: str = "soft_wait",
+                    race_tasks: list[asyncio.Task[None]] = tasks,
+                    reserve: Callable[[int, str], Coroutine[Any, Any, None]] = run_reserve,
+                    live: Callable[[], int] = live_key_count,
+                    parallel_limit: int = parallel_key_limit,
+                    recovering: bool = rolling_recovery,
+                    candidates: dict[int, dict] = race_keys,
+                    dispatch_limit: int = len(race_keys) + remaining_key_attempts,
+                ) -> None:
+                    nonlocal reserve_phase
+                    if (
+                        recovering
+                        and reserve_phase is _ReservePhase.DISABLED
+                        and len(candidates) < dispatch_limit
+                        and live() < parallel_limit
+                    ):
+                        reserve_phase = _ReservePhase.WAITING
+                    if reserve_phase is not _ReservePhase.WAITING:
+                        return
+                    reserve_phase = _ReservePhase.PREPARING
+                    race_tasks.append(asyncio.create_task(reserve(len(race_tasks), reason_code)))
 
                 try:
                     while winner_idx is None and len(done) < len(tasks):
                         try:
-                            deadline = model_deadline if hedge_checked else min(model_deadline, hedge_deadline)
+                            deadline = (
+                                min(model_deadline, hedge_deadline)
+                                if reserve_phase is _ReservePhase.WAITING
+                                else model_deadline
+                            )
                             race_idx, race_event, race_error, race_done = await asyncio.wait_for(
                                 queue.get(), timeout=_remaining_timeout(deadline)
                             )
                         except TimeoutError:
                             if (
-                                not hedge_checked
+                                reserve_phase is _ReservePhase.WAITING
                                 and hedge_deadline < model_deadline
                                 and asyncio.get_running_loop().time() < model_deadline
                             ):
                                 # The soft timer adds one reserve; existing requests
                                 # remain eligible and retain their key health.
-                                hedge_checked = True
-                                tasks.append(asyncio.create_task(run_reserve(len(keys_to_race))))
+                                start_reserve()
                                 continue
                             timeout_failure = _first_text_timeout(
                                 model_used, race_id, timeout_seconds=model_timeout_seconds
                             )
                             race_timeout = timeout_failure
-                            for index in range(len(keys_to_race)):
+                            for index in race_keys:
                                 pre_text_terminals.setdefault(index, timeout_failure)
                             break
                         if race_done:
@@ -1399,6 +1539,10 @@ class ProviderRouter:
                             continue
                         if race_error is not None:
                             raise race_error
+                        if race_event is None:
+                            if rolling_recovery and live_key_count() < initial_key_slots:
+                                start_reserve("key_slot_available")
+                            continue
                         assert race_event is not None
                         if isinstance(race_event, TextDelta):
                             winner_idx = race_idx
@@ -1412,14 +1556,20 @@ class ProviderRouter:
                             if race_event.retry is RetryDisposition.TRY_NEXT_MODEL:
                                 next_model_failure = (race_idx, race_event)
                                 break
-                            await _record_failure(keys_to_race[race_idx], model_used, race_event)
+                            await _record_failure(race_keys[race_idx], model_used, race_event)
                             yield race_event
                             return
                         pre_text_terminals[race_idx] = race_event
+                        if rolling_recovery:
+                            start_reserve(
+                                race_event.code.value
+                                if isinstance(race_event, StreamFailed)
+                                else ErrorCode.EMPTY_RESPONSE.value
+                            )
 
                     if next_model_failure is not None:
                         failure_index, last_failure = next_model_failure
-                        await _record_failure(keys_to_race[failure_index], model_used, last_failure)
+                        await _record_failure(race_keys[failure_index], model_used, last_failure)
                         model_all_permanent = False
                         break
 
@@ -1432,7 +1582,7 @@ class ProviderRouter:
                             yield deferred
                             return
 
-                        for index, key_data in enumerate(keys_to_race):
+                        for index, key_data in race_keys.items():
                             terminal = pre_text_terminals.get(index)
                             if isinstance(terminal, StreamCompleted):
                                 terminal = StreamFailed(
@@ -1481,13 +1631,13 @@ class ProviderRouter:
                             task.cancel()
                     # A sibling's success does not repair a key that already
                     # reported a failure. Cancelled lanes without one stay healthy.
-                    winner_key = keys_to_race[winner_idx]
+                    winner_key = race_keys[winner_idx]
                     health_task = asyncio.create_task(
                         _record_winner_health(
                             winner_key,
                             model_used,
                             [
-                                (keys_to_race[index], terminal)
+                                (race_keys[index], terminal)
                                 for index, terminal in pre_text_terminals.items()
                                 if isinstance(terminal, StreamFailed)
                             ],

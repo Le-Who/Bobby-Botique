@@ -119,13 +119,26 @@ Only the primary attempt may start a pair of keys. Later key rotations and model
 fallbacks dispatch one key at a time. Where process policy permits a parallel
 model fallback, it starts after three seconds with one key and never opens a key
 race; another fallback model waits for the current reserve lane to finish. The
-primary model uses only its initial pair in that path. When no parallel model
-fallback is used, a slow primary pair may instead add one exact-model reserve
-after three seconds (one second for a direct inline request). Its lookup and
-quota admission run in an owned task; further rotations remain single attempts.
-These two reserve mechanisms do not nest. Thus a routed request has at most
-three active provider calls: the initial pair and one reserve. Reserves consume
-the existing per-model allowance of twice the workload's key-attempt rounds.
+non-recovering primary model uses only its initial pair in that path. Recovering
+Lite model lanes can immediately replace failed keys within their existing
+live-slot limits: two for the primary and one for the reserve model. They do not
+grow extra parallel key lanes, retaining at most three active calls across the
+model race.
+Without a parallel model fallback, the primary pair can add an exact-model
+reserve after three seconds (one second for a direct inline request). Its lookup
+and quota admission run in an owned task. Ordinary bounded routes add only one
+reserve and retain single-key rotations afterward.
+
+Caller-owned interactive plans consisting of 3.1/3.5 Flash-Lite models recover
+before visible text. Without a parallel model race and with key races enabled,
+a failed key starts the next reserve
+immediately, while a silent request adds another reserve every three seconds.
+Existing calls remain eligible. One preparation runs at a time; temporarily
+unavailable reserve keys are rechecked without discarding pending providers.
+Every dispatched call consumes the existing per-model budget of six attempts
+per wave, so a serial Lite model can have at most six live calls. Failed quota
+admission never dispatches an API call. Task identities are independent of key
+positions, including preparation attempts that never obtained a key.
 
 Inline handlers already race model completions, so their typed requests set
 `allow_key_race=False`; each model dispatches one key at a time. This avoids
@@ -139,12 +152,25 @@ deadlines leave key health unchanged; provider errors retain their dispositions.
 
 Explicit sequential interactive chat plans keep their configured model order.
 Waiting alone does not cancel a pending model or start the next model. A healthy
-late response remains eligible. An initial key race that
-ends without text and reports `OVERLOADED` advances directly to the next configured
-model instead of spending more attempts on the overloaded model. Key-specific
-quota/auth failures still rotate keys. Inline, search and deferred routes retain
-their existing budgets. Bounded route deadlines do not penalize a silent key;
+late response remains eligible. Recovering Lite plans use their current model's
+key budget before advancing to the next configured model: one project's 503 does
+not establish that every key is overloaded. Other sequential interactive plans
+retain the overload shortcut after their initial race. Key-specific quota/auth
+failures still rotate keys. Bounded route deadlines do not penalize a silent key;
 cancellation cleanup is awaited before advancing.
+
+If a Lite wave ends with a recoverable before-text failure, the logical request
+waits 2, 4, 8, then at most 15 seconds and repeats its model plan. This also covers
+provider rate-limit cooldowns, temporarily unavailable keys and mixed waves whose
+last error belongs to another key. Per-user admission runs once per logical
+request; each new provider attempt still reserves RPM/RPD normally. The request
+stays cancellable throughout preparation, provider waits and backoff. Fatal
+request errors, an explicit provider daily-quota error without a recoverable
+sibling, and user admission rejection remain terminal. Local key unavailability
+does not distinguish cooldown from exhausted local RPD, so it is rechecked without
+dispatching a call until admission allows one. Once text is visible, recovery never starts
+a second answer or concatenates outputs. Inline, search and deferred workloads
+retain their existing bounded policies.
 
 Winner key-health persistence runs in a separate request-owned task with a
 one-second best-effort cap; it cannot hold the first visible delta. Other health
