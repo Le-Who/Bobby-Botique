@@ -124,15 +124,13 @@ async def test_overloaded_primary_moves_to_configured_backup_without_exhausting_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("primary_behavior", ["silent", "overload_and_silent"])
-async def test_silent_primary_leaves_time_for_sequential_backup(monkeypatch, primary_behavior):
-    monkeypatch.setattr(GenerationRequest, "first_text_timeout_seconds", property(lambda self: 0.2))
-
+async def test_upstream_timeout_allows_sequential_backup(monkeypatch, primary_behavior):
     async def stream(model, key, active):
         if model == PRIMARY:
             if primary_behavior == "overload_and_silent" and key.endswith(":0"):
                 yield _failure()
             else:
-                await asyncio.Event().wait()
+                yield _failure(ErrorCode.TIMEOUT, KeyDisposition.UNCHANGED)
         else:
             assert active == {key}, "Timed-out providers must drain before sequential fallback"
             yield TextDelta("backup answer")
@@ -148,10 +146,9 @@ async def test_silent_primary_leaves_time_for_sequential_backup(monkeypatch, pri
 
 
 @pytest.mark.asyncio
-async def test_primary_key_lookup_cannot_consume_the_backup_time(monkeypatch):
+async def test_failed_primary_key_lookup_allows_backup(monkeypatch):
     from app import agent_use_cases
 
-    monkeypatch.setattr(GenerationRequest, "first_text_timeout_seconds", property(lambda self: 0.2))
     lookup_closed = asyncio.Event()
 
     async def stream(model, key, active):
@@ -165,7 +162,7 @@ async def test_primary_key_lookup_cannot_consume_the_backup_time(monkeypatch):
     async def lookup(model, *, excluded_hashes):
         if model == PRIMARY:
             try:
-                await asyncio.Event().wait()
+                raise TimeoutError("synthetic storage timeout")
             finally:
                 lookup_closed.set()
         return await original_lookup(model, excluded_hashes=excluded_hashes)
@@ -265,5 +262,73 @@ async def test_cancelling_primary_wait_drains_calls_without_starting_backup(monk
             await task
 
     assert all(model == PRIMARY for model, _ in calls)
+    assert not active and len(closed) == len(calls)
+    health.suspend_key.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_interactive_stream_keeps_waiting_during_a_quiet_interval(monkeypatch):
+    original_idle = GenerationRequest.stream_idle_timeout_seconds
+    monkeypatch.setattr(
+        GenerationRequest,
+        "stream_idle_timeout_seconds",
+        property(lambda self: None if original_idle.__get__(self) is None else 0.02),
+    )
+    first_seen = asyncio.Event()
+    continue_stream = asyncio.Event()
+
+    async def stream(model, key, active):
+        yield TextDelta("first ")
+        await continue_stream.wait()
+        yield TextDelta("second")
+        yield _completion(model)
+
+    calls, active, closed, _ = _install_transport(monkeypatch, stream)
+
+    async def collect():
+        events = []
+        async for event in ProviderRouter().stream(_request()):
+            events.append(event)
+            if isinstance(event, TextDelta):
+                first_seen.set()
+        return events
+
+    task = asyncio.create_task(collect())
+    try:
+        await asyncio.wait_for(first_seen.wait(), 1)
+        await asyncio.sleep(0.08)
+        assert not task.done(), "A quiet interval must not cancel an interactive answer"
+    finally:
+        continue_stream.set()
+        events = await asyncio.wait_for(task, 1)
+
+    assert events == [TextDelta("first "), TextDelta("second"), _completion(PRIMARY)]
+    assert not active and len(closed) == len(calls)
+
+
+@pytest.mark.asyncio
+async def test_user_cancellation_drains_an_interactive_stream_after_text(monkeypatch):
+    first_seen = asyncio.Event()
+
+    async def stream(model, key, active):
+        yield TextDelta("first ")
+        await asyncio.Event().wait()
+
+    calls, active, closed, health = _install_transport(monkeypatch, stream)
+
+    async def collect():
+        async for event in ProviderRouter().stream(_request()):
+            if isinstance(event, TextDelta):
+                first_seen.set()
+
+    task = asyncio.create_task(collect())
+    try:
+        await asyncio.wait_for(first_seen.wait(), 1)
+        await asyncio.sleep(0)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
     assert not active and len(closed) == len(calls)
     health.suspend_key.assert_not_awaited()

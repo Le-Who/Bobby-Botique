@@ -188,12 +188,10 @@ class GenerationRequest:
         return 120.0
 
     @property
-    def first_text_timeout_seconds(self) -> float:
-        """Interface latency cap shared by every key and model in one route.
-
-        Product limits, not a provider SLA. Low thinking suits interactive chat:
-        https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.8
-        """
+    def first_text_timeout_seconds(self) -> float | None:
+        """Interactive calls finish on provider outcome or owner cancellation."""
+        if self.workload is Workload.INTERACTIVE:
+            return None
         grounded = self.grounding in {GroundingMode.PROVIDER_SEARCH, GroundingMode.PROVIDER_SEARCH_REQUIRED}
         if self.workload is Workload.INLINE:
             return 10.0 if grounded else 6.0
@@ -210,8 +208,10 @@ class GenerationRequest:
         return 1.0 if self.workload is Workload.INLINE else 3.0
 
     @property
-    def stream_idle_timeout_seconds(self) -> float:
+    def stream_idle_timeout_seconds(self) -> float | None:
         """Maximum silence between visible chunks once streaming has started."""
+        if self.workload is Workload.INTERACTIVE:
+            return None
         return 5.0 if self.workload is Workload.INLINE else 10.0
 
     @property

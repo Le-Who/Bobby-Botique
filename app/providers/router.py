@@ -9,6 +9,7 @@ Also provides the module-level convenience functions:
 import asyncio
 import inspect
 import logging
+import math
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import aclosing
@@ -61,6 +62,14 @@ _ParsedResponse = TypeVar("_ParsedResponse")
 MODEL_HEDGE_DELAY_SECONDS = 3.0
 KEY_RACE_HEDGE_DELAY_SECONDS = 3.0
 KEY_HEALTH_UPDATE_TIMEOUT_SECONDS = 1.0
+
+
+def _deadline_after(timeout: float | None) -> float:
+    return math.inf if timeout is None else asyncio.get_running_loop().time() + timeout
+
+
+def _remaining_timeout(deadline: float) -> float | None:
+    return None if math.isinf(deadline) else max(0.0, deadline - asyncio.get_running_loop().time())
 
 
 def _setting(name: str, fallback: str) -> str:
@@ -757,7 +766,7 @@ class ProviderRouter:
     @observe_generation
     async def stream(self, request: GenerationRequest):
         """Race two model lanes for interactive chat; retain serial paths elsewhere."""
-        first_text_deadline = asyncio.get_running_loop().time() + request.first_text_timeout_seconds
+        first_text_deadline = _deadline_after(request.first_text_timeout_seconds)
         hedge_models = self._interactive_hedge_models(request)
         if hedge_models:
             async with aclosing(self._stream_hedged(request, hedge_models, first_text_deadline)) as events:
@@ -866,12 +875,10 @@ class ProviderRouter:
                         )
                     return
 
-                timeout: float | None = (
-                    max(0.0, first_text_deadline - asyncio.get_running_loop().time()) if winner is None else None
-                )
+                timeout = _remaining_timeout(first_text_deadline) if winner is None else None
                 if winner is None and can_start_next():
                     if next_index == 1:
-                        timeout = max(0.0, min(hedge_deadline, first_text_deadline) - asyncio.get_running_loop().time())
+                        timeout = _remaining_timeout(min(hedge_deadline, first_text_deadline))
                     else:
                         start_next()
                         continue
@@ -983,7 +990,7 @@ class ProviderRouter:
 
         use_case = AgentRequestUseCase()
         if first_text_deadline is None:
-            first_text_deadline = asyncio.get_running_loop().time() + request.first_text_timeout_seconds
+            first_text_deadline = _deadline_after(request.first_text_timeout_seconds)
         model_deadline = first_text_deadline
         status_mgr = get_key_status_manager()
         model_queue = list(model_plan or request.models)
@@ -1006,7 +1013,7 @@ class ProviderRouter:
             key_hash = key_data["key_hash"]
             try:
                 if key_hash != _VERTEX_KH and not is_opencode_model(model_name) and not is_freetheai_model(model_name):
-                    async with asyncio.timeout(max(0.0, first_text_deadline - asyncio.get_running_loop().time())):
+                    async with asyncio.timeout(_remaining_timeout(first_text_deadline)):
                         await status_mgr.record_success(key_hash, model_name)
             except Exception as exc:
                 logging.debug("Non-critical typed-stream stats update failed: %s", exc)
@@ -1026,7 +1033,7 @@ class ProviderRouter:
 
                     report_vertex_error(RuntimeError(failure.diagnostic))
                 elif not is_opencode_model(model_name) and not is_freetheai_model(model_name):
-                    async with asyncio.timeout(max(0.0, model_deadline - asyncio.get_running_loop().time())):
+                    async with asyncio.timeout(_remaining_timeout(model_deadline)):
                         await status_mgr.suspend_key(
                             key_hash,
                             model_name,
@@ -1079,21 +1086,14 @@ class ProviderRouter:
                 continue
             attempted_models.add(preferred_model)
 
-            # A sequential chat plan must give its configured backups a chance
-            # within the same route deadline, even if a primary key never replies.
-            reserve_fallback_time = (
+            has_configured_backup = (
                 request.route_strategy == "sequential"
                 and request.workload is Workload.INTERACTIVE
                 and not request.allow_deferred
                 and bool(model_queue)
             )
-            now = asyncio.get_running_loop().time()
             model_deadline = first_text_deadline
-            model_timeout_seconds = max(0.0, first_text_deadline - now)
-            if reserve_fallback_time:
-                remaining_models = len(set(model_queue) - attempted_models)
-                model_timeout_seconds /= remaining_models + 1
-                model_deadline = now + model_timeout_seconds
+            model_timeout_seconds = _remaining_timeout(model_deadline)
 
             failed_keys: set[str] = set()
             model_had_transient = False
@@ -1117,7 +1117,7 @@ class ProviderRouter:
                 key_count = min(2 if racing_primary else 1, remaining_key_attempts)
 
                 try:
-                    async with asyncio.timeout(max(0.0, model_deadline - asyncio.get_running_loop().time())):
+                    async with asyncio.timeout(_remaining_timeout(model_deadline)):
                         for _race_idx in range(key_count):
                             if resolved_model is not None and resolved_model != preferred_model:
                                 break
@@ -1374,7 +1374,7 @@ class ProviderRouter:
                         try:
                             deadline = model_deadline if hedge_checked else min(model_deadline, hedge_deadline)
                             race_idx, race_event, race_error, race_done = await asyncio.wait_for(
-                                queue.get(), timeout=max(0.0, deadline - asyncio.get_running_loop().time())
+                                queue.get(), timeout=_remaining_timeout(deadline)
                             )
                         except TimeoutError:
                             if (
@@ -1467,7 +1467,7 @@ class ProviderRouter:
                             last_failure = race_timeout
                             model_had_transient = True
                             model_all_permanent = False
-                        if reserve_fallback_time and any(
+                        if has_configured_backup and any(
                             isinstance(terminal, StreamFailed) and terminal.code is ErrorCode.OVERLOADED
                             for terminal in pre_text_terminals.values()
                         ):
@@ -1493,7 +1493,7 @@ class ProviderRouter:
                             ],
                         )
                     )
-                    idle_deadline = asyncio.get_running_loop().time() + request.stream_idle_timeout_seconds
+                    idle_deadline = _deadline_after(request.stream_idle_timeout_seconds)
                     yield first_delta
 
                     while True:
@@ -1501,9 +1501,7 @@ class ProviderRouter:
                             winner_event = (
                                 queue.get_nowait()
                                 if not queue.empty()
-                                else await asyncio.wait_for(
-                                    queue.get(), timeout=max(0.0, idle_deadline - asyncio.get_running_loop().time())
-                                )
+                                else await asyncio.wait_for(queue.get(), timeout=_remaining_timeout(idle_deadline))
                             )
                         except TimeoutError:
                             yield StreamFailed(
@@ -1526,7 +1524,7 @@ class ProviderRouter:
                             raise ProviderStreamProtocolError("Winning provider ended before terminal delivery")
                         assert terminal_event is not None
                         if isinstance(terminal_event, TextDelta):
-                            idle_deadline = asyncio.get_running_loop().time() + request.stream_idle_timeout_seconds
+                            idle_deadline = _deadline_after(request.stream_idle_timeout_seconds)
                             yield terminal_event
                             continue
                         if isinstance(terminal_event, StreamDeferred):
