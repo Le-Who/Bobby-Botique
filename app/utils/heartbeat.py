@@ -9,6 +9,8 @@ import contextlib
 import logging
 from typing import Any
 
+from app.utils.chat_actions import send_chat_action
+
 # Dictionary mapping Telegram message_id to its heartbeat termination Event
 _HEARTBEAT_EVENTS: dict[int, asyncio.Event] = {}
 
@@ -33,7 +35,7 @@ def register_heartbeat(message_id: int, event: asyncio.Event, chat: Any = None) 
             try:
                 while not event.is_set():
                     with contextlib.suppress(Exception):
-                        await chat.send_action(action="typing")
+                        await send_chat_action(chat.get_bot(), chat.id)
                     try:
                         await asyncio.wait_for(event.wait(), timeout=4.0)
                         break

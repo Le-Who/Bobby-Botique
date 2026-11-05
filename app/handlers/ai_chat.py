@@ -19,6 +19,7 @@ from app.handlers.chat_logic import classify_resolution
 from app.i18n import detect_language, t
 from app.prompt_registry import get_registry
 from app.repos.chats import ensure_chat_generation, update_user_chat
+from app.utils.chat_actions import send_chat_action
 from app.utils.formatting import TelegramFormatter
 from app.utils.heartbeat import retire_heartbeat
 from app.utils.stage_indicators import STAGES_CHAT, update_stage
@@ -892,7 +893,7 @@ async def _handle_lyria_audio(
     async def _heartbeat() -> None:
         while not stop_event.is_set():
             try:
-                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+                await send_chat_action(bot, chat_id, ChatAction.UPLOAD_VOICE)
             except Exception:
                 pass
             try:

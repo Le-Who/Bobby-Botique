@@ -58,6 +58,7 @@ from app.security import check_user_rate_limit
 from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
 from app.utils.background_tasks import submit_task, try_submit_task
+from app.utils.chat_actions import send_chat_action
 from app.utils.heartbeat import (
     register_heartbeat,
     register_wait_notice,
@@ -359,7 +360,7 @@ async def _handle_request(
 
     # Immediate typing indicator — instant feedback before any processing
     try:
-        submit_task(update.effective_chat.send_action(action="typing"))
+        submit_task(send_chat_action(context.bot, chat_id))
     except Exception:
         pass  # Non-critical
 

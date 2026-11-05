@@ -59,6 +59,7 @@ class DummyContext:
     def __init__(self):
         self.bot = MagicMock()
         self.bot.send_message = AsyncMock()
+        self.bot.send_chat_action = AsyncMock(return_value=True)
         self.user_data = {}
         self.chat_data = {}
         self.application = MagicMock()
@@ -126,6 +127,37 @@ async def test_handle_request_rate_limit_exceeded():
         mock_rate_limit.assert_awaited_once_with(123)
         message.reply_text.assert_awaited_once()
         assert "Превышен лимит запросов" in message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_typing_flood_limit_does_not_alert_or_interrupt_message_handling(monkeypatch):
+    from telegram import Chat
+    from telegram.error import RetryAfter
+
+    from app.utils.background_tasks import TaskManager
+
+    monkeypatch.setenv("PTB_TIMEDELTA", "true")
+    manager = TaskManager()
+    alert = AsyncMock()
+    manager.register_error_callback(alert)
+    bot = MagicMock(send_chat_action=AsyncMock(side_effect=RetryAfter(17)))
+    chat = Chat(id=456, type="private")
+    chat.set_bot(bot)
+    message = MockMessage(user=MockUser(), chat=chat)
+    context = DummyContext()
+    context.bot = bot
+    monkeypatch.setattr(messages, "submit_task", manager.submit)
+    monkeypatch.setattr(messages, "check_user_rate_limit", AsyncMock(return_value=False))
+    monkeypatch.setattr(messages, "is_authorized", AsyncMock(return_value=True))
+
+    try:
+        await messages.handle_request(DummyUpdate(message=message), context)
+    finally:
+        assert await manager.drain()
+
+    bot.send_chat_action.assert_awaited_once()
+    message.reply_text.assert_awaited_once()
+    alert.assert_not_awaited()
 
 
 @pytest.mark.asyncio

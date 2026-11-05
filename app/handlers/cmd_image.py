@@ -79,6 +79,7 @@ from app.providers.pollinations import (
     get_pollinations_provider,
 )
 from app.runtime_settings import media_prompts as _media_prompts  # noqa: F401 — registers image prompts
+from app.utils.chat_actions import send_chat_action
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.ux_improvements import make_copy_text_button
 
@@ -499,7 +500,7 @@ def _build_awaiting_keyboard() -> InlineKeyboardMarkup:
 async def _send_typing_heartbeat(chat_id: int, bot, stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         try:
-            await bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+            await send_chat_action(bot, chat_id, ChatAction.UPLOAD_PHOTO)
         except Exception:
             pass
         try:

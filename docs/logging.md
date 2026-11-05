@@ -63,6 +63,18 @@ user-facing message. These do not consume the incident alert budget. Key/config
 and exhausted-quota failures request administrator attention at warning severity;
 unexpected failures retain critical alerts and the original `error_id`.
 
+Typing, image and voice progress indicators share the bounded process-local
+sender in `app/utils/chat_actions.py`. It coalesces concurrent calls in one chat
+to at most one attempt per four seconds and bounds each attempt to three seconds.
+`RetryAfter` pauses all progress indicators for the requested delay; skipped
+indicators are discarded, so they cannot replay after the response finishes.
+Flood waits emit `telegram.chat_action_rate_limited` at warning level; other
+expected Telegram/timeout failures emit `telegram.chat_action_skipped` at debug
+level. These cosmetic failures do not generate critical background-task alerts.
+Cancellation still propagates, and unexpected programming errors retain the
+normal background-task failure path. This budget does not coordinate replicas
+or throttle actual response delivery.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `LOG_FORMAT` | `json` | `json` or explicitly `text`; overrides compatibility aliases |

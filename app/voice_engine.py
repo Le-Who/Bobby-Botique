@@ -20,6 +20,7 @@ from app.metrics import role_conv_metrics
 from app.process_policies import TTS_DEFAULT_MODELS, resolve_process
 from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.utils.background_tasks import try_submit_task
+from app.utils.chat_actions import send_chat_action
 
 if TYPE_CHECKING:
     from app.providers.tts import SpeechSettings
@@ -863,7 +864,7 @@ class VoiceReplyManager:
     async def _heartbeat(self, job: VoiceJob, stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():
             with contextlib.suppress(Exception):
-                await job.bot.send_chat_action(chat_id=job.chat_id, action="upload_voice")
+                await send_chat_action(job.bot, job.chat_id, "upload_voice")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=_HEARTBEAT_INTERVAL_S)
             except TimeoutError:
