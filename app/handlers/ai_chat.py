@@ -17,6 +17,7 @@ from app.database import ChatState
 from app.handlers.ai_core import _resolve_ai_request
 from app.handlers.chat_logic import classify_resolution
 from app.i18n import detect_language, t
+from app.observability.events import emit
 from app.prompt_registry import get_registry
 from app.repos.chats import ensure_chat_generation, update_user_chat
 from app.utils.chat_actions import send_chat_action
@@ -281,8 +282,23 @@ async def _handle_regular_chat(
     # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
     from app.process_policies import resolve_process
+    from app.runtime_settings.lifecycle import operation_snapshot
+    from app.runtime_settings.live_routes import active_provider
 
-    process_policy = await resolve_process("chat", (model_for_this_request,))
+    snapshot = await operation_snapshot()
+    process_id = "chat"
+    route_reason = "profile_disabled"
+    if active_provider(snapshot) == "openai":
+        from app.thinking_classifier import classify_chat_complexity
+
+        complexity = classify_chat_complexity(user_message, is_forward_batch=is_forward_batch)
+        route_reason = complexity.reason_code
+        if complexity.is_complex:
+            process_id = "chat.complex"
+    if process_id == "chat.complex":
+        process_policy = await resolve_process("chat.complex", (model_for_this_request,))
+    else:
+        process_policy = await resolve_process("chat", (model_for_this_request,))
 
     # ── Lyria audio intercept ─────────────────────────────────────────────
     # When user has selected a Lyria model, generate music instead of chat.
@@ -656,7 +672,7 @@ async def _handle_regular_chat(
 
     try:
         request = await generation_request_from_history(
-            process_id="chat",
+            process_id=process_id,
             models=(model_for_this_request,) if process_policy.explicit else (model_used,),
             history=provider_history,
             system_instruction=system_instruction,
@@ -667,6 +683,22 @@ async def _handle_regular_chat(
             # A deferred worker would outlive this request-scoped lease while
             # retaining the private prompt.
             allow_deferred=False,
+        )
+        emit(
+            "chat.route_selected",
+            process_id=process_id,
+            route_reason=route_reason,
+            requested_model=request.models[0],
+            reasoning_effort=(
+                "model_default"
+                if request.thinking_level is None
+                else "none"
+                if request.thinking_level.value == "off"
+                else request.thinking_level.value
+            ),
+            policy_revision=request.policy_revision,
+            complex_route=process_id == "chat.complex",
+            forwarded_batch=is_forward_batch,
         )
         try:
             outcome = await get_telegram_response_delivery().stream(

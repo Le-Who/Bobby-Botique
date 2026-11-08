@@ -8,10 +8,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from dataclasses import replace
 
 from pydantic import BaseModel
 
-from app.process_policies import ResolvedPolicy, resolve_process
+from app.process_policies import resolve_process
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.utils.json_compat import json
 
@@ -97,7 +98,7 @@ async def generate_daily_text_for(
                 from app.core.selected_text import generate_selected_text
 
                 return await generate_selected_text(
-                    ResolvedPolicy((candidate,), "sequential", True, policy.revision),
+                    replace(policy, models=(candidate,), strategy="sequential", explicit=True),
                     prompt,
                     timeout=budget,
                     response_schema=response_schema,

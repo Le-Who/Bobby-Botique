@@ -292,7 +292,7 @@ async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAU
     chat_state.thinking_level = next_level
 
     # Rebuild settings menu
-    from app.handlers.commands import _THINKING_LABELS
+    from app.handlers.commands import _thinking_display
 
     lang = _lang(update)
     formatted_text, parse_mode, keyboard = _build_settings_view(chat_state, lang)
@@ -302,8 +302,15 @@ async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAU
             parse_mode=parse_mode,
             reply_markup=keyboard,
         )
-    thinking_str = _THINKING_LABELS.get(next_level, next_level or "🔄 Auto")
-    await query.answer(f"{t('settings.thinking', lang)} {thinking_str}")
+    thinking_str = _thinking_display(chat_state, lang)
+    if any(menus.get_admin_reasoning_effort(process) is not None for process in ("chat", "search")):
+        await query.answer(
+            "Preference saved. Current levels are set by the administrator."
+            if lang == "en"
+            else "Предпочтение сохранено. Текущие уровни заданы администратором."
+        )
+    else:
+        await query.answer(f"{t('settings.thinking', lang)} {thinking_str}")
 
 
 async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -341,10 +348,10 @@ async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def _build_settings_view(chat_state, lang: str):
     """Build settings menu text and keyboard (shared by thinking + ltm toggles)."""
-    from app.handlers.commands import _THINKING_LABELS
+    from app.handlers.commands import _thinking_display
 
-    model_name = chat_state.model or t("settings.default_model", lang)
-    thinking_str = _THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level or "🔄 Auto")
+    model_name = menus.get_admin_selected_chat_model() or chat_state.model or t("settings.default_model", lang)
+    thinking_str = _thinking_display(chat_state, lang)
     search_str = (
         t("settings.search_enabled", lang) if chat_state.search_enabled else t("settings.search_disabled", lang)
     )

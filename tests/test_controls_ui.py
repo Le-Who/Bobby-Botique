@@ -11,6 +11,26 @@ SCRIPT = ROOT / "app/static/js/controls.js"
 TEMPLATE = ROOT / "app/templates/controls.html"
 
 
+def test_unknown_outcome_legacy_process_draft_cannot_confirm_new_reasoning_override():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node unavailable")
+    script = r"""
+const assert=require('node:assert/strict');
+const {matchesSubmittedSection}=require('./app/static/js/controls.js');
+const value={models:['openai-direct/gpt-6-luna'],strategy:'sequential',inherit_user_model:false,service_tier:'flex'};
+const payload={section:'process',id:'chat',value,expected_revision:1};
+const snapshot={revision:2,processes:[{id:'chat',...value,reasoning_effort:'none'}]};
+assert.equal(matchesSubmittedSection(snapshot,payload),false);
+assert.equal(matchesSubmittedSection(snapshot,{...payload,value:{...value,reasoning_effort:'none'}}),true);
+snapshot.processes[0].reasoning_effort=null;
+assert.equal(matchesSubmittedSection(snapshot,payload),true);
+assert.equal(matchesSubmittedSection(snapshot,{...payload,value:{...value,reasoning_effort:'low'}}),false);
+"""
+    result = subprocess.run([node, "-e", script], cwd=ROOT, encoding="utf-8", capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_ambiguous_save_confirmation_requires_new_revision_and_equal_section():
     node = shutil.which("node")
     if not node:

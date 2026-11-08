@@ -12,6 +12,7 @@ from app.runtime_settings import store
 
 LIVE_PROCESS_IDS = (
     "chat",
+    "chat.complex",
     "inline",
     "search",
     "document",
@@ -74,8 +75,10 @@ def default_policy(process_id: str, provider: str) -> dict[str, Any]:
         if not model.startswith("gemini-"):
             model = GEMINI_ECONOMY_MODEL if process_id in _FAST_PROCESSES else GEMINI_PRIMARY_MODEL
     value = {"models": [model], "strategy": "sequential", "inherit_user_model": False}
-    if provider == "openai" and process_id in {"chat", "search"}:
+    if provider == "openai" and process_id in {"chat", "chat.complex", "search"}:
         value["service_tier"] = "flex"
+    if provider == "openai" and process_id in {"chat", "chat.complex", "search", "inline", "crocodile.judge"}:
+        value["reasoning_effort"] = "low" if process_id == "chat.complex" else "none"
     return validate_policy(process_id, value)
 
 
@@ -110,7 +113,9 @@ def validate_value(identity: str, value: Any) -> None:
         return
     if identity not in {f"saved:{provider}" for provider in PROVIDERS}:
         raise ValueError("Неизвестное поле профиля маршрутов")
-    if not isinstance(value, Mapping) or set(value) != set(LIVE_PROCESS_IDS):
+    profile_ids = set(LIVE_PROCESS_IDS)
+    legacy_ids = profile_ids - {"chat.complex"}
+    if not isinstance(value, Mapping) or set(value) not in (profile_ids, legacy_ids):
         raise ValueError("Неполный сохранённый профиль маршрутов")
     for process_id, policy in value.items():
         if policy is not None:
@@ -120,8 +125,10 @@ def validate_value(identity: str, value: Any) -> None:
 def _openai_model(process_id: str) -> str:
     from app.config import settings
 
-    if process_id in {"chat", "search"}:
+    if process_id in {"chat", "search", "crocodile.judge"}:
         return "openai-direct/gpt-6-luna"
+    if process_id == "chat.complex":
+        return "openai-direct/gpt-6.1-terra"
     if process_id in _FAST_PROCESSES:
         return getattr(settings, "OPENAI_INLINE_MODEL", "openai-direct/gpt-6-luna")
     return getattr(settings, "OPENAI_DEFAULT_MODEL", "openai-direct/gpt-6.1-terra")
@@ -171,6 +178,11 @@ async def switch_provider(provider: str, *, expected_revision: int, actor: str) 
         else:
             raise ValueError("Исходный профиль ещё не сохранён")
     validate_value(f"saved:{provider}", target)
+    if "chat.complex" not in target:
+        target = {
+            **target,
+            "chat.complex": None if provider == "baseline" else default_policy("chat.complex", provider),
+        }
     updates = {"live_route:provider": provider, f"live_route:saved:{outgoing}": original}
     removals = []
     for process_id, policy in target.items():

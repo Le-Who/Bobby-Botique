@@ -2,12 +2,93 @@
 
 from contextlib import nullcontext
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.games import crocodile_daily, daily_ai, hinting, judge, judgement_cache, word_bank
 from app.repos import crocodile_daily as repo
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effort", ["low", "high"])
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_direct_judge_candidate_keeps_process_reasoning_through_actual_request(monkeypatch, effort, fallback):
+    from app.errors import ErrorCode
+    from app.providers.stream_types import (
+        FailurePhase,
+        FinishReason,
+        GroundingReport,
+        KeyDisposition,
+        ProviderKind,
+        RetryDisposition,
+        RouteUsed,
+        StreamCompleted,
+        StreamFailed,
+        TextDelta,
+        TokenUsage,
+    )
+    from app.runtime_settings import lifecycle
+    from app.runtime_settings.store import SettingsSnapshot
+
+    models = ["openai-direct/gpt-6-luna", "openai-direct/gpt-6.1-terra"]
+    requests = []
+    answer = '{"status":"hot","score":0.99,"hint":"Верно"}'
+
+    async def stream(request):
+        requests.append(request)
+        if fallback and len(requests) == 1:
+            yield StreamFailed(
+                ErrorCode.TIMEOUT,
+                FailurePhase.BEFORE_TEXT,
+                RetryDisposition.DO_NOT_RETRY,
+                KeyDisposition.UNCHANGED,
+                "synthetic timeout",
+            )
+            return
+        yield TextDelta(answer)
+        yield StreamCompleted(
+            FinishReason.from_raw("STOP"),
+            TokenUsage(total=12),
+            GroundingReport(),
+            RouteUsed(ProviderKind.OPENAI, request.models[0], request.models[0]),
+        )
+
+    monkeypatch.setattr("app.providers.get_provider_router", lambda: SimpleNamespace(stream=stream))
+    gemini = AsyncMock(side_effect=AssertionError("Explicit direct judge must not call Gemini"))
+    monkeypatch.setattr(daily_ai, "generate_daily_text", gemini)
+    token = lifecycle._operation_snapshot.set(
+        SettingsSnapshot(
+            129,
+            {
+                "process:crocodile.judge": {
+                    "models": models,
+                    "strategy": "sequential",
+                    "inherit_user_model": False,
+                    "service_tier": "default",
+                    "reasoning_effort": effort,
+                },
+            },
+        )
+    )
+    try:
+        result = await daily_ai.generate_daily_text_for(
+            "judge",
+            "Synthetic bicycle judgement",
+            "gemini-old-selection",
+            response_schema=judge.GuessJudgement,
+        )
+    finally:
+        lifecycle._operation_snapshot.reset(token)
+    assert judge.GuessJudgement.model_validate_json(result).score == 0.99
+    expected_models = [(models[0],), (models[1],)] if fallback else [(models[0],)]
+    assert [request.models for request in requests] == expected_models
+    assert all(request.thinking_level.value == effort for request in requests)
+    assert all(request.policy_revision == 129 for request in requests)
+    assert all(request.response_schema is judge.GuessJudgement for request in requests)
+    assert all(not request.allow_model_fallback and not request.allow_deferred for request in requests)
+    gemini.assert_not_awaited()
 
 
 @pytest.fixture

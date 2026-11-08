@@ -10,9 +10,112 @@ Covers:
 - Edge cases: empty string, whitespace, mixed signals
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.thinking_classifier import classify_thinking_level, resolve_thinking_level
+
+_COMPLEX_INTENTS = json.loads(
+    (Path(__file__).parent / "fixtures/complex_chat_intents.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize("case", _COMPLEX_INTENTS, ids=lambda case: case["id"])
+def test_evaluated_natural_complex_intents_reach_complex_route(case):
+    from app.thinking_classifier import classify_chat_complexity
+
+    assert classify_chat_complexity(case["prompt"]).is_complex
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What does 'Design a service without downtime, only local data, at most two hours' mean?",
+        "Поясни фразу ‘Спроектируй каталог без сервера, только локально, не более недели’.",
+        "Найди минимальное число в списке: 8, 4, 2.",
+        "Перечисли все допустимые дни недели для отдыха.",
+        "Сверь счёт: 100 + 20 = 120.",
+        "Объясни, что означает термин «тогда и только тогда».",
+        "Составь оптимальный план выходного без лишних подробностей.",
+    ],
+)
+def test_simple_requests_and_single_quoted_complex_instructions_remain_on_fast_route(text):
+    from app.thinking_classifier import classify_chat_complexity
+
+    assert not classify_chat_complexity(text).is_complex
+
+
+def test_natural_optimization_request_counts_requirements_not_only_literal_plan_phrase():
+    from app.thinking_classifier import classify_chat_complexity
+
+    decision = classify_chat_complexity(
+        "Составь оптимальный план переезда: аренда не более 20000, без грузового лифта, "
+        "машина только после 14:00, закончить не позже 18:00."
+    )
+    assert decision.is_complex
+
+
+@pytest.mark.parametrize(
+    "text,expected,reason",
+    [
+        ("Привет! Как дела?", False, "simple_text"),
+        ("Сравни чай и кофе по вкусу и содержанию кофеина.", False, "simple_text"),
+        ("Сравни два тарифа: 300 рублей за 40 запросов и 500 за 100.", False, "simple_text"),
+        (
+            "Переведи на английский: " + "Нужно разработать проект без ошибок, только по плану, обязательно. " * 80,
+            False,
+            "text_transform",
+        ),
+        ("Перепиши проще: " + "Если А, то Б, если В, иначе Г. " * 80, False, "text_transform"),
+        ("Длинная заметка о библиотеке и каталогах. " * 100, False, "simple_text"),
+        ('Скопируй: "Разработай проект без серверов, только локально, обязательно быстро."', False, "text_transform"),
+        (
+            "Что означает фраза «Спланируй проект без серверов, только локально, обязательно быстро»?",
+            False,
+            "simple_text",
+        ),
+        (
+            "Вот цитата:\n> Разработай план без серверов, только локально, обязательно быстро.\nОбъясни слово сервер.",
+            False,
+            "simple_text",
+        ),
+        (
+            "Спроектируй каталог: без данных читателей, только локальная сеть, не более 2 недель на запуск.",
+            True,
+            "constrained_task",
+        ),
+        (
+            "Определи порядок: если A завершена, запускаем B; если B не завершена, C ждёт, иначе запускаем C.",
+            True,
+            "branching_logic",
+        ),
+        (
+            "Спланируй работы: B зависит от A, C можно начинать только после B. Уложись в неделю.",
+            True,
+            "dependent_steps",
+        ),
+        ("Design a migration without downtime; only one database; at most two hours.", True, "constrained_task"),
+        ("Расскажи пошагово, как заварить чай.", False, "simple_text"),
+    ],
+)
+def test_chat_complexity_routes_constrained_tasks_but_not_length_or_pasted_data(text, expected, reason):
+    from app.thinking_classifier import classify_chat_complexity
+
+    decision = classify_chat_complexity(text)
+    assert decision.is_complex is expected
+    assert decision.reason_code == reason
+
+
+def test_forwarded_batch_does_not_turn_quoted_tasks_into_complex_instructions():
+    from app.thinking_classifier import classify_chat_complexity
+
+    decision = classify_chat_complexity(
+        "Спроектируй каталог: без сервера, только локальная сеть, не более 2 недель.", is_forward_batch=True
+    )
+    assert not decision.is_complex
+    assert decision.reason_code == "forwarded_content"
 
 
 @pytest.mark.parametrize(

@@ -32,6 +32,7 @@ from app.errors import (
     ErrorCode,
     classify_key_error,
     extract_error_code,
+    extract_retry_after_seconds,
     is_error_message,
     is_key_related_error,
     is_retryable_error,
@@ -40,7 +41,7 @@ from app.errors import (
 )
 from app.observability.provider_events import observe_provider_stream
 from app.observability.request_metrics import observe_generation, record_race_outcome
-from app.providers.base import is_freetheai_model, is_openai_model, is_opencode_model
+from app.providers.base import AIResponse, is_freetheai_model, is_openai_model, is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
 from app.providers.stream_tasks import drain_provider_tasks
 from app.providers.stream_types import (
@@ -63,6 +64,16 @@ _ParsedResponse = TypeVar("_ParsedResponse")
 MODEL_HEDGE_DELAY_SECONDS = 3.0
 KEY_RACE_HEDGE_DELAY_SECONDS = 3.0
 KEY_HEALTH_UPDATE_TIMEOUT_SECONDS = 1.0
+
+
+def _legacy_health_failure(response_text: str, provider_error: AIResponse | None) -> tuple[str, str, dict[str, int]]:
+    """Keep provider evidence separate from the localized legacy presentation."""
+    source = provider_error.error_message if provider_error is not None else None
+    category = classify_key_error(source or response_text)
+    retry_after = extract_retry_after_seconds(source or response_text)
+    diagnostic = user_friendly_error(source) if source else response_text
+    options = {"retry_after_seconds": retry_after} if source and retry_after is not None else {}
+    return category, diagnostic[:200], options
 
 
 class _ReservePhase(Enum):
@@ -360,6 +371,11 @@ class ProviderRouter:
         last_transient: str | None = None
         had_nontransient_failure = False
         last_nontransient: str | None = None
+        provider_error: AIResponse | None = None
+
+        def capture_provider_error(response: AIResponse) -> None:
+            nonlocal provider_error
+            provider_error = response
 
         def note_failure(response: str) -> None:
             nonlocal last_transient, had_nontransient_failure, last_nontransient
@@ -499,6 +515,7 @@ class ProviderRouter:
                 max_attempts=max_key_retries,
             )
             try:
+                provider_error = None
                 response_text, token_count = await use_case.get_ai_response(
                     key_data["api_key"],
                     history,
@@ -510,12 +527,13 @@ class ProviderRouter:
                     thinking_level=thinking_level,
                     timeout=timeout,
                     provider_max_retries=1,
+                    on_provider_error=capture_provider_error,
                 )
             except Exception as exc:
                 failed_keys.add(key_data["key_hash"])
                 response_text = user_friendly_error(exc)
                 note_failure(response_text)
-                error_category = classify_key_error(response_text)
+                error_category, diagnostic, suspension_options = _legacy_health_failure(response_text, provider_error)
                 if error_category == "transient":
                     had_transient = True
                 if error_category != "permanent":
@@ -526,7 +544,8 @@ class ProviderRouter:
                             key_data["key_hash"],
                             model_used,
                             error_category,
-                            response_text[:200],
+                            diagnostic,
+                            **suspension_options,
                         )
                 except Exception as suspend_exc:
                     logging.warning("Non-critical: failed to suspend key after exception: %s", suspend_exc)
@@ -547,7 +566,7 @@ class ProviderRouter:
                 and (is_key_related_error(response_text) or is_retryable_error(response_text))
             ):
                 failed_keys.add(key_data["key_hash"])
-                error_category = classify_key_error(response_text)
+                error_category, diagnostic, suspension_options = _legacy_health_failure(response_text, provider_error)
 
                 note_failure(response_text)
                 if error_category == "transient":
@@ -567,7 +586,8 @@ class ProviderRouter:
                             key_data["key_hash"],
                             model_used,  # type: ignore[arg-type]  # asserted above
                             error_category,
-                            response_text[:200],
+                            diagnostic,
+                            **suspension_options,
                         )
                 except Exception as e:
                     logging.warning(
@@ -710,6 +730,11 @@ class ProviderRouter:
         excluded_keys: set[str] = set()
         attempted_keys = 0
         last_error: Exception | None = None
+        provider_error: AIResponse | None = None
+
+        def capture_provider_error(response: AIResponse) -> None:
+            nonlocal provider_error
+            provider_error = response
 
         while max_keys is None or attempted_keys < max_keys:
             key_data = None
@@ -757,6 +782,7 @@ class ProviderRouter:
                     max_attempts=len(normalized_plan),
                 )
                 try:
+                    provider_error = None
                     response_text, token_count = await use_case.get_ai_response(
                         api_key,
                         history,
@@ -768,13 +794,16 @@ class ProviderRouter:
                         thinking_level=thinking_level,
                         timeout=timeout,
                         provider_max_retries=1,
+                        on_provider_error=capture_provider_error,
                     )
                 except Exception as exc:
                     last_error = exc
                     response_text = user_friendly_error(exc)
 
                 if is_error_message(response_text):
-                    error_category = classify_key_error(response_text)
+                    error_category, diagnostic, suspension_options = _legacy_health_failure(
+                        response_text, provider_error
+                    )
                     last_error = RuntimeError(response_text)
                     if error_category in {"permanent", "quota"} or is_retryable_error(response_text):
                         try:
@@ -782,7 +811,8 @@ class ProviderRouter:
                                 key_hash,
                                 model_name,
                                 error_category,
-                                response_text[:200],
+                                diagnostic,
+                                **suspension_options,
                             )
                         except Exception as exc:
                             logging.warning("Non-critical: failed to suspend planned key: %s", exc)

@@ -7,9 +7,10 @@ never grows hidden fallback models; absent overrides retain legacy behavior.
 from collections.abc import Mapping
 from contextlib import aclosing
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
-from app.providers.stream_types import ServiceTier
+from app.providers.stream_types import ServiceTier, ThinkingLevel
 
 TTS_DEFAULT_MODELS = ("gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts")
 
@@ -109,6 +110,13 @@ PROCESSES: dict[str, ProcessSpec] = {
         "Изображение: поисковый запрос", "Изображения", "DEFAULT_MODEL", "gemini-3.6-flash", ("text", "image")
     ),
     "chat": ProcessSpec("Диалог", "Общение", "DEFAULT_MODEL", "gemini-3.6-flash", hedging=True),
+    "chat.complex": ProcessSpec(
+        "Диалог: сложный разбор",
+        "Общение",
+        "DEFAULT_MODEL",
+        "gemini-3.6-flash",
+        note="Отдельный маршрут сложного разбора при активном профиле OpenAI; выбор выполняется до генерации ответа.",
+    ),
     "search": ProcessSpec("Ответ с поиском", "Поиск", "QNA_MODEL", "gemini-3.5-flash-lite"),
     "document": ProcessSpec("Ответ по документу", "Документы", "DEFAULT_MODEL", "gemini-3.6-flash", hedging=True),
     "vision": ProcessSpec(
@@ -218,6 +226,13 @@ PROCESSES["crocodile.judge"] = _replace(
 )
 
 
+class ReasoningEffort(StrEnum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedPolicy:
     models: tuple[str, ...]
@@ -225,6 +240,15 @@ class ResolvedPolicy:
     explicit: bool = False
     revision: int = 0
     service_tier: ServiceTier = ServiceTier.DEFAULT
+    reasoning_effort: ReasoningEffort | None = None
+
+
+def policy_thinking_level(policy: ResolvedPolicy, fallback: ThinkingLevel | None) -> ThinkingLevel | None:
+    """Apply an explicit process choice while retaining absent legacy/user intent."""
+    effort = getattr(policy, "reasoning_effort", None)
+    if effort is None:
+        return fallback
+    return ThinkingLevel.OFF if effort == ReasoningEffort.NONE else ThinkingLevel(effort.value)
 
 
 def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
@@ -233,7 +257,13 @@ def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
     spec = PROCESSES[process_id]
     if not spec.connected:
         raise ValueError(spec.note or "Исполнитель ещё не подключён к редактированию политики")
-    if not isinstance(value, Mapping) or set(value) - {"models", "strategy", "inherit_user_model", "service_tier"}:
+    if not isinstance(value, Mapping) or set(value) - {
+        "models",
+        "strategy",
+        "inherit_user_model",
+        "service_tier",
+        "reasoning_effort",
+    }:
         raise ValueError("Неизвестные поля политики")
     models = value.get("models")
     if not isinstance(models, (list, tuple)) or not 1 <= len(models) <= 12:
@@ -314,7 +344,7 @@ def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
     if not isinstance(tier, str) or tier not in {item.value for item in ServiceTier}:
         raise ValueError("Неизвестный тариф: выберите Standard или Flex")
     if tier == ServiceTier.FLEX.value and (
-        process_id not in {"chat", "search"}
+        process_id not in {"chat", "chat.complex", "search"}
         or inherit
         or not all(
             model.startswith("openai-direct/") and model.removeprefix("openai-direct/") in SUPPORTED_OPENAI_FLEX_MODELS
@@ -322,11 +352,23 @@ def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
         )
     ):
         raise ValueError(
-            "Flex доступен только для chat/search с поддерживаемыми моделями OpenAI без наследования модели пользователя"
+            "Flex доступен только для chat/chat.complex/search с поддерживаемыми моделями OpenAI без наследования модели пользователя"
         )
+    reasoning = value.get("reasoning_effort")
+    if reasoning is not None:
+        if not isinstance(reasoning, str) or reasoning not in {item.value for item in ReasoningEffort}:
+            raise ValueError("Неизвестный reasoning effort: выберите none, low, medium или high")
+        if not all(is_openai_chat_model_id(model) and model.startswith("openai-direct/gpt-6") for model in clean):
+            raise ValueError(
+                "Reasoning override поддерживается только планом из зарегистрированных прямых OpenAI GPT-6 моделей"
+            )
+        if reasoning == ReasoningEffort.NONE.value and "openai-direct/gpt-6.1-sol" in clean:
+            raise ValueError("GPT-6.1 Sol не поддерживает reasoning none; выберите low или уберите переопределение")
     result = {"models": clean, "strategy": strategy, "inherit_user_model": inherit}
     if "service_tier" in value:
         result["service_tier"] = tier
+    if "reasoning_effort" in value:
+        result["reasoning_effort"] = reasoning
     return result
 
 
@@ -357,7 +399,14 @@ def resolve_policy_value(
     if value["inherit_user_model"] and baseline and allow_user_model:
         models = tuple(dict.fromkeys((baseline[0], *models)))
         validate_policy(process_id, {**value, "models": models})
-    return ResolvedPolicy(models, value["strategy"], True, revision, ServiceTier(value.get("service_tier", "default")))
+    return ResolvedPolicy(
+        models,
+        value["strategy"],
+        True,
+        revision,
+        ServiceTier(value.get("service_tier", "default")),
+        ReasoningEffort(value["reasoning_effort"]) if value.get("reasoning_effort") is not None else None,
+    )
 
 
 async def list_processes() -> list[dict[str, Any]]:
@@ -383,8 +432,12 @@ async def list_processes() -> list[dict[str, Any]]:
                 "execution": value.get("strategy", "legacy") if isinstance(value, Mapping) else "legacy",
                 "strategy": value.get("strategy", "legacy") if isinstance(value, Mapping) else "legacy",
                 "service_tier": value.get("service_tier", "default") if isinstance(value, Mapping) else "default",
-                "service_tiers": ["default", "flex"] if process_id in {"chat", "search"} else ["default"],
+                "service_tiers": ["default", "flex"]
+                if process_id in {"chat", "chat.complex", "search"}
+                else ["default"],
                 "service_tier_explicit": isinstance(value, Mapping) and "service_tier" in value,
+                "reasoning_effort": value.get("reasoning_effort") if isinstance(value, Mapping) else None,
+                "reasoning_effort_explicit": isinstance(value, Mapping) and "reasoning_effort" in value,
                 "inherit_user_model": value.get("inherit_user_model", False) if isinstance(value, Mapping) else False,
                 "user_model_allowed": active_provider(snapshot) == "baseline" or process_id not in LIVE_PROCESS_IDS,
                 "capabilities": list(spec.capabilities),
@@ -534,6 +587,7 @@ async def execute_text_process(
         route_strategy=policy.strategy,
         policy_revision=policy.revision,
         service_tier=policy.service_tier,
+        thinking_level=policy_thinking_level(policy, request.thinking_level),
     )
     chunks: list[str] = []
     async with asyncio.timeout(float(legacy_options.get("timeout") or 120.0)):

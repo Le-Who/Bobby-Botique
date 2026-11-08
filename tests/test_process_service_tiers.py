@@ -18,7 +18,7 @@ def test_legacy_policy_shape_and_default_tier_are_preserved():
     assert resolve_policy_value("chat", None, ("gemini-test",)).service_tier.value == "default"
 
 
-@pytest.mark.parametrize("process", ["chat", "search"])
+@pytest.mark.parametrize("process", ["chat", "chat.complex", "search"])
 def test_supported_live_process_can_choose_flex_independently_of_model(process):
     value = validate_policy(process, {"models": [LUNA], "service_tier": "flex"})
     assert value["models"] == [LUNA]
@@ -55,7 +55,7 @@ def tiers(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_profile_defaults_and_roundtrip_keep_chat_search_tiers_only(tiers):
+async def test_profile_defaults_and_roundtrip_keep_live_answer_tiers(tiers):
     from app.runtime_settings import live_routes
 
     openai = await live_routes.switch_provider("openai", expected_revision=0, actor="test")
@@ -65,6 +65,10 @@ async def test_profile_defaults_and_roundtrip_keep_chat_search_tiers_only(tiers)
         if process in {"chat", "search"}:
             assert policy.models == (LUNA,)
             assert policy.service_tier.value == "flex"
+        elif process == "chat.complex":
+            assert policy.models == ("openai-direct/gpt-6.1-terra",)
+            assert policy.service_tier.value == "flex"
+            assert policy.reasoning_effort.value == "low"
         else:
             assert policy.service_tier.value == "default"
     await live_routes.switch_provider("gemini", expected_revision=1, actor="test")

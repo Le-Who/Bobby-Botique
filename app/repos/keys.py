@@ -591,7 +591,17 @@ class KeyStatusManager:
         prev_failures = rows[0]["failure_count"] if rows else 0
         new_failures = prev_failures + 1
         suspended_until = _compute_suspended_until(error_category, new_failures)
-        if error_category in {"rate_limit", "transient"} and retry_after is not None:
+        google_model = model_name.removeprefix("models/").startswith(("gemini-", "gemma-"))
+        if error_category == "rate_limit" and retry_after is not None and google_model:
+            # A provider RetryInfo is stronger evidence than the generic minute
+            # cooldown. Without one, do not revisit a rejected pair after 15s.
+            suspended_until = now_utc + timedelta(seconds=min(retry_after, _MAX_SUSPENSION.total_seconds()))
+        elif error_category == "rate_limit" and google_model:
+            # Gemini's unspecified 429 does not establish daily exhaustion.
+            # Keep this model/key out for a full minute rather than revisiting
+            # it inside the same short background batch after only 15 seconds.
+            suspended_until = max(suspended_until, now_utc + timedelta(seconds=60))
+        elif error_category in {"rate_limit", "transient"} and retry_after is not None:
             suspended_until = max(
                 suspended_until, now_utc + timedelta(seconds=min(retry_after, _MAX_SUSPENSION.total_seconds()))
             )

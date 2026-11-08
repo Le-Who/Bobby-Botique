@@ -47,7 +47,7 @@ process.stdin.on('end',async()=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
   const luna='openai-direct/gpt-6-luna',terra='openai-direct/gpt-6.1-terra',sol='openai-direct/gpt-6.1-sol',mini='openai-direct/gpt-4o-mini';
   let revision=1,conflict=false,provider='openai',loads=0,catalog=[luna,terra];const writes=[];
-  const routes={chat:{models:[luna],strategy:'sequential',inherit_user_model:false,service_tier:'default'},search:{models:[luna],strategy:'sequential',inherit_user_model:false,service_tier:'default'}};
+  const routes={chat:{models:[luna],strategy:'sequential',inherit_user_model:false,service_tier:'default'},search:{models:[luna],strategy:'sequential',inherit_user_model:false,service_tier:'default'},'chat.complex':{models:[terra],strategy:'sequential',inherit_user_model:false,service_tier:'flex',reasoning_effort:'low'}};
   let savedOpenAI;
   const snapshot=()=>({revision,degraded:false,prompts:[],limits:[],audio:[],history:[],commands:{available:false,commands:[]},
    catalogs:[{provider:'openai',models:catalog,supported_models:[luna,terra,sol,mini],flex_models:[luna,terra,sol]}],
@@ -68,7 +68,7 @@ process.stdin.on('end',async()=>{
    }
    if(path==='/api/admin/controls/live-provider'){
     const body=route.request().postDataJSON();assert.equal(body.expected_revision,revision);
-    if(body.provider==='gemini'){savedOpenAI=structuredClone(routes);for(const key of Object.keys(routes))routes[key]={...routes[key],models:['gemini-test'],service_tier:'default'};}
+    if(body.provider==='gemini'){savedOpenAI=structuredClone(routes);for(const key of Object.keys(routes))routes[key]={...routes[key],models:['gemini-test'],service_tier:'default',reasoning_effort:null};}
     else Object.assign(routes,savedOpenAI);
     provider=body.provider;revision++;return route.fulfill({json:{revision}});
    }
@@ -77,19 +77,29 @@ process.stdin.on('end',async()=>{
   await page.goto('http://tiers.test/controls');
   const chat=page.locator('article[data-section="process"][data-id="chat"]');
   const picker=chat.getByLabel('Выбрать модель OpenAI 1'),tier=chat.getByLabel('Тариф обработки',{exact:true});
-  await picker.selectOption(terra);await tier.selectOption('flex');await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();
+  const reasoning=chat.getByLabel('Reasoning effort',{exact:true});
+  const complex=page.locator('article[data-section="process"][data-id="chat.complex"]');
+  assert.equal(await complex.getByLabel('Тариф обработки',{exact:true}).inputValue(),'flex');
+  assert.equal(await complex.getByLabel('Reasoning effort',{exact:true}).inputValue(),'low');
+  await picker.selectOption(terra);await tier.selectOption('flex');await reasoning.selectOption('none');await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('2'));
-  assert.equal(routes.chat.models[0],terra);assert.equal(routes.chat.service_tier,'flex');
+  assert.equal(routes.chat.models[0],terra);assert.equal(routes.chat.service_tier,'flex');assert.equal(routes.chat.reasoning_effort,'none');
+  await picker.selectOption(sol);await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();
+  assert.equal(writes.length,1);assert.equal(await reasoning.inputValue(),'none');
+  assert.match(await chat.locator('.feedback').textContent(),/Sol не поддерживает reasoning none/);
   await picker.selectOption(mini);assert.equal(await tier.inputValue(),'flex');
   await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();assert.equal(writes.length,1);
   assert.match(await chat.locator('.feedback').textContent(),/Flex требует/);
   await tier.selectOption('default');await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();
+  assert.equal(writes.length,1);assert.equal(await reasoning.inputValue(),'none');
+  assert.match(await chat.locator('.feedback').textContent(),/Reasoning override требует/);
+  await reasoning.selectOption('');await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('3'));
-  assert.equal(routes.chat.models[0],mini);assert.equal(routes.chat.service_tier,'default');
-  await picker.selectOption(luna);await tier.selectOption('flex');conflict=true;
+  assert.equal(routes.chat.models[0],mini);assert.equal(routes.chat.service_tier,'default');assert.equal(routes.chat.reasoning_effort,null);
+  await picker.selectOption(luna);await tier.selectOption('flex');await reasoning.selectOption('low');conflict=true;
   await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('article[data-id="chat"] .feedback').classList.contains('error'));
-  assert.equal(await tier.inputValue(),'flex');assert.equal(await chat.locator('.model-input').inputValue(),luna);
+  assert.equal(await tier.inputValue(),'flex');assert.equal(await chat.locator('.model-input').inputValue(),luna);assert.equal(await reasoning.inputValue(),'low');
   await page.getByRole('button',{name:'Обновить данные',exact:true}).click();
   await chat.getByRole('button',{name:'Перенести черновик на текущую ревизию',exact:true}).click();
   await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();
@@ -99,7 +109,7 @@ process.stdin.on('end',async()=>{
   await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('6'));
   await profile.getByRole('button',{name:'Включить OpenAI напрямую',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('7'));
-  assert.equal(await tier.inputValue(),'flex');assert.equal(await chat.locator('.model-input').inputValue(),luna);
+  assert.equal(await tier.inputValue(),'flex');assert.equal(await chat.locator('.model-input').inputValue(),luna);assert.equal(await reasoning.inputValue(),'low');
   await page.evaluate(()=>window.scrollTo(0,0));await page.evaluate(()=>new Promise(requestAnimationFrame));
   await page.screenshot({path:data.desktop,fullPage:true});
   await page.setViewportSize({width:390,height:844});

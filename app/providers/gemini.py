@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 from collections.abc import AsyncGenerator, Callable, Iterable
 from contextlib import aclosing
@@ -20,7 +21,10 @@ from PIL import Image
 from app.config import settings
 from app.errors import ErrorCode, classify_error_from_exception, extract_retry_after_seconds, tag_error
 from app.metrics import metrics_collector
+from app.observability.events import emit
 from app.observability.provider_events import record_provider_exception
+from app.observability.redaction import provider_key_fields
+from app.observability.schema import JsonValue
 from app.observability.workload_events import observe_workload_call
 from app.providers.base import (
     AIResponse,
@@ -65,6 +69,54 @@ class GeminiModelValidationStatus(StrEnum):
 def _optional_int_attribute(source: Any, name: str) -> int | None:
     value = getattr(source, name, None)
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _record_quota_rejection(error: APIError, model_name: str, api_key: str) -> None:
+    """Retain Google's quota identifiers, never its free-form body or project ID."""
+    if _optional_int_attribute(error, "code") != 429:
+        return
+    raw_details = getattr(error, "details", None)
+    body = raw_details.get("error", raw_details) if isinstance(raw_details, dict) else {}
+    details = body.get("details", []) if isinstance(body, dict) else []
+    violations: list[JsonValue] = []
+    for detail in details if isinstance(details, list) else []:
+        if not isinstance(detail, dict) or detail.get("@type") != "type.googleapis.com/google.rpc.QuotaFailure":
+            continue
+        raw_violations = detail.get("violations", [])
+        for violation in raw_violations[:8] if isinstance(raw_violations, list) else []:
+            if not isinstance(violation, dict) or len(violations) >= 8:
+                continue
+            safe: dict[str, JsonValue] = {}
+            for source, target in (("quotaMetric", "metric"), ("quotaId", "id")):
+                value = violation.get(source)
+                if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_./-]{0,179}", value):
+                    safe[target] = value
+            dimensions = violation.get("quotaDimensions", {})
+            if isinstance(dimensions, dict):
+                for name in ("model", "location"):
+                    value = dimensions.get(name)
+                    if isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_.-]{0,95}", value):
+                        safe[name] = value
+            limit = violation.get("quotaValue")
+            if type(limit) is int and 0 <= limit <= 10**18:
+                safe["limit"] = limit
+            elif isinstance(limit, str) and re.fullmatch(r"[0-9]{1,18}", limit):
+                safe["limit"] = int(limit)
+            if safe:
+                violations.append(safe)
+    emit(
+        "provider.quota_rejected",
+        level="warning",
+        operation="provider.request",
+        provider="gemini",
+        actual_model=model_name,
+        provider_status="RESOURCE_EXHAUSTED" if getattr(error, "status", None) == "RESOURCE_EXHAUSTED" else "unknown",
+        reason_code=classify_error_from_exception(error).value,
+        quota_evidence="structured" if violations else "unspecified",
+        quota_violations=violations,
+        retry_after_seconds=extract_retry_after_seconds(str(error)),
+        **provider_key_fields("gemini", api_key),
+    )
 
 
 def get_cached_genai_client(api_key: str, *, single_attempt: bool = False) -> genai.Client:
@@ -444,6 +496,8 @@ class GeminiProvider(BaseAIProvider):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if isinstance(exc, APIError):
+                _record_quota_rejection(exc, model_name, self.api_key)
             phase = FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT
             error_id = record_provider_exception(
                 exc,
@@ -479,6 +533,8 @@ class GeminiProvider(BaseAIProvider):
             # Key-health storage retains only the first 200 characters. Parse
             # RetryInfo before truncating potentially long Google error bodies.
             diagnostic = f"{retry_hint}{type(exc).__name__}: {message}"[:500]
+            if isinstance(exc, APIError) and _optional_int_attribute(exc, "code") == 429:
+                diagnostic = f"{retry_hint}Gemini HTTP 429 ({code.value})"
             if self.api_key:
                 diagnostic = diagnostic.replace(self.api_key, "[redacted]")
             yield StreamFailed(
@@ -671,16 +727,19 @@ class GeminiProvider(BaseAIProvider):
             )
 
         except APIError as e:
+            _record_quota_rejection(e, model_name, self._client_api_key)
             api_logger.log_error(
                 "gemini",
                 e,
                 context={"api_key": self._client_api_key, "model": model_name, "failure_phase": "request"},
             )
-            self._log_failure(start_time, model_name, str(e), user_id, chat_id)
-            logging.error("Gemini API Error: %s", e)
             err_lower = str(e).lower()
             error_code = classify_error_from_exception(e)
             retry_after_seconds = extract_retry_after_seconds(str(e))
+            status = _optional_int_attribute(e, "code")
+            diagnostic = f"Gemini HTTP {status if status is not None else 'unknown'} ({error_code.value})"
+            self._log_failure(start_time, model_name, diagnostic, user_id, chat_id)
+            logging.error("%s", diagnostic)
 
             if error_code is ErrorCode.RATE_LIMIT:
                 await metrics_collector.record_error("gemini_rate_limit", str(e))

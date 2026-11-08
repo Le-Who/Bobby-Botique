@@ -1,6 +1,6 @@
 import hashlib
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -16,7 +16,7 @@ from app.config import (
     normalize_gemini_runtime_model,
     settings,
 )
-from app.providers.base import is_freetheai_model, is_openai_model, is_opencode_model
+from app.providers.base import AIResponse, is_freetheai_model, is_openai_model, is_opencode_model
 from app.repos.keys import (
     get_available_gemini_key,
     get_available_openrouter_key,
@@ -386,6 +386,7 @@ class AgentRequestUseCase:
         thinking_level: str | None = None,
         timeout: float | None = None,
         provider_max_retries: int | None = None,
+        on_provider_error: Callable[[AIResponse], None] | None = None,
     ) -> tuple[str, int | None]:
         if is_openai_model(model_name):
             use_openrouter = False
@@ -421,6 +422,9 @@ class AgentRequestUseCase:
         elif timeout is not None:
             kwargs["max_retries"] = 1  # tight budget → no retries
         response = await provider.get_response(**kwargs)
+
+        if on_provider_error is not None and not response.success and provider.provider_name == "gemini":
+            on_provider_error(response)
 
         token_count = response.token_count if response.success else None
         return response.text, token_count

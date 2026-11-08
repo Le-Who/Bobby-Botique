@@ -48,8 +48,11 @@
     const value = payload.section === "prompt" ? item.text : payload.section === "catalog" ? item.models
       : payload.section === "rpm" ? item.rpm_limit : payload.section === "limit" ? item.limit : payload.section === "command" ? item.aliases
       : payload.section === "process" ? {models:item.models,strategy:item.strategy,inherit_user_model:item.inherit_user_model} : item.value;
-    if (payload.section === "process") value.service_tier = item.service_tier || "default";
-    const submitted = payload.section === "process" ? {...payload.value, service_tier:payload.value.service_tier || "default"} : payload.value;
+    if (payload.section === "process") {
+      value.service_tier = item.service_tier || "default";
+      value.reasoning_effort = item.reasoning_effort ?? null;
+    }
+    const submitted = payload.section === "process" ? {...payload.value, service_tier:payload.value.service_tier || "default", reasoning_effort:payload.value.reasoning_effort ?? null} : payload.value;
     const canonical = value => Array.isArray(value) ? value.map(canonical)
       : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key,canonical(value[key])])) : value;
     return JSON.stringify(canonical(value)) === JSON.stringify(canonical(submitted));
@@ -266,7 +269,7 @@
     if (!draft && !reset) { message(status, "Изменений для сохранения нет."); return; }
     const payload = { section, id, expected_revision: draft ? draft.expected_revision : drafts.getSnapshot().revision };
     if (reset) payload.reset = true;
-    else payload.value = section === "process" && (id === "chat" || id === "search")
+    else payload.value = section === "process" && ["chat", "chat.complex", "search"].includes(id)
       ? {...draft.value, service_tier:draft.value.service_tier || "default"} : draft.value;
     if (!reset && (section === "process" || section === "catalog")) {
       const models = section === "process" ? payload.value.models : payload.value;
@@ -278,6 +281,17 @@
         const supported = drafts.getSnapshot().catalogs.find(item => item.provider === "openai")?.flex_models || [];
         if (!supported.length || !models.every(model => supported.includes(model)) || payload.value.inherit_user_model) {
           message(status, "Flex требует поддерживаемые модели OpenAI в каждой строке и отключённое наследование. Выберите Standard или совместимую модель; тариф не изменён автоматически.", true);
+          return;
+        }
+      }
+      if (section === "process" && payload.value.reasoning_effort != null) {
+        const supported = drafts.getSnapshot().catalogs.find(item => item.provider === "openai")?.supported_models || [];
+        if (!models.every(model => model.startsWith("openai-direct/gpt-6") && supported.includes(model))) {
+          message(status, "Reasoning override требует зарегистрированные прямые модели OpenAI GPT-6 в каждой строке. Уберите переопределение или выберите совместимые модели; значение не сброшено автоматически.", true);
+          return;
+        }
+        if (payload.value.reasoning_effort === "none" && models.includes("openai-direct/gpt-6.1-sol")) {
+          message(status, "GPT-6.1 Sol не поддерживает reasoning none. Выберите low или уберите переопределение; значение не изменено автоматически.", true);
           return;
         }
       }
@@ -398,9 +412,11 @@
     const current = {...{
       models: item.models || [], strategy: item.strategy || "sequential",
       inherit_user_model: !!item.inherit_user_model,
-      ...(item.service_tier_explicit || id === "chat" || id === "search" ? {service_tier:item.service_tier || "default"} : {}),
+      ...(item.service_tier_explicit || ["chat", "chat.complex", "search"].includes(id) ? {service_tier:item.service_tier || "default"} : {}),
+      ...(item.reasoning_effort_explicit || item.reasoning_effort != null ? {reasoning_effort:item.reasoning_effort ?? null} : {}),
     }, ...(draft?.value || {})};
-    if (draft && (id === "chat" || id === "search") && !Object.hasOwn(draft.value, "service_tier")) current.service_tier = "default";
+    if (draft && ["chat", "chat.complex", "search"].includes(id) && !Object.hasOwn(draft.value, "service_tier")) current.service_tier = "default";
+    if (draft && !Object.hasOwn(draft.value, "reasoning_effort")) current.reasoning_effort = null;
     const chain = element("div", "model-chain");
     const strategyField = element("label", "field", "Порядок выполнения");
     const strategy = element("select");
@@ -431,30 +447,46 @@
     const tierNote = element("p", "muted", "Flex дешевле, но задержка и доступность переменные. Локальный предел ожидания первого текста — 15 секунд. При нехватке ресурсов запрос может завершиться ошибкой; автоматического перехода на Standard нет.");
     if (id === "search") tierNote.textContent += " Встроенный веб-поиск OpenAI входит в эти 15 секунд.";
     tierNote.hidden = tier.value !== "flex";
-    if (id === "chat" || id === "search") {
+    if (["chat", "chat.complex", "search"].includes(id)) {
       const field = element("label", "field", "Тариф обработки OpenAI"); field.append(tier); options.append(field);
       options.append(tierNote);
     }
     const catalog = drafts.getSnapshot().catalogs.find(item => item.provider === "openai");
-    const choices = id === "chat" || id === "search" ? [...new Set([...(catalog?.models || []), ...(catalog?.supported_models || [])])] : [];
+    const choices = ["chat", "chat.complex", "search"].includes(id) ? [...new Set([...(catalog?.models || []), ...(catalog?.supported_models || [])])] : [];
+    const reasoning = element("select", "reasoning-effort");
+    reasoning.setAttribute("aria-label", "Reasoning effort");
+    [["", "Без переопределения"], ["none", "None — без рассуждений"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]].forEach(([value, label]) => {
+      const option = element("option", "", label); option.value = value; reasoning.append(option);
+    });
+    reasoning.value = current.reasoning_effort ?? "";
+    const reasoningField = element("label", "field", "Рассуждения OpenAI");
+    reasoningField.append(reasoning, element("span", "muted", "Явный выбор задаёт рассуждения для процесса, включая сохранённые настройки пользователя. Без переопределения сохраняется прежний выбор. Более высокий уровень может увеличить задержку и расход токенов."));
+    options.append(reasoningField);
+    const compatibleReasoning = models => models.length > 0 && models.every(model => model.startsWith("openai-direct/gpt-6") && (catalog?.supported_models || []).includes(model));
+    reasoningField.hidden = !compatibleReasoning(current.models) && !reasoning.value;
     const status = feedback(node);
     const readValue = () => ({
       models: [...chain.querySelectorAll(".model-input")].map((input) => input.value.trim()),
       strategy: strategy.value, inherit_user_model: checkbox.checked,
       ...(Object.hasOwn(current, "service_tier") ? {service_tier:tier.value} : {}),
+      ...(!reasoningField.hidden || Object.hasOwn(current, "reasoning_effort") ? {reasoning_effort:reasoning.value || null} : {}),
     });
     const changed = () => {
       const value = readValue();
       tierNote.hidden = tier.value !== "flex";
+      reasoningField.hidden = !compatibleReasoning(value.models) && !reasoning.value;
       markDraft("process", id, value, node, status);
       if (value.service_tier === "flex" && (value.inherit_user_model || !value.models.every(model => (catalog?.flex_models || []).includes(model)))) {
         message(status, "Несовместимая комбинация Flex и модели. Тариф сохранён в черновике; выберите Standard или совместимую модель OpenAI.", true);
       }
+      if (value.reasoning_effort != null && !compatibleReasoning(value.models)) message(status, "Reasoning override несовместим с моделью. Значение сохранено в черновике; уберите переопределение или выберите OpenAI GPT-6.", true);
+      if (value.reasoning_effort === "none" && value.models.includes("openai-direct/gpt-6.1-sol")) message(status, "GPT-6.1 Sol не поддерживает reasoning none; выберите low или уберите переопределение.", true);
     };
     modelRows(chain, Array.isArray(current.models) ? current.models : [], changed, choices);
     strategy.addEventListener("change", changed);
     checkbox.addEventListener("change", changed);
     tier.addEventListener("change", changed);
+    reasoning.addEventListener("change", changed);
     node.insertBefore(chain, status);
     node.insertBefore(options, status);
     const actions = actionRow(node);
@@ -475,7 +507,7 @@
         });
         const models = Array.isArray(result.models) ? result.models.join(" → ") : "—";
         const notes = Array.isArray(result.notes) ? result.notes.join(" · ") : "";
-        message(status, `Маршрут: ${models} · тариф ${result.service_tier === "flex" ? "Flex" : "Standard"}${notes ? ` · ${notes}` : ""}`, !result.valid);
+        message(status, `Маршрут: ${models} · тариф ${result.service_tier === "flex" ? "Flex" : "Standard"} · reasoning ${result.reasoning_effort ?? "без переопределения"}${notes ? ` · ${notes}` : ""}`, !result.valid);
       } catch (error) { message(status, errorText(error), true); }
     }));
     actions.append(mutationButton("Сбросить", "quiet", () => save("process", id, status, true)));
@@ -484,6 +516,7 @@
       models: item.models || [], strategy: item.strategy || "sequential",
       inherit_user_model: !!item.inherit_user_model,
       ...(Object.hasOwn(current, "service_tier") ? {service_tier:item.service_tier || "default"} : {}),
+      ...(!reasoningField.hidden || Object.hasOwn(current, "reasoning_effort") ? {reasoning_effort:item.reasoning_effort ?? null} : {}),
     }, status);
     if (drafts.getDraft("process", id)) message(status, `Черновик · исходная ревизия ${drafts.getDraft("process", id).expected_revision}`);
     return node;

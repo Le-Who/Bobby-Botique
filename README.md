@@ -40,10 +40,15 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
   or 10 with Search, and returns a ready standby immediately. See the
   [latency policy and evidence limits](docs/ARCHITECTURE.md#provider-latency).
   Router deadlines do not suspend otherwise healthy keys.
-- The OpenAI live-answer profile uses Luna Flex for chat and quick search.
-  The dashboard selects the model and Standard/Flex separately. Flex waits up
+- The OpenAI live-answer profile uses Luna Flex without reasoning for ordinary
+  chat and quick search, and Luna Standard for inline and Crocodile judgement.
+  A local classifier routes text tasks with multiple constraints/dependencies to
+  the separate `chat.complex` process, initially Terra Flex with low reasoning.
+  The dashboard selects the model, reasoning override and Standard/Flex separately.
+  An explicit process reasoning policy takes precedence over saved user thinking;
+  user preferences remain stored for routes without an override. Flex waits up
   to 15 seconds for model text, including native GPT-6 web search. Telegram
-  delivery has a separate budget. Inline and Crocodile judgement use Standard. A Flex
+  delivery has a separate budget. A Flex
   capacity error offers a manual retry without switching to Standard.
 - Quick search (`?`), bounded agentic research (`??`), URL/document/photo
   understanding and deterministic weather/currency/crypto shortcuts.
@@ -383,9 +388,9 @@ and does not consume this ADC file.
 | `PRIMARY_PROVIDER` | ⚙️ | `opencode` / `gemini` / `openrouter` / `freetheai` | `opencode` | Legacy default provider selection; persisted `/set_provider` overrides take precedence. The live-answer profile in `/controls` pins all covered processes, including existing users, independently of their saved model. Use that profile for a complete OpenAI/Gemini switch. |
 | `OPENAI_API_KEYS` | ⚙️ | `synthetic-key-one,synthetic-key-two` | `[]` | Direct OpenAI credentials, separate from OpenRouter; comma-separated pool with rotation. `OPENAI_API_KEY` is the local single-key fallback when the pool is empty. Deployment forwards `OPENAI_API_KEYS`. |
 | `OPENAI_AVAILABLE_MODELS` | ⚙️ | `openai-direct/gpt-6-luna,openai-direct/gpt-6.1-terra` | Luna + Terra | Exact ordered direct-OpenAI catalog. `none` keeps an intentionally empty selector catalog without disabling internal process routes. `openai/…` retains its existing OpenRouter meaning. |
-| `OPENAI_DEFAULT_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Initial OpenAI profile for document/image and other live answers, including Crocodile judgement. Chat has its own Luna Flex profile default. Role overrides also accept bare IDs; saved dashboard plans take precedence. |
+| `OPENAI_DEFAULT_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Initial OpenAI profile for document/image and other live answers. Ordinary chat/search use Luna Flex, complex chat uses Terra Flex, and Crocodile judgement uses Luna Standard. Role overrides also accept bare IDs; saved dashboard plans take precedence. |
 | `OPENAI_QNA_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Legacy OpenAI baseline for search. The active OpenAI profile starts with Luna Flex and native web search; saved dashboard plans take precedence. Gateways and legacy models keep Jina retrieval. |
-| `OPENAI_INLINE_MODEL` | ⚙️ | `openai-direct/gpt-6-luna` | `openai-direct/gpt-6-luna` | Initial fast OpenAI profile for inline and short live classifiers. Crocodile answer checking uses `OPENAI_DEFAULT_MODEL`. Daily preparation keeps its existing Gemini routes. |
+| `OPENAI_INLINE_MODEL` | ⚙️ | `openai-direct/gpt-6-luna` | `openai-direct/gpt-6-luna` | Initial fast OpenAI profile for inline and short live classifiers. Crocodile answer checking has its own Luna Standard profile default. Daily preparation keeps its existing Gemini routes. |
 | `OPENCODE_DEFAULT_MODEL` | ⚙️ | `opencode-go/qwen3.5-plus` | `opencode-go/qwen3.5-plus` | Default Opencode chat role. |
 | `OPENCODE_QNA_MODEL` | ⚙️ | `opencode-go/qwen3.6-plus` | `opencode-go/qwen3.6-plus` | Model for quick Q&A search synthesis (`?` prefix). |
 | `OPENCODE_RESEARCH_MODEL` | ⚙️ | `opencode-go/glm-5.1` | `opencode-go/glm-5.1` | Configured research-role model included in Opencode selector defaults. It does not switch the specialized `??` Gemini agent loop to Opencode. |

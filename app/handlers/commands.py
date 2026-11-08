@@ -496,6 +496,31 @@ _THINKING_LABELS = {
 }
 
 
+def _thinking_display(chat_state, lang: str = "ru") -> str:
+    """Describe effective chat/search reasoning without changing saved preferences."""
+    effort = menus.get_admin_reasoning_effort()
+    level = "off" if effort == "none" else effort if effort is not None else chat_state.thinking_level
+    label = _THINKING_LABELS.get(level, level or _THINKING_LABELS[None])
+    if effort is not None:
+        label += " (set by administrator)" if lang == "en" else " (задан администратором)"
+    search_effort = menus.get_admin_reasoning_effort("search")
+    if search_effort != effort:
+        search_level = "off" if search_effort == "none" else search_effort or chat_state.thinking_level
+        search_label = _THINKING_LABELS.get(search_level, search_level or _THINKING_LABELS[None])
+        if search_effort is not None:
+            search_label += " (set by administrator)" if lang == "en" else " (задан администратором)"
+        label += ("; search: " if lang == "en" else "; поиск: ") + search_label
+    complex_effort = menus.get_admin_reasoning_effort("chat.complex")
+    if complex_effort is not None:
+        complex_level = "off" if complex_effort == "none" else complex_effort
+        complex_label = _THINKING_LABELS[complex_level]
+        complex_model = menus.get_admin_selected_chat_model("chat.complex")
+        label += (
+            "\nAutomatic for complex tasks: " if lang == "en" else "\nДля сложных задач автоматически: "
+        ) + f"{complex_label} (`{complex_model}`)"
+    return label
+
+
 @authorized_only
 async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set or show the thinking level for AI reasoning."""
@@ -504,17 +529,23 @@ async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if not context.args:
         # Show current level
-        current = chat_state.thinking_level
-        label = _THINKING_LABELS.get(current, current)
+        label = _thinking_display(chat_state)
+        saved_notice = (
+            f"Сохранённое предпочтение: {_THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level)}.\n"
+            "Оно применяется, когда администратор не задаёт уровень процесса.\n\n"
+            if any(menus.get_admin_reasoning_effort(process) is not None for process in ("chat", "search"))
+            else ""
+        )
         text = (
             f"🧠 *Текущий уровень мышления:* {label}\n\n"
-            "*Доступные уровни:*\n"
+            f"{saved_notice}"
+            "*Сохранить предпочтение:*\n"
             "• `/thinking off` — ⚡ быстрые ответы без рассуждений\n"
             "• `/thinking low` — 💡 минимальное рассуждение\n"
             "• `/thinking medium` — 🧠 сбалансированный\n"
             "• `/thinking high` — 🔬 максимальная глубина\n"
             "• `/thinking auto` — 🔄 вернуть авто-режим\n\n"
-            f"Текущая модель: `{chat_state.model}`"
+            f"Текущая модель: `{menus.get_admin_selected_chat_model() or chat_state.model}`"
         )
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
@@ -535,8 +566,14 @@ async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update_thinking_level(user_id, level)
     chat_state.thinking_level = level
 
-    label = _THINKING_LABELS.get(level, level)
-    formatted_text, parse_mode = TelegramFormatter.format_text(f"✅ Уровень мышления: {label}")
+    label = _THINKING_LABELS.get(level, level or _THINKING_LABELS[None])
+    overridden = any(menus.get_admin_reasoning_effort(process) is not None for process in ("chat", "search"))
+    text = (
+        f"✅ Предпочтение сохранено: {label}\nСейчас: {_thinking_display(chat_state)}"
+        if overridden
+        else f"✅ Уровень мышления: {label}"
+    )
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 
@@ -547,8 +584,8 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
-    model = chat_state.model or "(по умолчанию)"
-    thinking = _THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level or "🔄 Авто")
+    model = menus.get_admin_selected_chat_model() or chat_state.model or "(по умолчанию)"
+    thinking = _thinking_display(chat_state)
     search = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
     role = chat_state.system_prompt
     if role and len(role) > 60:

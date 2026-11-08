@@ -53,6 +53,26 @@ def test_temporary_failures_never_disable_a_key_for_minutes(monkeypatch, categor
 
 
 @pytest.mark.asyncio
+async def test_unspecified_provider_429_keeps_pair_cooling_for_a_full_minute(monkeypatch):
+    """The hourly Tarot burst must not reuse a generic-429 pair after 15s."""
+    now = datetime(2026, 11, 8, 7, 46, tzinfo=UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    query = AsyncMock(side_effect=[[{"failure_count": 0}], []])
+    monkeypatch.setattr(keys, "datetime", Clock)
+    monkeypatch.setattr(keys, "db_query", query)
+    monkeypatch.setattr(keys, "invalidate_key_cache", AsyncMock())
+    await keys.KeyStatusManager().suspend_key("fake-hash", "gemini-test", "rate_limit")
+    until = query.await_args_list[-1].args[1][2]
+    assert (until - now).total_seconds() == 60
+    assert until > now.replace(second=25)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("limit", [None, 1000])
 async def test_concurrent_internal_selections_spread_across_healthy_keys(monkeypatch, limit):
     manager = keys.DailyKeyManager("api_keys", "key_usage")

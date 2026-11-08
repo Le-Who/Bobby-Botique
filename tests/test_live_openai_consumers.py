@@ -80,6 +80,18 @@ async def test_selected_text_deadline_cancels_owned_stream(routed):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("effort,expected", [(None, "off"), ("none", "off"), ("low", "low"), ("high", "high")])
+async def test_selected_text_honors_optional_process_reasoning_override(routed, effort, expected):
+    from app.process_policies import ReasoningEffort
+
+    policy = ResolvedPolicy(
+        (MODEL,), "sequential", True, 42, reasoning_effort=ReasoningEffort(effort) if effort is not None else None
+    )
+    assert await generate_selected_text(policy, "prompt", timeout=1.0) == JUDGEMENT
+    assert routed.requests[0].thinking_level.value == expected
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failed", [False, True])
 async def test_classic_judge_openai_never_returns_to_gemini(monkeypatch, routed, failed):
     from app.games import daily_ai, judge, judgement_cache

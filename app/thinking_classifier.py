@@ -24,6 +24,84 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True, slots=True)
+class ChatComplexity:
+    """Conservative model-route decision, independent of user reasoning preference."""
+
+    is_complex: bool
+    reason_code: str
+
+
+_CHAT_TRANSFORM = re.compile(
+    r"^\s*(?:пожалуйста[, ]+)?(?:переведи|перепиши|исправь\s+(?:ошибки|опечатки)|сократи|перескажи|"
+    r"суммируй|скопируй|отформатируй|выдели\s+(?:имена|даты|ключевые)|извлеки|"
+    r"translate|rewrite|summari[sz]e|copy|format|extract)\b",
+    re.IGNORECASE,
+)
+_CHAT_QUOTED_DATA = re.compile(
+    r"```[\s\S]*?(?:```|$)|(?m:^\s*>[^\n]*$)|«[^»]*»|\"[^\"]*\"|‘[^’]*’|(?<!\w)'[^'\n]+'(?!\w)"
+)
+_CHAT_TASK = re.compile(
+    r"(?:составь(?:\s+\w+){0,3}\s+план|разработай|спроектируй|спланируй|распредели|выбери\s+оптим|"
+    r"найди\s+(?:вариант|решение|порядок|минимальн|максимальн|оптимальн)|"
+    r"оптимизируй|минимизируй|максимизируй|перечисли\s+(?:все\s+)?допустим|"
+    r"сверь\s+(?:журнал|расч[её]т|заказ|сч[её]т)|"
+    r"рассчитай|реши|определи|докажи|проверь\s+(?:логику|выполнимость)|"
+    r"\b(?:plan|design|optimi[sz]e|minimi[sz]e|maximi[sz]e|enumerate|reconcile|schedule|allocate|solve|determine|prove)\b)",
+    re.IGNORECASE,
+)
+_CHAT_CONSTRAINT = re.compile(
+    r"(?:не\s+более|не\s+менее|не\s+позже|не\s+раньше|не\s+превыш|при\s+условии|при\s+этом|"
+    r"обязательно|\bбез\b|\bтолько\b|\bнельзя\b|\bзапрещено\b|"
+    r"\bдолж(?:ен|на|но|ны)\b|\bтребуется\b|\bнужно\b|\bмаксимум\b|\bминимум\b|"
+    r"исключается|не\s+конверт|округл|"
+    r"\bat\s+(?:most|least)\b|\bmust\b|\bcannot\b|\bwithout\b|\bonly\b)",
+    re.IGNORECASE,
+)
+_CHAT_DEPENDENCY = re.compile(
+    r"(?:после\s+того\s+как|до\s+того\s+как|зависит\s+от|только\s+после|раньше\s+чем|"
+    r"нельзя[^.!?\n]{0,60}(?:пока|до\b)|\bdepends\s+on\b|\bonly\s+after\b|\bbefore\b)",
+    re.IGNORECASE,
+)
+_CHAT_CONDITIONAL = re.compile(r"\b(?:если|if)\b", re.IGNORECASE)
+_CHAT_ALTERNATIVE = re.compile(r"(?:\bиначе\b|в\s+противном\s+случае|\botherwise\b|\belse\b)", re.IGNORECASE)
+_CHAT_OUTPUT = re.compile(
+    r"(?:верни|определи|вычисли|рассчитай|для\s+каждого[^.!?\n]{0,35}ответь|\breturn\b)", re.IGNORECASE
+)
+_CHAT_LOGICAL_RULE = re.compile(
+    r"(?:тогда\s+и\s+только\s+тогда|таблиц\w*\s+истинности|if\s+and\s+only\s+if)", re.IGNORECASE
+)
+_CHAT_LOGICAL_OPERATOR = re.compile(r"\b(?:и|или|не|and|or|not)\b", re.IGNORECASE)
+_CHAT_SOURCE = re.compile(r"\[(?:[A-Za-z]+)?\d+\]")
+_CHAT_PRECEDENCE = re.compile(
+    r"(?:важнее|приоритет|отмен|исключени|сохраняются|переопредел|supersed|overrid|exception)", re.IGNORECASE
+)
+
+
+def classify_chat_complexity(message: str, *, is_forward_batch: bool = False) -> ChatComplexity:
+    """Escalate explicit constrained reasoning tasks; length or comparison alone never does."""
+    if is_forward_batch:
+        return ChatComplexity(False, "forwarded_content")
+    if _CHAT_TRANSFORM.search(message):
+        return ChatComplexity(False, "text_transform")
+    instructions = _CHAT_QUOTED_DATA.sub(" ", message[:16_000])
+    if _CHAT_OUTPUT.search(instructions):
+        if _CHAT_LOGICAL_RULE.search(instructions) and len(_CHAT_LOGICAL_OPERATOR.findall(instructions)) >= 4:
+            return ChatComplexity(True, "logical_rules")
+        if len(set(_CHAT_SOURCE.findall(instructions))) >= 3 and len(_CHAT_PRECEDENCE.findall(instructions)) >= 2:
+            return ChatComplexity(True, "source_precedence")
+    if not _CHAT_TASK.search(instructions):
+        return ChatComplexity(False, "simple_text")
+    if len(_CHAT_CONDITIONAL.findall(instructions)) >= 2 and _CHAT_ALTERNATIVE.search(instructions):
+        return ChatComplexity(True, "branching_logic")
+    if len(_CHAT_DEPENDENCY.findall(instructions)) >= 2:
+        return ChatComplexity(True, "dependent_steps")
+    if len(_CHAT_CONSTRAINT.findall(instructions)) >= 3:
+        return ChatComplexity(True, "constrained_task")
+    return ChatComplexity(False, "simple_text")
+
+
 # ── Phase 1: Regex-based heuristics ──────────────────────────────────────────
 
 # HIGH signals — any single match → "high"

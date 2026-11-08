@@ -123,12 +123,13 @@ async def generation_request_from_history(
     explicit = False
     revision = 0
     if process_id is not None:
-        from app.process_policies import resolve_process
+        from app.process_policies import policy_thinking_level, resolve_process
 
         policy = await resolve_process(process_id, tuple(models))
         models = policy.models
         route_strategy, explicit, revision = policy.strategy, policy.explicit, policy.revision
         service_tier = ServiceTier(getattr(policy, "service_tier", ServiceTier.DEFAULT))
+        typed_thinking = policy_thinking_level(policy, typed_thinking)
 
     return GenerationRequest(
         models=tuple(models),

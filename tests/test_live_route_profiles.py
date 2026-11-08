@@ -32,8 +32,14 @@ async def test_provider_switch_is_one_revision_and_preserves_original_and_custom
     assert saved.revision == 3 and database.writes == 3
     assert saved.values["process:chat"]["models"] == ("openai-direct/gpt-6-luna",)
     assert saved.values["process:chat"]["service_tier"] == "flex"
+    assert saved.values["process:chat"]["reasoning_effort"] == "none"
+    assert saved.values["process:chat.complex"]["models"] == ("openai-direct/gpt-6.1-terra",)
+    assert saved.values["process:chat.complex"]["service_tier"] == "flex"
+    assert saved.values["process:chat.complex"]["reasoning_effort"] == "low"
     assert saved.values["process:inline"]["models"] == ("openai-direct/gpt-6-luna",)
-    assert saved.values["process:crocodile.judge"]["models"] == ("openai-direct/gpt-6.1-terra",)
+    assert saved.values["process:crocodile.judge"]["models"] == ("openai-direct/gpt-6-luna",)
+    assert saved.values["process:crocodile.judge"].get("service_tier", "default") == "default"
+    assert saved.values["process:crocodile.judge"]["reasoning_effort"] == "none"
     assert saved.values["process:daily.trivia"]["models"] == ("gemini-offline",)
     gemini = await routes.switch_provider("gemini", expected_revision=3, actor="test")
     assert gemini.values["process:chat"]["models"] == ("gemini-custom", "gemini-reserve")
@@ -46,6 +52,24 @@ async def test_provider_switch_is_one_revision_and_preserves_original_and_custom
     original = await routes.switch_provider("baseline", expected_revision=7, actor="test")
     assert "process:inline" not in original.values
     assert original.values["process:chat"]["models"] == ("gemini-custom", "gemini-reserve")
+
+
+@pytest.mark.asyncio
+async def test_previous_saved_profile_adds_complex_route_without_losing_custom_routes(profiles):
+    routes, backend, _ = profiles
+    legacy = {pid: None for pid in routes.LIVE_PROCESS_IDS if pid != "chat.complex"}
+    legacy["chat"] = {"models": ["openai-direct/gpt-6-luna"], "service_tier": "flex"}
+    routes.validate_value("saved:openai", legacy)
+    await backend.set_value("live_route:saved:openai", legacy, expected_revision=0, actor="test")
+    saved = await routes.switch_provider("openai", expected_revision=1, actor="test")
+    assert saved.values["process:chat"]["models"] == ("openai-direct/gpt-6-luna",)
+    assert saved.values["process:chat.complex"]["models"] == ("openai-direct/gpt-6.1-terra",)
+    assert saved.values["process:chat.complex"]["reasoning_effort"] == "low"
+    baseline = await routes.switch_provider("baseline", expected_revision=2, actor="test")
+    assert "process:chat.complex" not in baseline.values
+    invalid = {pid: None for pid in legacy if pid != "search"}
+    with pytest.raises(ValueError):
+        routes.validate_value("saved:openai", invalid)
 
 
 @pytest.mark.asyncio

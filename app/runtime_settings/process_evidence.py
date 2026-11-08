@@ -187,6 +187,13 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
         ("app/handlers/ai_chat.py", "_handle_regular_chat"),
         ("app/handlers/ai_chat.py", "_complete_regular_chat_response"),
     ),
+    "chat.complex": _row(
+        "ProviderRouter: typed stream",
+        "Сложные текстовые задачи с несколькими условиями: автоматический выбор в активном профиле OpenAI.",
+        _CHAT_HISTORY,
+        ("app/handlers/ai_chat.py", "_handle_regular_chat"),
+        ("app/thinking_classifier.py", "classify_chat_complexity"),
+    ),
     "search": _row(
         "ProviderRouter: typed stream",
         "Ответ с поисковым контекстом Q&A.",

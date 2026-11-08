@@ -107,3 +107,49 @@ async def test_legacy_default_retains_exhausted_result(monkeypatch):
     router, _ = install_router(monkeypatch, [(tag_error(ErrorCode.TIMEOUT, "temporary"), None)], [key()])
     result, _ = await router.get_response("gemini-3.5-flash-lite", [], max_key_retries=1)
     assert extract_error_code(result) == ErrorCode.KEYS_EXHAUSTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_plan", [False, True])
+async def test_full_provider_quota_evidence_reaches_health_without_private_body(monkeypatch, explicit_plan):
+    from app.providers.base import AIResponse
+
+    model = "gemini-3.5-flash-lite"
+    health = SimpleNamespace(suspend_key=AsyncMock(), record_success=AsyncMock())
+    error_text = "429 RESOURCE_EXHAUSTED: " + "private-provider-details " * 40 + " retryDelay: 127s"
+
+    async def respond(*args, **kwargs):
+        callback = kwargs.get("on_provider_error")
+        if callback is not None:
+            callback(
+                AIResponse(
+                    text=tag_error(ErrorCode.RATE_LIMIT, "temporary rate limit"),
+                    token_count=0,
+                    success=False,
+                    error_message=error_text,
+                    provider="gemini",
+                    model=model,
+                )
+            )
+        return tag_error(ErrorCode.RATE_LIMIT, "temporary rate limit"), None
+
+    use_case = SimpleNamespace(
+        resolve_ai_request=AsyncMock(return_value=key()),
+        reserve_key_usage=AsyncMock(return_value=True),
+        get_ai_response=respond,
+    )
+    monkeypatch.setattr("app.agent_use_cases.AgentRequestUseCase", lambda: use_case)
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: health)
+    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", AsyncMock(return_value=key()[0]))
+    router = ProviderRouter()
+    monkeypatch.setattr(router, "_pick_transient_fallback_model", lambda *args: None)
+    if explicit_plan:
+        with pytest.raises(RuntimeError):
+            await router.execute_gemini_model_plan([model], [], parse_response=lambda text: text, max_keys=1)
+    else:
+        await router.get_response(model, [], max_key_retries=1, preserve_transient_errors=True)
+    health.suspend_key.assert_awaited_once()
+    call = health.suspend_key.await_args
+    assert call.args[:3] == ("fake-hash", model, "rate_limit")
+    assert call.kwargs["retry_after_seconds"] == 127
+    assert "private-provider-details" not in call.args[3]

@@ -139,8 +139,14 @@ preparation and specialized Gemini paths retain their own ownership. See the
 for the exact switch scope and configuration.
 
 The process policy stores `service_tier` separately from the model ID. New OpenAI
-profiles use Luna Flex for chat and quick-search synthesis; other OpenAI routes
-use Standard. Flex capacity failures preserve key health and offer manual retry,
+profiles use Luna Flex without reasoning for ordinary chat and quick search,
+and Terra Flex with low reasoning for the separate `chat.complex` process.
+A local conservative classifier selects complex text requests without another
+model call. Process reasoning overrides take precedence over saved user levels;
+absent overrides preserve legacy inheritance. Inline and Crocodile judgement
+use Luna Standard without reasoning; other OpenAI routes use Standard.
+Saved 22-process profiles remain valid when the complex-chat route is added.
+Flex capacity failures preserve key health and offer manual retry,
 without an automatic Standard fallback. For direct GPT-6 search, the shared
 15-second budget includes native `web_search` before the first answer text.
 Gateways, mixed plans and legacy models keep their separate Jina retrieval step.

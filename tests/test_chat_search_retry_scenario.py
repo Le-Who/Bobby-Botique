@@ -1,7 +1,9 @@
 """Offline consumer → delivery → recovery callback → consumer scenarios."""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -608,3 +610,200 @@ async def test_retry_error_before_delivery_keeps_error_and_retry_actions(scenari
     assert current_request(USER_ID).response_ref == (retry_placeholder.message_id, USER_ID)
     assert len(s.sessions) == 1
     assert not state.get_user_lock(USER_ID).locked()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("process", ["chat", "search"])
+async def test_admin_none_effort_reaches_actual_handlers_over_saved_gemini_high(scenario, process):
+    from app.providers.stream_types import ServiceTier, ThinkingLevel
+
+    s = scenario
+    s.chat.thinking_level = "high"
+    s.scripts.append([TextDelta("Synthetic answer"), completion()])
+    snapshot = SettingsSnapshot(
+        124,
+        {
+            "live_route:provider": "openai",
+            f"process:{process}": {
+                "models": [MODEL],
+                "strategy": "sequential",
+                "inherit_user_model": False,
+                "service_tier": "flex",
+                "reasoning_effort": "none",
+            },
+        },
+    )
+    token = lifecycle._operation_snapshot.set(snapshot)
+    try:
+        if process == "chat":
+            await ai_chat._handle_regular_chat(s.message(), USER_ID, TEXT, s.chat)
+        else:
+            await ai_search._handle_qna_search(s.message(), TEXT, s.chat, user_id=USER_ID)
+    finally:
+        lifecycle._operation_snapshot.reset(token)
+    assert len(s.requests) == 1
+    request = s.requests[0]
+    assert request.models == (MODEL,)
+    assert request.thinking_level is ThinkingLevel.OFF
+    assert request.service_tier is ServiceTier.FLEX
+    assert request.policy_revision == 124
+    assert s.chat.model == "gemini-previous-user-choice"
+    assert s.chat.thinking_level == "high"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text,forwarded,missing_complex,expected_model,expected_effort,reason",
+    [
+        ("Привет!", False, False, MODEL, "off", "simple_text"),
+        ("Сравни чай и кофе по вкусу.", False, False, MODEL, "off", "simple_text"),
+        (
+            "Переведи: " + "Разработай проект без сервера, только локально, не более недели. " * 60,
+            False,
+            False,
+            MODEL,
+            "off",
+            "text_transform",
+        ),
+        (
+            "Спроектируй каталог без данных читателей, только для локальной сети, не более 2 недель.",
+            False,
+            False,
+            "openai-direct/gpt-6.1-terra",
+            "low",
+            "constrained_task",
+        ),
+        (
+            "Спроектируй каталог без данных читателей, только для локальной сети, не более 2 недель.",
+            False,
+            True,
+            "openai-direct/gpt-6.1-terra",
+            "low",
+            "constrained_task",
+        ),
+        (
+            "Спроектируй каталог без данных читателей, только для локальной сети, не более 2 недель.",
+            True,
+            False,
+            MODEL,
+            "off",
+            "forwarded_content",
+        ),
+    ],
+)
+async def test_openai_auto_complexity_pins_both_preflight_and_actual_request(
+    scenario, monkeypatch, text, forwarded, missing_complex, expected_model, expected_effort, reason
+):
+    s = scenario
+    s.chat.thinking_level = "high"
+    s.scripts.append([TextDelta("Synthetic routed answer"), completion()])
+    plans = {
+        "live_route:provider": "openai",
+        "process:chat": {
+            "models": [MODEL],
+            "strategy": "sequential",
+            "inherit_user_model": False,
+            "service_tier": "flex",
+            "reasoning_effort": "none",
+        },
+    }
+    if not missing_complex:
+        plans["process:chat.complex"] = {
+            "models": ["openai-direct/gpt-6.1-terra"],
+            "strategy": "sequential",
+            "inherit_user_model": False,
+            "service_tier": "flex",
+            "reasoning_effort": "low",
+        }
+    exact = AsyncMock(return_value=({"api_key": "test-openai-key", "key_hash": "hash"}, expected_model, "direct"))
+    monkeypatch.setattr("app.agent_use_cases.AgentRequestUseCase.resolve_exact_ai_request", exact)
+    events = MagicMock()
+    monkeypatch.setattr(ai_chat, "emit", events)
+    token = lifecycle._operation_snapshot.set(SettingsSnapshot(127, plans))
+    try:
+        await ai_chat._handle_regular_chat(s.message(), USER_ID, text, s.chat, is_forward_batch=forwarded)
+    finally:
+        lifecycle._operation_snapshot.reset(token)
+    exact.assert_awaited_once_with(expected_model)
+    request = s.requests[0]
+    assert request.models == (expected_model,)
+    assert request.thinking_level.value == expected_effort
+    assert request.service_tier.value == "flex"
+    assert request.policy_revision == 127
+    assert s.chat.thinking_level == "high"
+    fields = events.call_args.kwargs
+    assert events.call_args.args == ("chat.route_selected",)
+    assert fields["process_id"] == ("chat.complex" if expected_model != MODEL else "chat")
+    assert fields["route_reason"] == reason
+    assert fields["requested_model"] == expected_model
+    assert fields["reasoning_effort"] == ("none" if expected_effort == "off" else expected_effort)
+    assert text not in str(fields)
+
+
+@pytest.mark.asyncio
+async def test_complex_chat_retry_keeps_terra_plan_and_one_canonical_user_turn(scenario):
+    s = scenario
+    s.chat.thinking_level = "high"
+    s.scripts.extend([[failure()], [TextDelta("Complex retry answer"), completion()]])
+    original = s.message()
+    text = "Спроектируй каталог без данных читателей, только для локальной сети, не более 2 недель."
+    await ai_chat._handle_regular_chat(original, USER_ID, text, s.chat)
+    await s.click(original, callback=retry_button(s.sessions[0]))
+    assert len(s.requests) == 2
+    assert all(request.models == ("openai-direct/gpt-6.1-terra",) for request in s.requests)
+    assert all(request.thinking_level.value == "low" for request in s.requests)
+    assert s.chat.history == [{"role": "user", "parts": [text]}, {"role": "model", "parts": ["Complex retry answer"]}]
+    assert s.memory.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_complex_text_quick_search_does_not_enter_complex_chat(scenario):
+    s = scenario
+    s.scripts.append([TextDelta("Synthetic searched answer"), completion()])
+    text = "Спроектируй каталог без данных читателей, только для локальной сети, не более 2 недель."
+    await ai_search._handle_qna_search(s.message(), text, s.chat, user_id=USER_ID)
+    assert s.requests[0].models == (MODEL,)
+    assert s.requests[0].grounding.value == "provider_search_required"
+
+
+@pytest.mark.asyncio
+async def test_gemini_complex_text_keeps_original_chat_process_and_saved_thinking(scenario, monkeypatch):
+    s = scenario
+    s.chat.thinking_level = "high"
+    s.scripts.append([TextDelta("Synthetic Gemini answer"), completion()])
+    token = lifecycle._operation_snapshot.set(
+        SettingsSnapshot(
+            128,
+            {
+                "live_route:provider": "gemini",
+                "process:chat": {
+                    "models": ["gemini-3.5-flash-lite"],
+                    "strategy": "sequential",
+                    "inherit_user_model": False,
+                },
+            },
+        )
+    )
+    try:
+        await ai_chat._handle_regular_chat(
+            s.message(), USER_ID, "Спроектируй каталог без сервера, только локально, не более недели.", s.chat
+        )
+    finally:
+        lifecycle._operation_snapshot.reset(token)
+    assert s.requests[0].models == ("gemini-3.5-flash-lite",)
+    assert s.requests[0].thinking_level.value == "high"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intent_id", ["resource_schedule", "procurement"])
+async def test_natural_multi_constraint_requests_use_real_complex_handler_policy(scenario, intent_id):
+    s = scenario
+    s.chat.thinking_level = "high"
+    cases = json.loads((Path(__file__).parent / "fixtures/complex_chat_intents.json").read_text(encoding="utf-8"))
+    prompt = next(case["prompt"] for case in cases if case["id"] == intent_id)
+    s.scripts.append([TextDelta("Synthetic complex answer"), completion()])
+    await ai_chat._handle_regular_chat(s.message(), USER_ID, prompt, s.chat)
+    assert s.requests[0].models == ("openai-direct/gpt-6.1-terra",)
+    assert s.requests[0].thinking_level.value == "low"
+    assert s.requests[0].service_tier.value == "flex"
+    assert s.requests[0].turns[-1].parts[0].text == prompt

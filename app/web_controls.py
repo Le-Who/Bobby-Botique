@@ -638,6 +638,7 @@ def register_controls(app, require_auth) -> None:
         section, identity, value = _validated(data)
         planned_models = []
         planned_tier = "default"
+        planned_reasoning = None
         if section == "command":
             from app.command_aliases import PREFIX
 
@@ -673,10 +674,12 @@ def register_controls(app, require_auth) -> None:
             )
             planned_models = list(policy.models)
             planned_tier = policy.service_tier.value
+            planned_reasoning = policy.reasoning_effort.value if policy.reasoning_effort is not None else None
         return jsonify(
             valid=True,
             models=planned_models,
             service_tier=planned_tier,
+            reasoning_effort=planned_reasoning,
             notes=(
                 ["Проверены формат и конфликты алиасов. Основная команда и проверки доступа сохраняются."]
                 if section == "command"

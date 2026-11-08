@@ -154,7 +154,7 @@ def _generate_model_buttons(models, current_model, start_index, provider="gemini
     return rows, current_index
 
 
-def get_admin_selected_chat_model() -> str | None:
+def get_admin_selected_chat_model(process_id: str = "chat") -> str | None:
     """Read the effective model of an admin-pinned profile without changing user state."""
     from collections.abc import Mapping
 
@@ -164,9 +164,26 @@ def get_admin_selected_chat_model() -> str | None:
     snapshot = current_operation_snapshot()
     if snapshot is None or active_provider(snapshot) not in {"gemini", "openai"}:
         return None
-    policy = effective_policy_value("chat", snapshot)
+    policy = effective_policy_value(process_id, snapshot)
     models = policy.get("models") if isinstance(policy, Mapping) else None
     return models[0] if isinstance(models, (list, tuple)) and models and isinstance(models[0], str) else None
+
+
+def get_admin_reasoning_effort(process_id: str = "chat") -> str | None:
+    """Read the pinned process override; absence leaves the saved preference active."""
+    from collections.abc import Mapping
+
+    from app.runtime_settings.lifecycle import current_operation_snapshot
+    from app.runtime_settings.live_routes import active_provider, effective_policy_value
+
+    snapshot = current_operation_snapshot()
+    if snapshot is None:
+        return None
+    if process_id == "chat.complex" and active_provider(snapshot) != "openai":
+        return None
+    policy = effective_policy_value(process_id, snapshot)
+    effort = policy.get("reasoning_effort") if isinstance(policy, Mapping) else None
+    return effort if isinstance(effort, str) and effort in {"none", "low", "medium", "high"} else None
 
 
 def get_visible_model_list(settings_obj=None, openrouter_keys=None) -> list[str]:

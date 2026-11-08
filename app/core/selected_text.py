@@ -5,7 +5,7 @@ from contextlib import aclosing
 
 from pydantic import BaseModel
 
-from app.process_policies import ResolvedPolicy
+from app.process_policies import ResolvedPolicy, policy_thinking_level
 from app.providers.stream_types import (
     GenerationRequest,
     PromptRole,
@@ -36,7 +36,7 @@ async def generate_selected_text(
         turns=(PromptTurn(PromptRole.USER, (TextPart(prompt),)),),
         system_instruction=system_instruction,
         scope=RequestScope(user_id=user_id, privacy_epoch=privacy_epoch),
-        thinking_level=ThinkingLevel.OFF,
+        thinking_level=policy_thinking_level(policy, ThinkingLevel.OFF),
         allow_deferred=False,
         route_strategy=policy.strategy if policy.explicit else "sequential",
         allow_model_fallback=False,
