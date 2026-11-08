@@ -181,6 +181,76 @@ async def test_qna_search_opencode_path():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "models,tier,native_openai,external",
+    [
+        (("openai-direct/gpt-6-luna",), "flex", True, False),
+        (("openai-direct/gpt-6.1-terra",), "default", True, False),
+        (("openai-direct/gpt-6.1-sol",), "default", True, False),
+        (("openai-direct/gpt-4.1-mini",), "default", False, True),
+        (("openai/gpt-4",), "default", False, True),
+        (("opencode-go/qwen3.6-plus",), "default", False, True),
+        (("gemini-3.5-flash-lite",), "default", False, False),
+        (("openai-direct/gpt-6-luna", "gemini-3.5-flash-lite"), "default", False, True),
+    ],
+)
+async def test_qna_effective_plan_selects_native_search_without_jina_for_direct_gpt6(
+    monkeypatch, models, tier, native_openai, external
+):
+    from app.handlers import ai_search
+    from app.providers.stream_types import GroundingMode, ServiceTier
+    from app.runtime_settings import lifecycle
+    from app.runtime_settings.store import SettingsSnapshot
+
+    delivery = SimpleNamespace(stream=AsyncMock(return_value=None))
+    jina = AsyncMock(return_value="[JINA supplied evidence]")
+    if not external:
+        jina.side_effect = AssertionError("Native provider search must not call JINA")
+    monkeypatch.setattr("app.search_jina.search_for_grounding", jina)
+    monkeypatch.setattr("app.response_delivery.delivery.get_telegram_response_delivery", lambda: delivery)
+    monkeypatch.setattr(ai_search, "_retire_placeholder_notice", AsyncMock())
+    monkeypatch.setattr(ai_search, "update_stage", AsyncMock())
+    monkeypatch.setattr(ai_search.metrics_collector, "record_search_query", AsyncMock())
+    monkeypatch.setattr(ai_search, "get_primary_provider", lambda: "opencode")
+    snapshot = SettingsSnapshot(
+        123,
+        {
+            "process:search": {
+                "models": list(models),
+                "strategy": "sequential",
+                "inherit_user_model": False,
+                "service_tier": tier,
+            }
+        },
+    )
+    token = lifecycle._operation_snapshot.set(snapshot)
+    chat = make_chat_state(model="gemini-previous-user-choice", system_prompt="Сохрани язык пользователя.")
+    try:
+        await ai_search._handle_qna_search(
+            make_placeholder(), "Original wording", chat, search_query="exact search query", user_id=123
+        )
+    finally:
+        lifecycle._operation_snapshot.reset(token)
+    request = delivery.stream.await_args.args[1]
+    assert request.models == models
+    assert request.service_tier is ServiceTier(tier)
+    assert request.policy_revision == 123
+    assert not request.allow_model_fallback
+    assert request.turns[0].parts[0].text == "exact search query"
+    assert chat.model == "gemini-previous-user-choice"
+    assert "Сохрани язык пользователя." in request.system_instruction
+    if external:
+        jina.assert_awaited_once_with("exact search query")
+        assert request.grounding is GroundingMode.PROVIDED_CONTEXT
+        assert "[JINA supplied evidence]" in request.system_instruction
+    else:
+        jina.assert_not_awaited()
+        assert request.grounding is GroundingMode.PROVIDER_SEARCH_REQUIRED
+        assert ("Google Search" not in request.system_instruction) is native_openai
+        assert "[JINA supplied evidence]" not in request.system_instruction
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("partial", [False, True])
 async def test_qna_search_typed_failure_does_not_duplicate_delivery(partial):
     """Delivery owns the rendered failure; the handler must not send it again."""

@@ -38,6 +38,7 @@ from app.providers.stream_types import (
     ThinkingLevel,
     TokenUsage,
     VisibleTextBuffer,
+    Workload,
 )
 from app.providers.typed_payloads import _base64_image
 from app.request_context import get_request_id
@@ -115,6 +116,8 @@ async def responses_payload(request: GenerationRequest, model_name: str) -> dict
         if not model.startswith("gpt-6"):
             raise UnsupportedResponsesRequest("This direct OpenAI model does not support Responses web search")
         payload["tools"] = [{"type": "web_search"}]
+        if request.workload is Workload.QUICK_SEARCH:
+            payload["max_tool_calls"] = 1
         if request.grounding is GroundingMode.PROVIDER_SEARCH_REQUIRED:
             payload["tool_choice"] = {"type": "web_search"}
     return payload

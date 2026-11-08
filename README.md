@@ -42,8 +42,8 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
   Router deadlines do not suspend otherwise healthy keys.
 - The OpenAI live-answer profile uses Luna Flex for chat and quick search.
   The dashboard selects the model and Standard/Flex separately. Flex waits up
-  to 15 seconds for model text; search retrieval and Telegram delivery have
-  separate budgets. Inline and Crocodile judgement use Standard. A Flex
+  to 15 seconds for model text, including native GPT-6 web search. Telegram
+  delivery has a separate budget. Inline and Crocodile judgement use Standard. A Flex
   capacity error offers a manual retry without switching to Standard.
 - Quick search (`?`), bounded agentic research (`??`), URL/document/photo
   understanding and deterministic weather/currency/crypto shortcuts.
@@ -384,7 +384,7 @@ and does not consume this ADC file.
 | `OPENAI_API_KEYS` | ⚙️ | `synthetic-key-one,synthetic-key-two` | `[]` | Direct OpenAI credentials, separate from OpenRouter; comma-separated pool with rotation. `OPENAI_API_KEY` is the local single-key fallback when the pool is empty. Deployment forwards `OPENAI_API_KEYS`. |
 | `OPENAI_AVAILABLE_MODELS` | ⚙️ | `openai-direct/gpt-6-luna,openai-direct/gpt-6.1-terra` | Luna + Terra | Exact ordered direct-OpenAI catalog. `none` keeps an intentionally empty selector catalog without disabling internal process routes. `openai/…` retains its existing OpenRouter meaning. |
 | `OPENAI_DEFAULT_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Initial OpenAI profile for document/image and other live answers, including Crocodile judgement. Chat has its own Luna Flex profile default. Role overrides also accept bare IDs; saved dashboard plans take precedence. |
-| `OPENAI_QNA_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Legacy OpenAI baseline for search. The active OpenAI profile starts with Luna Flex; saved dashboard plans take precedence. Quick search retrieves Jina sources before model synthesis. |
+| `OPENAI_QNA_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Legacy OpenAI baseline for search. The active OpenAI profile starts with Luna Flex and native web search; saved dashboard plans take precedence. Gateways and legacy models keep Jina retrieval. |
 | `OPENAI_INLINE_MODEL` | ⚙️ | `openai-direct/gpt-6-luna` | `openai-direct/gpt-6-luna` | Initial fast OpenAI profile for inline and short live classifiers. Crocodile answer checking uses `OPENAI_DEFAULT_MODEL`. Daily preparation keeps its existing Gemini routes. |
 | `OPENCODE_DEFAULT_MODEL` | ⚙️ | `opencode-go/qwen3.5-plus` | `opencode-go/qwen3.5-plus` | Default Opencode chat role. |
 | `OPENCODE_QNA_MODEL` | ⚙️ | `opencode-go/qwen3.6-plus` | `opencode-go/qwen3.6-plus` | Model for quick Q&A search synthesis (`?` prefix). |

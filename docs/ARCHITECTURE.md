@@ -117,7 +117,7 @@ key/model recovery path. Bounded workflows retain interface policy caps:
 | --- | --- | --- |
 | Legacy interactive chat, any thinking level/model | No application deadline | — |
 | Direct OpenAI Standard interactive chat | 20 s shared across key attempts | — |
-| Direct OpenAI Flex chat or quick-search synthesis | 15 s shared across key attempts | — |
+| Direct OpenAI Flex chat or native quick search | 15 s shared across key attempts | — |
 | Deferred retry, Flash low/off | 12 s | — |
 | Deferred retry, Flash auto/medium | 20 s | — |
 | Deferred retry, high or other model families | 30 s | — |
@@ -141,8 +141,10 @@ for the exact switch scope and configuration.
 The process policy stores `service_tier` separately from the model ID. New OpenAI
 profiles use Luna Flex for chat and quick-search synthesis; other OpenAI routes
 use Standard. Flex capacity failures preserve key health and offer manual retry,
-without an automatic Standard fallback. The 15-second model-text budget starts
-after quick-search source retrieval. SDK metadata and reasoning do not extend it.
+without an automatic Standard fallback. For direct GPT-6 search, the shared
+15-second budget includes native `web_search` before the first answer text.
+Gateways, mixed plans and legacy models keep their separate Jina retrieval step.
+SDK metadata and reasoning do not extend the model-text budget.
 Requested and actual tiers remain separate in the route result and telemetry.
 
 Google recommends low thinking for latency-sensitive chat and explains that

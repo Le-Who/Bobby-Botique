@@ -429,7 +429,7 @@
     });
     tier.value = current.service_tier || "default";
     const tierNote = element("p", "muted", "Flex дешевле, но задержка и доступность переменные. Локальный предел ожидания первого текста — 15 секунд. При нехватке ресурсов запрос может завершиться ошибкой; автоматического перехода на Standard нет.");
-    if (id === "search") tierNote.textContent += " Поиск источников выполняется до этого ожидания и имеет отдельный срок.";
+    if (id === "search") tierNote.textContent += " Встроенный веб-поиск OpenAI входит в эти 15 секунд.";
     tierNote.hidden = tier.value !== "flex";
     if (id === "chat" || id === "search") {
       const field = element("label", "field", "Тариф обработки OpenAI"); field.append(tier); options.append(field);

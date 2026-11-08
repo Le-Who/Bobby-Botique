@@ -258,6 +258,53 @@ async def test_grounding_images_and_model_history_are_preserved(transport):
     assert stream.closed
 
 
+@pytest.mark.parametrize("tier", [ServiceTier.DEFAULT, ServiceTier.FLEX])
+@pytest.mark.parametrize("grounding", [GroundingMode.PROVIDER_SEARCH, GroundingMode.PROVIDER_SEARCH_REQUIRED])
+async def test_quick_native_search_caps_sdk_tool_invocations(transport, tier, grounding):
+    install, calls = transport
+    stream = install(
+        [
+            frame("response.output_text.delta", delta="synthetic search answer"),
+            completed(
+                service_tier=tier.value,
+                output=[
+                    {
+                        "type": "web_search_call",
+                        "status": "completed",
+                        "action": {"type": "search", "query": "synthetic query"},
+                    }
+                ],
+            ),
+        ]
+    )
+    events = await collect(request(workload=Workload.QUICK_SEARCH, grounding=grounding, service_tier=tier))
+    assert isinstance(events[-1], StreamCompleted)
+    payload = json.loads(calls[0].content)
+    assert payload["max_tool_calls"] == 1
+    assert payload["tools"] == [{"type": "web_search"}]
+    assert payload["service_tier"] == tier.value
+    assert payload["reasoning"] == {"effort": "none"}
+    if grounding is GroundingMode.PROVIDER_SEARCH_REQUIRED:
+        assert payload["tool_choice"] == {"type": "web_search"}
+    else:
+        assert "tool_choice" not in payload
+    assert stream.closed
+
+
+@pytest.mark.parametrize(
+    "workload,grounding",
+    [
+        (Workload.INTERACTIVE, GroundingMode.PROVIDER_SEARCH_REQUIRED),
+        (Workload.INLINE, GroundingMode.PROVIDER_SEARCH),
+        (Workload.QUICK_SEARCH, GroundingMode.NONE),
+        (Workload.QUICK_SEARCH, GroundingMode.PROVIDED_CONTEXT),
+    ],
+)
+async def test_tool_invocation_cap_is_scoped_to_quick_native_search(workload, grounding):
+    payload = await openai.responses_payload(request(workload=workload, grounding=grounding), MODEL)
+    assert "max_tool_calls" not in payload
+
+
 @pytest.mark.parametrize(
     "chunks,code",
     [

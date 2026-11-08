@@ -237,6 +237,7 @@ async def test_chat_error_button_replays_once_without_duplicate_history_or_memor
 @pytest.mark.asyncio
 async def test_search_timeout_retry_uses_same_effective_query_and_never_chat(scenario, monkeypatch):
     s = scenario
+    s.grounding.side_effect = AssertionError("Direct OpenAI search must not call JINA, including on retry")
     s.scripts.extend([[failure()], [TextDelta("Grounded retry answer"), completion()]])
     original = s.message()
     await ai_search._handle_qna_search(
@@ -246,7 +247,8 @@ async def test_search_timeout_retry_uses_same_effective_query_and_never_chat(sce
     monkeypatch.setattr(cb_ai_actions.agent, "_handle_regular_chat", chat)
     await s.click(original, callback=retry_button(s.sessions[0]))
     assert len(s.requests) == len(s.closed) == 2
-    assert [call.args[0] for call in s.grounding.await_args_list] == ["точный поисковый запрос"] * 2
+    s.grounding.assert_not_awaited()
+    assert all(request.grounding.value == "provider_search_required" for request in s.requests)
     assert all(request.turns[0].parts[0].text == "точный поисковый запрос" for request in s.requests)
     assert s.chat.history == []
     assert s.memory.call_count == 0
@@ -321,7 +323,8 @@ async def test_legacy_search_retry_keeps_prefix_routing(scenario):
     state.get_user_state(USER_ID).last_sent_message_text = "? legacy exact query"
     s.scripts.append([TextDelta("Legacy grounded answer"), completion()])
     await s.click(s.message(), callback="retry_last")
-    assert s.grounding.await_args.args[0] == "legacy exact query"
+    s.grounding.assert_not_awaited()
+    assert s.requests[0].grounding.value == "provider_search_required"
     assert s.requests[0].turns[0].parts[0].text == "legacy exact query"
     assert s.chat.history == []
 
