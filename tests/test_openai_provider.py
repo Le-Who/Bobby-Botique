@@ -5,10 +5,13 @@ import hashlib
 import json
 from contextlib import aclosing
 from types import SimpleNamespace
+from typing import Literal
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2 as httpx
 import pytest
+from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 
 from app import agent_use_cases
 from app.errors import ErrorCode, extract_error_code
@@ -54,9 +57,71 @@ def completed(**kwargs):
     return frame("response.completed", response={"status": "completed", "model": "gpt-6.1-terra", **kwargs})
 
 
+def sdk_wire_chunks(chunks):
+    """Complete synthetic Responses lifecycles for the real SDK stream accumulator."""
+    if chunks and chunks[0].startswith(b"{"):
+        return chunks  # HTTP error JSON is not an SSE stream.
+    output = []
+    text = ""
+    result = [
+        frame(
+            "response.created",
+            response={"id": "resp_test", "status": "in_progress", "model": "gpt-6.1-terra", "output": []},
+        )
+    ]
+    for chunk in chunks:
+        if not chunk.startswith(b"data: "):
+            result.append(chunk)
+            continue
+        try:
+            event = json.loads(chunk[6:].strip())
+        except ValueError:
+            result.append(chunk)
+            continue
+        kind = event.get("type")
+        event.setdefault("sequence_number", 1)
+        if kind == "response.output_text.delta":
+            event.update(output_index=0, content_index=0, item_id="msg_test", logprobs=[])
+            if not output:
+                output = [
+                    {
+                        "id": "msg_test",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "in_progress",
+                        "content": [{"type": "output_text", "text": "", "annotations": [], "logprobs": []}],
+                    }
+                ]
+                result.append(frame("response.output_item.added", sequence_number=1, output_index=0, item=output[0]))
+            if isinstance(event.get("delta"), str):
+                text += event["delta"]
+        if kind in {"response.completed", "response.failed", "response.incomplete", "response.created"}:
+            response = event.get("response")
+            if isinstance(response, dict):
+                response.setdefault("id", "resp_test")
+                response.setdefault("model", "gpt-6.1-terra")
+                if kind == "response.completed":
+                    final_output = response.setdefault("output", [])
+                    if output:
+                        message = dict(
+                            output[0],
+                            status="completed",
+                            content=[{"type": "output_text", "text": text, "annotations": [], "logprobs": []}],
+                        )
+                        existing = next((item for item in final_output if item.get("type") == "message"), None)
+                        if existing is not None:
+                            message["content"][0]["annotations"] = existing.get("content", [{}])[0].get(
+                                "annotations", []
+                            )
+                            final_output.remove(existing)
+                        final_output.append(message)
+        result.append(("data: " + json.dumps(event) + "\n\n").encode())
+    return result
+
+
 class Stream(httpx.AsyncByteStream):
     def __init__(self, chunks, *, delay=0, block=False):
-        self.chunks = chunks
+        self.chunks = sdk_wire_chunks(chunks)
         self.delay = delay
         self.block = block
         self.waiting = asyncio.Event()
@@ -87,14 +152,15 @@ async def transport(monkeypatch):
             calls.append(native_request)
             return httpx.Response(status, stream=stream, headers={"content-type": "text/event-stream"})
 
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = AsyncOpenAI(api_key="synthetic", max_retries=0, http_client=http_client)
         clients.append(client)
-        monkeypatch.setattr(openai, "_openai_http_client", client)
+        monkeypatch.setattr(openai, "_get_sdk_client", lambda api_key: client.with_options(api_key=api_key))
         return stream
 
     yield install, calls
     for client in clients:
-        await client.aclose()
+        await client.close()
 
 
 async def collect(req=None):
@@ -423,7 +489,8 @@ async def test_http_cleanup_failure_cannot_publish_two_terminal_events(monkeypat
         return httpx.Response(status, stream=stream)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        monkeypatch.setattr(openai, "_openai_http_client", client)
+        sdk = AsyncOpenAI(api_key="synthetic", max_retries=0, http_client=client)
+        monkeypatch.setattr(openai, "_get_sdk_client", lambda api_key: sdk.with_options(api_key=api_key))
         events = await collect()
     terminals = [event for event in events if isinstance(event, (StreamFailed, StreamCompleted))]
     assert len(terminals) == 1
@@ -449,7 +516,8 @@ async def test_sequential_key_rotation_shares_original_first_visible_deadline(mo
 
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            monkeypatch.setattr(openai, "_openai_http_client", client)
+            sdk = AsyncOpenAI(api_key="synthetic", max_retries=0, http_client=client)
+            monkeypatch.setattr(openai, "_get_sdk_client", lambda api_key: sdk.with_options(api_key=api_key))
             events = [event async for event in ProviderRouter().stream(request())]
         assert len(streams) == 2
         assert not any(isinstance(event, TextDelta) for event in events)
@@ -457,3 +525,59 @@ async def test_sequential_key_rotation_shares_original_first_visible_deadline(mo
         assert all(stream.closed for stream in streams)
     finally:
         agent_use_cases._openai_key_health.clear()
+
+
+class StructuredJudge(BaseModel):
+    status: Literal["cold", "warm", "hot"]
+    score: float = Field(ge=0.0, le=1.0)
+    hint: str = Field(max_length=255)
+    interpreted_domain: str | None = None
+    ambiguity_flag: bool = False
+    cached: bool = False
+
+
+async def test_sdk_structured_stream_sends_strict_pydantic_schema(transport):
+    install, calls = transport
+    original_schema = StructuredJudge.model_json_schema()
+    text = '{"status":"warm","score":0.5,"hint":"synthetic","interpreted_domain":null,"ambiguity_flag":false,"cached":false}'
+    install([frame("response.output_text.delta", delta=text), completed()])
+    events = await collect(request(response_schema=StructuredJudge))
+    assert isinstance(events[-1], StreamCompleted)
+    assert StructuredJudge.model_validate_json(events[0].text).status == "warm"
+    wire_format = json.loads(calls[0].content)["text"]["format"]
+    assert wire_format["type"] == "json_schema"
+    assert wire_format["name"] == "StructuredJudge"
+    assert wire_format["strict"] is True
+    assert wire_format["schema"]["additionalProperties"] is False
+    assert set(wire_format["schema"]["required"]) == set(wire_format["schema"]["properties"])
+    assert StructuredJudge.model_json_schema() == original_schema
+
+
+async def test_sdk_schema_rejects_prose_after_text_with_one_failure(transport):
+    install, _ = transport
+    install([frame("response.output_text.delta", delta="plain prose"), completed()])
+    events = await collect(request(response_schema=StructuredJudge))
+    assert events[0] == TextDelta("plain prose")
+    assert len(events) == 2
+    assert isinstance(events[-1], StreamFailed)
+    assert events[-1].code is ErrorCode.INVALID_RESPONSE
+    assert events[-1].phase is FailurePhase.AFTER_TEXT
+    assert events[-1].retry is RetryDisposition.DO_NOT_RETRY
+
+
+def test_schema_contract_requires_pydantic_model_class():
+    with pytest.raises(TypeError, match="Pydantic model class"):
+        request(response_schema={"type": "object"})
+
+
+async def test_sdk_client_pool_disables_retries_pins_origin_and_closes(monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://offline.invalid/not-direct")
+    monkeypatch.setattr(openai, "_sdk_clients", {})
+    first = openai._get_sdk_client("synthetic-one")
+    second = openai._get_sdk_client("synthetic-two")
+    assert openai._get_sdk_client("synthetic-one") is first
+    assert first.max_retries == second.max_retries == 0
+    assert str(first.base_url) == "https://api.openai.com/v1/"
+    await openai.close_http_clients()
+    assert first.is_closed() and second.is_closed()
+    assert not openai._sdk_clients

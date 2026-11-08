@@ -27,6 +27,10 @@ def _marker_applies(marker: str | None, platform: str) -> bool:
         return platform != "win32"
     if marker == "sys_platform == 'win32'":
         return platform == "win32"
+    if marker == "sys_platform != 'emscripten'":
+        return platform != "emscripten"
+    if marker == "sys_platform == 'emscripten'":
+        return platform == "emscripten"
     if marker == "platform_python_implementation != 'PyPy'":
         return python_platform.python_implementation() != "PyPy"
     if marker == "implementation_name != 'PyPy'":

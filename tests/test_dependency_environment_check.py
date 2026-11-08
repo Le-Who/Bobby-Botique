@@ -71,10 +71,39 @@ def test_environment_check_requires_missing_transitive_dependency_from_real_lock
     installed = {
         package["name"]: package["version"]
         for package in lock["package"]
-        if not package["source"].get("virtual") and package["name"] not in {"uvloop", "h11"}
+        if not package["source"].get("virtual") and package["name"] not in {"uvloop", "h11", "httpx2-jsfetch"}
     }
 
     assert verify_environment(lock, installed, "win32", include_dev=True) == ["h11: locked dependency is not installed"]
+
+
+@pytest.mark.parametrize(
+    ("platform", "transport", "excluded"),
+    [("win32", "native", "browser"), ("linux", "native", "browser"), ("emscripten", "browser", "native")],
+)
+def test_sdk_transport_platform_markers_require_only_the_selected_graph(platform, transport, excluded):
+    lock = {
+        "package": [
+            {
+                "name": "app",
+                "version": "0.0.0",
+                "source": {"virtual": "."},
+                "dependencies": [
+                    {"name": "native", "marker": "sys_platform != 'emscripten'"},
+                    {"name": "browser", "marker": "sys_platform == 'emscripten'"},
+                ],
+            },
+            *[
+                {"name": name, "version": "1.0", "source": {"registry": "https://pypi.org/simple"}}
+                for name in ("native", "browser")
+            ],
+        ]
+    }
+    assert verify_environment(lock, {transport: "1.0"}, platform) == []
+    assert verify_environment(lock, {}, platform) == [f"{transport}: direct production dependency is not installed"]
+    assert verify_environment(lock, {transport: "1.0", excluded: "1.0"}, platform) == [
+        f"{excluded}: installed package is outside the selected dependency graph"
+    ]
 
 
 def test_environment_check_traverses_cycles_and_normalizes_package_names() -> None:

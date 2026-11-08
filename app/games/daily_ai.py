@@ -97,7 +97,10 @@ async def generate_daily_text_for(
                 from app.core.selected_text import generate_selected_text
 
                 return await generate_selected_text(
-                    ResolvedPolicy((candidate,), "sequential", True, policy.revision), prompt, timeout=budget
+                    ResolvedPolicy((candidate,), "sequential", True, policy.revision),
+                    prompt,
+                    timeout=budget,
+                    response_schema=response_schema,
                 )
             return await generate_daily_text(
                 prompt, candidate, timeout=budget, response_schema=response_schema, max_attempts=1

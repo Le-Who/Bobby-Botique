@@ -24,6 +24,7 @@ dependencies = [
     "orjson>=3.10.0,<4.0.0",
     "ephem>=4.1.0,<5.0.0",
     "geonamescache>=3.0.1,<4.0.0",
+    "openai==3.42.0",
 ]
 
 [dependency-groups]

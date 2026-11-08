@@ -124,7 +124,11 @@ key/model recovery path. Bounded workflows retain interface policy caps:
 | Inline text, any reasoning level | 6 s | 12 s |
 | Inline with Search grounding | 10 s | 20 s |
 
-Direct OpenAI uses `openai-direct/<model>` through the typed Responses adapter;
+Direct OpenAI uses `openai-direct/<model>` through the typed Responses adapter
+and the official `AsyncOpenAI` SDK. Structured game output passes the Pydantic
+class to the SDK's public streaming helper; the SDK owns strict JSON Schema
+conversion and stream parsing. SDK retries are disabled so the application
+retains one owner for key rotation and shared deadlines;
 historical OpenRouter `openai/<model>` retains its original meaning. OpenAI
 credentials rotate sequentially without paid key races. The reversible live
 provider profile pins covered process routes for all users, preserving saved

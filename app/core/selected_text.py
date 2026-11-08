@@ -3,6 +3,8 @@
 import asyncio
 from contextlib import aclosing
 
+from pydantic import BaseModel
+
 from app.process_policies import ResolvedPolicy
 from app.providers.stream_types import (
     GenerationRequest,
@@ -24,6 +26,7 @@ async def generate_selected_text(
     system_instruction: str | None = None,
     user_id: int | None = None,
     privacy_epoch: int | None = None,
+    response_schema: type[BaseModel] | None = None,
 ) -> str:
     """Run exactly the supplied models; cancellation closes the owned provider stream."""
     from app.providers import get_provider_router
@@ -39,6 +42,7 @@ async def generate_selected_text(
         allow_model_fallback=False,
         allow_key_race=False,
         policy_revision=policy.revision,
+        response_schema=response_schema,
     )
     chunks: list[str] = []
     async with asyncio.timeout(timeout):

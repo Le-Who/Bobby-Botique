@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from pydantic import BaseModel
+
 from app.errors import ErrorCode
 
 
@@ -147,8 +149,13 @@ class GenerationRequest:
     allow_model_fallback: bool = True
     policy_revision: int = 0
     allow_key_race: bool = True
+    response_schema: type[BaseModel] | None = None
 
     def __post_init__(self) -> None:
+        if self.response_schema is not None and (
+            not isinstance(self.response_schema, type) or not issubclass(self.response_schema, BaseModel)
+        ):
+            raise TypeError("GenerationRequest.response_schema must be a Pydantic model class")
         if self.route_strategy not in {"legacy", "sequential", "hedged"}:
             raise ValueError("Unknown route strategy")
         models: list[str] = []

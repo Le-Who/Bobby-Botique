@@ -30,7 +30,7 @@ JUDGEMENT = '{"status":"warm","score":0.6,"hint":"Есть сходство"}'
 @pytest.fixture
 def routed(monkeypatch):
     requests = []
-    state = SimpleNamespace(text=JUDGEMENT, failure=None, hang=False, closed=False)
+    state = SimpleNamespace(text=JUDGEMENT, failure=None, hang=False, closed=False, requires_schema=False)
 
     async def stream(request):
         requests.append(request)
@@ -39,7 +39,10 @@ def routed(monkeypatch):
                 await asyncio.Event().wait()
             if state.failure:
                 raise state.failure
-            yield TextDelta(state.text)
+            # Gemini used to supply the schema out of band. An unstructured
+            # OpenAI request can validly complete with prose instead of JSON.
+            text = state.text if not state.requires_schema or request.response_schema is not None else "Есть сходство."
+            yield TextDelta(text)
             yield StreamCompleted(
                 FinishReason(FinishKind.STOP),
                 TokenUsage(total=8),
@@ -81,6 +84,7 @@ async def test_selected_text_deadline_cancels_owned_stream(routed):
 async def test_classic_judge_openai_never_returns_to_gemini(monkeypatch, routed, failed):
     from app.games import daily_ai, judge, judgement_cache
 
+    routed.requires_schema = True
     monkeypatch.setattr(daily_ai, "get_daily_text_model_for", AsyncMock(return_value=MODEL))
     monkeypatch.setattr(daily_ai, "resolve_process", AsyncMock(return_value=POLICY))
     gemini = AsyncMock(side_effect=AssertionError("Gemini must not be called"))
@@ -95,6 +99,10 @@ async def test_classic_judge_openai_never_returns_to_gemini(monkeypatch, routed,
     assert status == ("judge_unavailable" if failed else "warm")
     assert result.score == (0.0 if failed else 0.6)
     assert len(routed.requests) == 1
+    schema = routed.requests[0].response_schema
+    assert schema is judge.GuessJudgement
+    assert {"status", "score", "hint"} <= set(schema.model_json_schema()["required"])
+    assert set(schema.model_json_schema()["properties"]["status"]["enum"]) == {"cold", "warm", "hot"}
     gemini.assert_not_awaited()
 
 
@@ -120,6 +128,37 @@ async def test_openai_judge_failure_does_not_count_daily_player_attempt(monkeypa
     assert result["event"] == "judge_unavailable"
     assert len(routed.requests) == 1
     save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_daily_judge_receives_schema_and_accepts_structured_semantic_result(monkeypatch, routed):
+    from app.games import crocodile_daily, daily_ai, judge, judgement_cache
+    from app.repos import crocodile_daily as repo
+
+    routed.requires_schema = True
+    monkeypatch.setattr(daily_ai, "get_daily_text_model_for", AsyncMock(return_value=MODEL))
+    monkeypatch.setattr(daily_ai, "resolve_process", AsyncMock(return_value=POLICY))
+    monkeypatch.setattr(judge, "cache_identity", AsyncMock(return_value="openai-test"))
+    monkeypatch.setattr(judgement_cache, "get_cached_judgement", AsyncMock(return_value=None))
+    monkeypatch.setattr(judgement_cache, "cache_judgement", AsyncMock())
+    puzzle = repo.DailyPuzzle(date(2026, 11, 9), "кот", "животные", "ru")
+    result = SimpleNamespace(status="active", attempts=[], best_score=0.0)
+    monkeypatch.setattr(crocodile_daily, "get_daily_state", AsyncMock(return_value=(puzzle, result)))
+
+    async def save(**kwargs):
+        result.attempts.append(kwargs["attempt"])
+        result.best_score = kwargs["attempt"]["score"]
+        return result
+
+    monkeypatch.setattr(repo, "append_attempt_and_maybe_finish", save)
+    event = await crocodile_daily.process_daily_guess(42, "тигр")
+    assert event["event"] == "result"
+    assert event["score"] == 0.6
+    assert event["attempts"] == 1
+    assert len(routed.requests) == 1
+    schema = routed.requests[0].response_schema
+    assert schema is judge.GuessJudgement
+    assert {"status", "score", "hint"} <= set(schema.model_json_schema()["required"])
 
 
 @pytest.mark.asyncio

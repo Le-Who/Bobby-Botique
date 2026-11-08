@@ -15,6 +15,7 @@ LOCKFILE = ROOT / "uv.lock"
 PYTEST_INI = ROOT / "pytest.ini"
 
 EXPECTED_PRODUCTION = {
+    "openai",
     "asyncpg",
     "cachetools",
     "cryptography",
