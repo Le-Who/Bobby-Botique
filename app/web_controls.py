@@ -22,7 +22,7 @@ from app.command_aliases import (
 )
 from app.observability.events import emit
 from app.process_policies import PROCESSES, baseline_models, list_processes, resolve_policy_value, validate_policy
-from app.runtime_settings import audio, models, prompts
+from app.runtime_settings import audio, live_routes, models, prompts
 from app.runtime_settings.store import (
     RevisionConflict,
     get_state,
@@ -263,6 +263,9 @@ def _validate_restored_values(values: Mapping[str, Any]) -> None:
             from app.runtime_settings.legacy_models import validate_value
 
             validate_value(identity, value)
+            continue
+        if section == "live_route":
+            live_routes.validate_value(identity, value)
             continue
         if section == "command_aliases":
             continue
@@ -536,6 +539,7 @@ def register_controls(app, require_auth) -> None:
                     degraded=snapshot.degraded,
                     csrf_token=_csrf(),
                     processes=processes,
+                    live_routes=live_routes.status(snapshot),
                     prompts=await prompts.list_prompts(),
                     catalogs=catalogs,
                     audio=await audio.list_audio_configs(snapshot=snapshot),
@@ -588,9 +592,12 @@ def register_controls(app, require_auth) -> None:
                 )
             else:
                 key = f"process:{identity}"
-                snapshot = (
-                    await reset_value(key, **options) if data.get("reset") else await set_value(key, value, **options)
-                )
+                if data.get("reset"):
+                    from app.runtime_settings.processes import reset_process
+
+                    snapshot = await reset_process(identity, **options)
+                else:
+                    snapshot = await set_value(key, value, **options)
         except ValueError, KeyError:
             raise
         except Exception:
@@ -599,6 +606,22 @@ def register_controls(app, require_auth) -> None:
                 error="Не удалось сохранить настройки. Данные не подтверждены; обновите состояние перед повтором."
             ), 503
         return jsonify(revision=snapshot.revision)
+
+    @bp.route("/api/admin/controls/live-provider", methods=["POST"])
+    @require_auth
+    async def controls_live_provider():
+        data = await _mutation_body()
+        if set(data) != {"provider", "expected_revision"}:
+            raise ValueError("Необходимы provider и expected_revision")
+        try:
+            snapshot = await live_routes.switch_provider(
+                data["provider"], expected_revision=data["expected_revision"], actor="admin"
+            )
+        except ValueError, KeyError:
+            raise
+        except Exception:
+            return jsonify(error="Не удалось подтвердить переключение. Обновите маршруты перед повтором."), 503
+        return jsonify(revision=snapshot.revision, live_routes=live_routes.status(snapshot))
 
     @bp.route("/api/admin/controls/commands", methods=["GET"])
     @require_auth
@@ -625,11 +648,30 @@ def register_controls(app, require_auth) -> None:
                 values[f"{PREFIX}{identity}"] = value
             validate_alias_values(bot_instance.get_application(), values)
         if section == "process":
+            from app.runtime_settings.live_routes import LIVE_PROCESS_IDS, active_provider, default_policy
+
+            snapshot, _ = await get_state(force=True)
+            provider = active_provider(snapshot)
             baseline = await baseline_models(identity)
             selected = data.get("selected_model")
             if selected is not None:
                 baseline = (models.validate_model_id(selected),)
-            planned_models = list(resolve_policy_value(identity, None if data.get("reset") else value, baseline).models)
+            controlled = provider != "baseline" and identity in LIVE_PROCESS_IDS
+            preview_value = (
+                default_policy(identity, provider)
+                if controlled and data.get("reset")
+                else None
+                if data.get("reset")
+                else value
+            )
+            planned_models = list(
+                resolve_policy_value(
+                    identity,
+                    preview_value,
+                    baseline,
+                    allow_user_model=not controlled,
+                ).models
+            )
         return jsonify(
             valid=True,
             models=planned_models,

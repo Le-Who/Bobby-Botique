@@ -44,6 +44,7 @@ class Workload(StrEnum):
 
 
 class ProviderKind(StrEnum):
+    OPENAI = "openai"
     GEMINI = "gemini"
     VERTEX = "vertex"
     OPENROUTER = "openrouter"
@@ -190,6 +191,8 @@ class GenerationRequest:
     @property
     def first_text_timeout_seconds(self) -> float | None:
         """Interactive calls finish on provider outcome or owner cancellation."""
+        if self.models[0].startswith("openai-direct/") and self.workload is Workload.INTERACTIVE:
+            return 20.0
         if self.workload is Workload.INTERACTIVE:
             return None
         grounded = self.grounding in {GroundingMode.PROVIDER_SEARCH, GroundingMode.PROVIDER_SEARCH_REQUIRED}

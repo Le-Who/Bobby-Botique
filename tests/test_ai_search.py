@@ -313,6 +313,52 @@ async def test_research_agent_no_results():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("saved_model", ["openai-direct/gpt-6.1-terra", "openai/gpt-4"])
+@pytest.mark.parametrize("explicit_plan", [False, True])
+async def test_research_filters_non_gemini_user_models_before_sdk_key_selection(
+    monkeypatch, saved_model, explicit_plan
+):
+    from app.handlers import ai_search
+    from app.process_policies import ResolvedPolicy
+
+    original_setting = ai_search._setting
+
+    def setting(name, fallback):
+        if name == "AGENTIC_MODEL":
+            return ""
+        if name == "RESEARCH_MODEL":
+            return "gemini-configured-research"
+        return original_setting(name, fallback)
+
+    async def resolve(process_id, baseline):
+        assert process_id == "research"
+        assert baseline == ("gemini-configured-research",)
+        return (
+            ResolvedPolicy(("gemini-explicit-research",), "sequential", True)
+            if explicit_plan
+            else ResolvedPolicy(baseline)
+        )
+
+    monkeypatch.setattr(ai_search, "_setting", setting)
+    monkeypatch.setattr(ai_search, "_available_models", list)
+    monkeypatch.setattr("app.process_policies.resolve_process", resolve)
+    get_key = AsyncMock(return_value={"api_key": "test-gemini", "key_hash": "gemini-hash"})
+    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", get_key)
+    agent = MagicMock(run=AsyncMock(return_value=AgenticResult(answer="❌ unavailable")))
+    agent_class = MagicMock(return_value=agent)
+    monkeypatch.setattr(ai_search, "AgenticSearch", agent_class)
+    state = make_chat_state(model=saved_model)
+
+    await ai_search._handle_research_agent(make_placeholder(), 123, "Research question", state)
+
+    expected = "gemini-explicit-research" if explicit_plan else "gemini-configured-research"
+    get_key.assert_awaited_once_with(expected)
+    assert agent_class.call_args.kwargs["model_name"] == expected
+    assert agent_class.call_args.kwargs["api_key"] == "test-gemini"
+    assert state.model == saved_model
+
+
+@pytest.mark.asyncio
 async def test_research_agent_tavily_error():
     """Research agent shows Tavily error message."""
     placeholder = make_placeholder()

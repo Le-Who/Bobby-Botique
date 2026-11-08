@@ -278,12 +278,15 @@ async def _handle_regular_chat(
 
     # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
+    from app.process_policies import resolve_process
+
+    process_policy = await resolve_process("chat", (model_for_this_request,))
 
     # ── Lyria audio intercept ─────────────────────────────────────────────
     # When user has selected a Lyria model, generate music instead of chat.
     from app.providers.freetheai_audio import is_lyria_model
 
-    if is_lyria_model(model_for_this_request):
+    if not process_policy.explicit and is_lyria_model(model_for_this_request):
         from app.repos.memory_consent import private_data_lease
 
         async with private_data_lease(
@@ -299,9 +302,6 @@ async def _handle_regular_chat(
             await _handle_lyria_audio(placeholder_message, user_id, user_message, model_for_this_request)
         return
 
-    from app.process_policies import resolve_process
-
-    process_policy = await resolve_process("chat", (model_for_this_request,))
     if process_policy.explicit:
         from app.agent_use_cases import AgentRequestUseCase
 
@@ -430,6 +430,16 @@ async def _handle_regular_chat(
                 from app.repos.memory import get_current_retrieved_edge_ids
                 from app.repos.memory_consent import private_data_lease
 
+                memory_api_key = key_data["api_key"]
+                if model_used and model_used.startswith("openai-direct/"):
+                    from app.repos.keys import get_available_gemini_key
+                    from app.repos.memory_config import EMBEDDING_MODEL
+
+                    embedding_key = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
+                    if not embedding_key:
+                        return system_instruction, {}, []
+                    memory_api_key = embedding_key["api_key"]
+
                 async with private_data_lease(
                     user_id,
                     request_epoch,
@@ -441,7 +451,7 @@ async def _handle_regular_chat(
                     injected_instruction, injection_stats = await inject_memory_layers(
                         user_id=user_id,
                         query=user_message,
-                        api_key=key_data["api_key"],
+                        api_key=memory_api_key,
                         system_instruction=system_instruction,
                         role_id=getattr(chat_state, "system_prompt_id", None),
                         limit=5,
@@ -525,7 +535,9 @@ async def _handle_regular_chat(
     )
 
     effective_thinking_level = chat_state.thinking_level
-    if _setting("ADAPTIVE_THINKING_ENABLED", True):
+    if model_used and model_used.startswith("openai-direct/") and chat_state.thinking_level in (None, "auto"):
+        effective_thinking_level = None
+    elif _setting("ADAPTIVE_THINKING_ENABLED", True):
         from app.thinking_classifier import resolve_thinking_level
 
         effective_thinking_level = resolve_thinking_level(

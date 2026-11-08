@@ -40,7 +40,7 @@ from app.errors import (
 )
 from app.observability.provider_events import observe_provider_stream
 from app.observability.request_metrics import observe_generation, record_race_outcome
-from app.providers.base import is_freetheai_model, is_opencode_model
+from app.providers.base import is_freetheai_model, is_openai_model, is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
 from app.providers.stream_tasks import drain_provider_tasks
 from app.providers.stream_types import (
@@ -208,6 +208,8 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
 
 
 def _provider_label(model_name: str | None, use_openrouter: bool | None) -> str:
+    if model_name and is_openai_model(model_name):
+        return "openai"
     if model_name and is_opencode_model(model_name):
         return "opencode"
     if model_name and is_freetheai_model(model_name):
@@ -311,6 +313,37 @@ class ProviderRouter:
                 ),
                 None,
             )
+
+        if is_openai_model(preferred_model):
+            # Use the same typed transport/rotation path for compatibility consumers.
+            # Explicit direct selections never expand into Gemini or OpenRouter.
+            from app.providers.request_factory import generation_request_from_history
+
+            try:
+                request = await generation_request_from_history(
+                    models=(preferred_model,),
+                    history=history,
+                    system_instruction=system_instruction,
+                    thinking_level=thinking_level,
+                    allow_deferred=False,
+                    allow_key_race=False,
+                )
+                async with asyncio.timeout(timeout), aclosing(self.stream(request)) as events:
+                    chunks: list[str] = []
+                    async for event in events:
+                        if isinstance(event, TextDelta):
+                            chunks.append(event.text)
+                        elif isinstance(event, StreamCompleted):
+                            if on_model_used is not None:
+                                on_model_used(event.route.actual_model)
+                            return "".join(chunks), event.usage.total
+                        elif isinstance(event, StreamFailed):
+                            return tag_error(event.code, "❌ OpenAI сейчас недоступен. Попробуйте позже."), None
+            except TimeoutError:
+                return tag_error(ErrorCode.TIMEOUT, "⏳ Превышено время ожидания OpenAI."), None
+            except ValueError, TypeError:
+                return tag_error(ErrorCode.INVALID_REQUEST, "❌ Неподдерживаемый запрос OpenAI."), None
+            return tag_error(ErrorCode.INVALID_RESPONSE, "❌ Некорректный ответ OpenAI."), None
 
         # Auto-detect multimodal content.
         # For Opencode vision models (mimo-v2-omni / mimo-v2-pro), allow multimodal
@@ -1075,7 +1108,12 @@ class ProviderRouter:
         async def _record_success(key_data: dict, model_name: str) -> None:
             key_hash = key_data["key_hash"]
             try:
-                if key_hash != _VERTEX_KH and not is_opencode_model(model_name) and not is_freetheai_model(model_name):
+                if (
+                    key_hash != _VERTEX_KH
+                    and not is_openai_model(model_name)
+                    and not is_opencode_model(model_name)
+                    and not is_freetheai_model(model_name)
+                ):
                     async with asyncio.timeout(_remaining_timeout(first_text_deadline)):
                         await status_mgr.record_success(key_hash, model_name)
             except Exception as exc:
@@ -1095,6 +1133,10 @@ class ProviderRouter:
                     from app.providers.gemini import report_vertex_error
 
                     report_vertex_error(RuntimeError(failure.diagnostic))
+                elif is_openai_model(model_name):
+                    from app.agent_use_cases import suspend_openai_key
+
+                    suspend_openai_key(key_hash, category)
                 elif not is_opencode_model(model_name) and not is_freetheai_model(model_name):
                     async with asyncio.timeout(_remaining_timeout(model_deadline)):
                         await status_mgr.suspend_key(
@@ -1176,6 +1218,7 @@ class ProviderRouter:
                     primary_attempt
                     and primary_key_race
                     and request.allow_key_race
+                    and not is_openai_model(preferred_model)
                     and preferred_model == request.models[0]
                 )
                 key_count = min(2 if racing_primary else 1, remaining_key_attempts)
@@ -1722,7 +1765,12 @@ class ProviderRouter:
                 ):
                     model_queue.append(transient_fallback)
 
-            if enable_model_fallback and model_all_permanent and last_failure is not None:
+            if (
+                enable_model_fallback
+                and not is_openai_model(preferred_model)
+                and model_all_permanent
+                and last_failure is not None
+            ):
                 for fallback in _ordered_gemini_fallback_models(preferred_model):
                     if fallback not in attempted_models and fallback not in model_queue:
                         model_queue.append(fallback)
@@ -1794,6 +1842,9 @@ class ProviderRouter:
         Maps heavy models to their lite counterparts. Returns None if
         the failed model is already the lightest available.
         """
+        if is_openai_model(failed_model):
+            return None
+
         # Grounding stays on the Gemini 2.5 family because free-tier AI Studio
         # keys do not support Gemini 3+ Google Search grounding. Other Gemini
         # requests use the complete ordered runtime fallback chain.

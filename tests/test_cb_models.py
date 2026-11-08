@@ -76,6 +76,7 @@ class TestModelButtonCallback:
             patch("app.handlers.cb_models.update_user_chat", new_callable=AsyncMock) as mock_update,
             patch("app.handlers.cb_models.menus") as mock_menus,
         ):
+            mock_menus.get_admin_selected_chat_model.return_value = None
             mock_menus.get_visible_model_list.return_value = ["gemini-3.1-flash-lite"]
             mock_menus.get_model_menu_content.return_value = (
                 "text",
@@ -105,6 +106,7 @@ class TestModelButtonCallback:
             patch("app.handlers.cb_models.update_user_chat", new_callable=AsyncMock),
             patch("app.handlers.cb_models.menus") as mock_menus,
         ):
+            mock_menus.get_admin_selected_chat_model.return_value = None
             mock_menus.get_visible_model_list.return_value = context.user_data["model_list"]
             mock_menus.get_model_menu_content.return_value = ("text", "Markdown", MagicMock())
 

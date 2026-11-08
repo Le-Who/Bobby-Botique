@@ -132,13 +132,13 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
         ("app/voice_engine.py", "VoiceReplyManager._pregenerate_audio"),
     ),
     "image.prompt_extract": _row(
-        "Gemini SDK: подготовка промпта",
+        "Gemini SDK / ProviderRouter: подготовка промпта",
         "Выделение запроса на рисование из пользовательского текста.",
         "Применяется при следующей подготовке запроса; уже созданное изображение не меняется.",
         ("app/handlers/cmd_image.py", "_extract_draw_prompt_ai"),
     ),
     "image.translate": _row(
-        "Gemini SDK: подготовка промпта",
+        "Gemini SDK / ProviderRouter: подготовка промпта",
         "Перевод промпта изображения на английский перед генерацией.",
         "Применяется при следующем переводе; уже созданное изображение не меняется.",
         ("app/handlers/cmd_image.py", "_translate_to_english"),
@@ -245,7 +245,7 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
         ("app/repos/memory_consolidation.py", "_extract_graph"),
     ),
     "memory.expand": _row(
-        "Gemini SDK: расширение запроса",
+        "Gemini SDK / ProviderRouter: расширение запроса",
         "Расширение поискового запроса перед извлечением долговременной памяти.",
         _MEMORY_GRAPH,
         ("app/repos/memory.py", "expand_query_with_llm"),
@@ -295,13 +295,13 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
         ("app/voice_intent.py", "_classify_ambiguous_tts_intent"),
     ),
     "media.intent": _row(
-        "Gemini SDK / Opencode Go",
+        "Gemini SDK / Opencode Go / прямой OpenAI",
         "Определение намерения по тексту после распознавания медиа.",
         "Повторно не распознаёт уже полученную транскрипцию или описание медиа.",
         ("app/utils/multimodal_processor.py", "_classify_intent_with_fallback"),
     ),
     "memory.relevance": _row(
-        "Gemini SDK: structured JSON",
+        "Gemini SDK / ProviderRouter: structured JSON",
         "Проверка релевантности извлечённых воспоминаний текущему запросу.",
         _MEMORY_GRAPH,
         ("app/repos/memory.py", "_search_memories_with_llm_judge_impl"),
@@ -371,7 +371,7 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
         ("app/games/judge.py", "generate_hints"),
     ),
     "crocodile.judge": _row(
-        "Крокодил: Gemini SDK / legacy Auto",
+        "Крокодил: Gemini SDK / ProviderRouter / legacy Auto",
         "Проверка догадок с локальной проверкой и кэшем перед моделью.",
         _CROC_CACHE,
         ("app/games/judge.py", "judge_guess"),

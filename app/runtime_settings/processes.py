@@ -52,7 +52,25 @@ async def save_primary_model_at_revision(
 async def effective_primary_model(process_id: str, baseline: str) -> str:
     """Read effective admin state for controls, independent of an operation's pin."""
     snapshot = await store.get_snapshot()
-    value = snapshot.values.get(f"process:{process_id}")
+    from app.runtime_settings.live_routes import effective_policy_value
+
+    value = effective_policy_value(process_id, snapshot)
     if isinstance(value, Mapping):
         return validate_policy(process_id, value)["models"][0]
     return baseline
+
+
+async def reset_process(process_id: str, *, expected_revision: int, actor: str) -> store.SettingsSnapshot:
+    """Reset within an active provider profile, retaining its routing invariant."""
+    from app.runtime_settings.live_routes import LIVE_PROCESS_IDS, active_provider, default_policy
+
+    snapshot = await snapshot_at_revision(expected_revision)
+    provider = active_provider(snapshot)
+    if provider != "baseline" and process_id in LIVE_PROCESS_IDS:
+        return await store.set_value(
+            f"process:{process_id}",
+            default_policy(process_id, provider),
+            expected_revision=expected_revision,
+            actor=actor,
+        )
+    return await store.reset_value(f"process:{process_id}", expected_revision=expected_revision, actor=actor)

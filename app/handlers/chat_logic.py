@@ -45,7 +45,9 @@ def classify_resolution(
     if resolution == "all_exhausted":
         from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
-        if model_requested and is_opencode_model(model_requested):
+        if model_requested and model_requested.startswith("openai-direct/"):
+            provider = "OpenAI"
+        elif model_requested and is_opencode_model(model_requested):
             provider = "Opencode Go"
         elif model_requested and is_freetheai_model(model_requested):
             provider = "FreeTheAI"

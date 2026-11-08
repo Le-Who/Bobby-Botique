@@ -16,7 +16,7 @@ from app.config import (
     normalize_gemini_runtime_model,
     settings,
 )
-from app.providers.base import is_freetheai_model, is_opencode_model
+from app.providers.base import is_freetheai_model, is_openai_model, is_opencode_model
 from app.repos.keys import (
     get_available_gemini_key,
     get_available_openrouter_key,
@@ -36,6 +36,21 @@ _OPENCODE_COOLDOWN = timedelta(seconds=30)
 # In-memory health state for FreeTheAI keys (same pattern as Opencode).
 _freetheai_key_health: dict[str, datetime] = {}
 _FREETHEAI_COOLDOWN = timedelta(seconds=30)
+
+# Environment-owned credentials have no DB key rows. Health is local to this process.
+_openai_key_health: dict[str, datetime] = {}
+_openai_key_cursor = 0
+
+
+def get_openai_keys() -> list[str]:
+    """Read reloaded settings without retaining a second credential snapshot."""
+    raw = getattr(settings, "OPENAI_API_KEYS", [])
+    return list(dict.fromkeys(key.strip() for key in raw if isinstance(key, str) and key.strip()))
+
+
+def suspend_openai_key(key_hash: str, category: str = "transient") -> None:
+    seconds = {"permanent": 3600, "quota": 300, "rate_limit": 60}.get(category, 15)
+    _openai_key_health[key_hash] = datetime.now(UTC) + timedelta(seconds=seconds)
 
 
 def _dedupe_models(models: Iterable[str | None], *, exclude: str | None = None) -> list[str]:
@@ -112,6 +127,8 @@ class AgentRequestUseCase:
         self, preferred_model: str, *, excluded_key_hashes: set[str] | None = None
     ) -> tuple[dict[str, Any] | None, str | None, str | None]:
         """Resolve credentials without expanding an explicit process model plan."""
+        if is_openai_model(preferred_model):
+            return await self._resolve_openai_request(preferred_model, excluded_key_hashes)
         if is_opencode_model(preferred_model):
             return await self._resolve_opencode_request(preferred_model, excluded_key_hashes)
         if is_freetheai_model(preferred_model):
@@ -140,6 +157,9 @@ class AgentRequestUseCase:
         excluded_key_hashes: set[str] | None = None,
     ) -> tuple[dict[str, Any] | None, str | None, str | None]:
         excluded = excluded_key_hashes or set()
+
+        if is_openai_model(preferred_model):
+            return await self._resolve_openai_request(preferred_model, excluded)
 
         # Opencode Go models take priority (they also contain '/')
         if is_opencode_model(preferred_model):
@@ -265,6 +285,27 @@ class AgentRequestUseCase:
             provider_name="OpenRouter",
         )
 
+    async def _resolve_openai_request(
+        self, preferred_model: str, excluded_key_hashes: set[str] | None = None
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        global _openai_key_cursor
+        keys = get_openai_keys()
+        if not keys:
+            return None, None, "no_keys"
+        now = datetime.now(UTC)
+        for key_hash, until in list(_openai_key_health.items()):
+            if now >= until:
+                del _openai_key_health[key_hash]
+        for offset in range(len(keys)):
+            index = (_openai_key_cursor + offset) % len(keys)
+            key = keys[index]
+            key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
+            if key_hash in (excluded_key_hashes or set()) or key_hash in _openai_key_health:
+                continue
+            _openai_key_cursor = (index + 1) % len(keys)
+            return {"api_key": key, "key_hash": key_hash}, preferred_model, None
+        return None, None, "all_exhausted"
+
     async def _resolve_opencode_request(
         self, preferred_model: str, excluded_key_hashes: set[str] | None = None
     ) -> tuple[dict[str, Any] | None, str | None, str | None]:
@@ -346,7 +387,9 @@ class AgentRequestUseCase:
         timeout: float | None = None,
         provider_max_retries: int | None = None,
     ) -> tuple[str, int | None]:
-        if use_openrouter is None:
+        if is_openai_model(model_name):
+            use_openrouter = False
+        elif use_openrouter is None:
             # FreeTheAI models contain '/' but should NOT be treated as OpenRouter
             use_openrouter = (
                 "/" in model_name and not is_opencode_model(model_name) and not is_freetheai_model(model_name)
@@ -384,7 +427,7 @@ class AgentRequestUseCase:
 
     async def increment_key_usage(self, key_hash: str, model_name: str, use_openrouter: bool | None = None) -> None:
         # Opencode Go and FreeTheAI: in-memory only, no DB key tracking.
-        if is_opencode_model(model_name) or is_freetheai_model(model_name):
+        if is_openai_model(model_name) or is_opencode_model(model_name) or is_freetheai_model(model_name):
             return
         if use_openrouter is None:
             use_openrouter = ("/" in model_name and not is_freetheai_model(model_name)) or get_use_openrouter()
@@ -400,7 +443,7 @@ class AgentRequestUseCase:
         use_openrouter: bool | None = None,
     ) -> bool:
         """Atomically account for a request before it reaches the provider."""
-        if is_opencode_model(model_name) or is_freetheai_model(model_name):
+        if is_openai_model(model_name) or is_opencode_model(model_name) or is_freetheai_model(model_name):
             return True
         if use_openrouter is None:
             use_openrouter = ("/" in model_name and not is_freetheai_model(model_name)) or get_use_openrouter()

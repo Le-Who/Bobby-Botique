@@ -299,11 +299,21 @@ def is_freetheai_model(model_name: str) -> bool:
 def is_openrouter_model(model_name: str) -> bool:
     """Check if model name indicates an OpenRouter model.
 
-    Has '/' but is NOT opencode-go/ and NOT a FreeTheAI prefix.
+    Has '/' except direct OpenAI, Opencode Go and FreeTheAI namespaces.
     """
     if not model_name:
         return False
-    return "/" in model_name and not model_name.startswith("opencode-go/") and not is_freetheai_model(model_name)
+    return (
+        "/" in model_name
+        and not is_openai_model(model_name)
+        and not model_name.startswith("opencode-go/")
+        and not is_freetheai_model(model_name)
+    )
+
+
+def is_openai_model(model_name: str) -> bool:
+    """The openai-direct/ namespace always denotes the direct Responses API."""
+    return model_name.startswith("openai-direct/")
 
 
 def is_opencode_model(model_name: str) -> bool:
@@ -323,11 +333,12 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
     Factory function to get appropriate provider for a model.
 
     Dispatch order (important — multiple providers use '/' in model names):
-    1. ``opencode-go/*``     → ``OpencodeGoProvider``
-    2. FreeTheAI prefixes    → ``FreeTheAIProvider``
-    3. ``org/model``         → ``OpenRouterProvider``
-    4. Vertex pseudo-key     → ``VertexGeminiProvider``
-    5. everything else       → ``GeminiProvider``
+    1. ``openai-direct/*``   → ``OpenAIProvider``
+    2. ``opencode-go/*``     → ``OpencodeGoProvider``
+    3. FreeTheAI prefixes    → ``FreeTheAIProvider``
+    4. ``org/model``         → ``OpenRouterProvider`` (including ``openai/*``)
+    5. Vertex pseudo-key     → ``VertexGeminiProvider``
+    6. everything else       → ``GeminiProvider``
 
     Args:
         model_name: Model identifier
@@ -338,10 +349,13 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
     """
     from app.providers.freetheai import FreeTheAIProvider
     from app.providers.gemini import GeminiProvider, VertexGeminiProvider
+    from app.providers.openai import OpenAIProvider
     from app.providers.opencode import OpencodeGoProvider
     from app.providers.openrouter import OpenRouterProvider
 
-    if is_opencode_model(model_name):
+    if is_openai_model(model_name):
+        return OpenAIProvider(api_key)
+    elif is_opencode_model(model_name):
         return OpencodeGoProvider(api_key)
     elif is_freetheai_model(model_name):
         return FreeTheAIProvider(api_key)

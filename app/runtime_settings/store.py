@@ -31,6 +31,7 @@ _PREFIXES = (
     "catalog_baseline:",
     "legacy_model:",
     "command_aliases:",
+    "live_route:",
 )
 _VALUE_LIMIT = 256 * 1024
 _VALUES_LIMIT = 512 * 1024

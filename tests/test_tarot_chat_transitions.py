@@ -51,6 +51,7 @@ async def test_ordinary_chat_action_clears_persisted_tarot(module, handler_name,
     chat_state = SimpleNamespace(history=[], model="gemini-3.8-flash", token_count=0)
     persisted = {"tarot_mode": True, "tarot_session": {"last_activity_at": 1.0}}
     menus = MagicMock()
+    menus.get_admin_selected_chat_model.return_value = None
     menus.get_visible_model_list.return_value = ["gemini-3.8-flash"]
     menus.get_model_menu_content.return_value = ("Модели", "HTML", None)
     menus.get_start_menu_content = AsyncMock(return_value=("Меню", "HTML", None))

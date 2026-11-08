@@ -308,14 +308,20 @@ async def _handle_research_agent_leased_impl(
     trace_user_id: int = user_id
     trace_chat_id: int | None = placeholder_message.chat.id if placeholder_message.chat else None
 
-    # Get the key and model for AgenticSearch. Fallback to default if no OpenRouter/override
+    # The agentic tool loop uses Gemini SDK even when ordinary chat uses another provider.
+    from app.config import is_gemini_chat_model_id
     from app.repos.keys import get_available_gemini_key
 
-    model_used = (
-        model_override
-        or chat_state.model
-        or _setting("AGENTIC_MODEL", "")
-        or _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL)
+    model_used = next(
+        model
+        for model in (
+            model_override,
+            chat_state.model,
+            _setting("AGENTIC_MODEL", ""),
+            _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+            GEMINI_PRIMARY_MODEL,
+        )
+        if is_gemini_chat_model_id(model)
     )
     from app.model_selector import _get_tier
     from app.process_policies import resolve_process

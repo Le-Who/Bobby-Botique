@@ -1450,6 +1450,12 @@ async def _stream_inline_fast(
         allow_deferred=False,
         allow_key_race=False,
     )
+    if any(model.startswith("openai-direct/") for model in request.models):
+        from dataclasses import replace
+
+        from app.providers.stream_types import ThinkingLevel
+
+        request = replace(request, thinking_level=ThinkingLevel.OFF)
 
     chunks: list[str] = []
     terminal = None

@@ -465,6 +465,48 @@
     "deploy": true,
     "compose": false
   },
+  "OPENAI_API_KEY": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "OPENAI_API_KEYS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENAI_AVAILABLE_MODELS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENAI_DEFAULT_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENAI_INLINE_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENAI_QNA_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
   "OPENCODE_API_KEYS": {
     "readers": [
       "app/config.py"

@@ -1,4 +1,4 @@
-"""Shared Gemini text generation for daily and ordinary Crocodile games.
+"""Shared text generation for daily and ordinary Crocodile games.
 
 The historical daily_croc_text_model setting key remains compatible with saved settings.
 """
@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel
 
-from app.process_policies import resolve_process
+from app.process_policies import ResolvedPolicy, resolve_process
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.utils.json_compat import json
 
@@ -85,7 +85,7 @@ async def generate_daily_text_for(
     *,
     response_schema: type[BaseModel] | None = None,
 ) -> str:
-    """Execute the complete configured Gemini chain through the existing game SDK path."""
+    """Keep preparation on Gemini and route selected live judges through the router."""
     if process not in TEXT_MODEL_PROCESSES:
         raise ValueError(f"Unknown Crocodile text model process: {process}")
     policy = await resolve_process(f"crocodile.{process}", (model,) if model else ())
@@ -93,6 +93,12 @@ async def generate_daily_text_for(
 
     async def generate(candidate: str, budget: float = call_timeout) -> str:
         if process == "judge":
+            if candidate.startswith("openai-direct/"):
+                from app.core.selected_text import generate_selected_text
+
+                return await generate_selected_text(
+                    ResolvedPolicy((candidate,), "sequential", True, policy.revision), prompt, timeout=budget
+                )
             return await generate_daily_text(
                 prompt, candidate, timeout=budget, response_schema=response_schema, max_attempts=1
             )

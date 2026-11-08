@@ -94,12 +94,8 @@ PROCESSES: dict[str, ProcessSpec] = {
         ("audio_output",),
         note="Цепочка полных сообщений; не смешивает части аудио разных моделей.",
     ),
-    "image.prompt_extract": ProcessSpec(
-        "Изображение: подготовка промпта", "Изображения", "", "gemini-3.1-flash-lite", gemini_only=True
-    ),
-    "image.translate": ProcessSpec(
-        "Изображение: перевод промпта", "Изображения", "", "gemini-3.1-flash-lite", gemini_only=True
-    ),
+    "image.prompt_extract": ProcessSpec("Изображение: подготовка промпта", "Изображения", "", "gemini-3.1-flash-lite"),
+    "image.translate": ProcessSpec("Изображение: перевод промпта", "Изображения", "", "gemini-3.1-flash-lite"),
     "trivia.explain": ProcessSpec("Викторина: объяснение ответа", "Игры", "DEFAULT_MODEL", "gemini-3.6-flash"),
     "tarot.chat": ProcessSpec("Таро: диалог", "Астрология", "", "gemini-3.1-flash-lite"),
     "compatibility": ProcessSpec("Совместимость: интерпретация пары", "Астрология", "", "gemini-3.1-flash-lite"),
@@ -131,9 +127,7 @@ PROCESSES: dict[str, ProcessSpec] = {
     "memory.consolidate": ProcessSpec(
         "Консолидация памяти", "Память", "", "gemini-3.5-flash-lite", ("json",), True, connected=False
     ),
-    "memory.expand": ProcessSpec(
-        "Расширение запроса памяти", "Память", "", "gemini-3.5-flash-lite", gemini_only=True, connected=False
-    ),
+    "memory.expand": ProcessSpec("Расширение запроса памяти", "Память", "", "gemini-3.5-flash-lite", connected=False),
     "memory.taxonomy": ProcessSpec(
         "Классификация памяти", "Память", "TAXONOMY_MODEL", "gemini-3.5-flash-lite", gemini_only=True, connected=False
     ),
@@ -165,7 +159,7 @@ PROCESSES: dict[str, ProcessSpec] = {
         "Определение голосового намерения", "Аудио", "OPENCODE_INLINE_MODEL", "opencode-go/big-pickle"
     ),
     "media.intent": ProcessSpec("Намерение после распознавания медиа", "Аудио", "", "gemini-3.1-flash-lite"),
-    "memory.relevance": ProcessSpec("Релевантность памяти", "Память", "", "gemini-3.5-flash-lite", ("json",), True),
+    "memory.relevance": ProcessSpec("Релевантность памяти", "Память", "", "gemini-3.5-flash-lite", ("json",)),
     "daily.trivia": ProcessSpec("Викторина: вопросы", "Игры", "", "gemini-3.5-flash-lite", ("json",), True),
     "daily.trivia.deduplicate": ProcessSpec(
         "Викторина: дубликаты", "Игры", "", "gemini-3.5-flash-lite", ("json",), True
@@ -215,6 +209,12 @@ for _process, _title in {
         note="Auto сохраняет адаптивный маршрут классической игры; ежедневная игра использует DEFAULT_MODEL. Явный план использует Gemini SDK.",
     )
 
+PROCESSES["crocodile.judge"] = _replace(
+    PROCESSES["crocodile.judge"],
+    gemini_only=False,
+    note="Проверка ответа использует выбранный точный маршрут Gemini или прямого OpenAI API.",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedPolicy:
@@ -225,7 +225,7 @@ class ResolvedPolicy:
 
 
 def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
-    from app.config import is_freetheai_chat_model_id
+    from app.config import is_freetheai_chat_model_id, is_openai_chat_model_id
 
     spec = PROCESSES[process_id]
     if not spec.connected:
@@ -243,10 +243,20 @@ def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
             raise ValueError("Некорректный model ID")
         if model in clean:
             raise ValueError("Модели в цепочке не должны повторяться")
+        if model.startswith("openai-direct/") and not is_openai_chat_model_id(model):
+            raise ValueError("Эта модель не поддерживается прямым OpenAI API")
         if spec.gemini_only and not model.startswith("gemini-"):
             raise ValueError("Этот исполнитель поддерживает только Gemini")
-        if process_id == "media.intent" and not model.startswith(("gemini-", "opencode-go/")):
-            raise ValueError("Этот исполнитель поддерживает Gemini и Opencode Go")
+        if process_id in {
+            "crocodile.judge",
+            "image.prompt_extract",
+            "image.translate",
+            "memory.expand",
+            "memory.relevance",
+        } and not model.startswith(("gemini-", "openai-direct/")):
+            raise ValueError("Этот исполнитель поддерживает Gemini и прямой OpenAI API")
+        if process_id == "media.intent" and not model.startswith(("gemini-", "opencode-go/", "openai-direct/")):
+            raise ValueError("Этот исполнитель поддерживает Gemini, Opencode Go и OpenAI")
         lowered = model.lower()
         if "provider_order" in spec.capabilities:
             allowed = {"elevenlabs", "gemini"} if process_id == "tts.delivery" else {"pollinations", "gemini"}
@@ -302,11 +312,12 @@ def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
 
 async def resolve_process(process_id: str, baseline: tuple[str, ...]) -> ResolvedPolicy:
     from app.runtime_settings.lifecycle import operation_snapshot
+    from app.runtime_settings.live_routes import effective_policy_value
 
     if process_id not in PROCESSES:
         raise KeyError(process_id)
     snapshot = await operation_snapshot()
-    raw = snapshot.values.get(f"process:{process_id}")
+    raw = effective_policy_value(process_id, snapshot)
     return resolve_policy_value(process_id, raw, baseline, revision=snapshot.revision)
 
 
@@ -316,13 +327,14 @@ def resolve_policy_value(
     baseline: tuple[str, ...],
     *,
     revision: int = 0,
+    allow_user_model: bool = True,
 ) -> ResolvedPolicy:
     """Pure resolution shared by runtime execution and admin preview."""
     if raw is None:
         return ResolvedPolicy(baseline, revision=revision)
     value = validate_policy(process_id, raw)
     models = tuple(value["models"])
-    if value["inherit_user_model"] and baseline:
+    if value["inherit_user_model"] and baseline and allow_user_model:
         models = tuple(dict.fromkeys((baseline[0], *models)))
         validate_policy(process_id, {**value, "models": models})
     return ResolvedPolicy(models, value["strategy"], True, revision)
@@ -330,6 +342,7 @@ def resolve_policy_value(
 
 async def list_processes() -> list[dict[str, Any]]:
     from app.runtime_settings.lifecycle import operation_snapshot
+    from app.runtime_settings.live_routes import LIVE_PROCESS_IDS, active_provider, effective_policy_value
     from app.runtime_settings.process_evidence import process_evidence
     from app.runtime_settings.source_inventory import get_source_inventory
 
@@ -338,7 +351,7 @@ async def list_processes() -> list[dict[str, Any]]:
     rows = []
     for process_id, spec in PROCESSES.items():
         baseline = list(await baseline_models(process_id))
-        value = snapshot.values.get(f"process:{process_id}")
+        value = effective_policy_value(process_id, snapshot)
         rows.append(
             {
                 "id": process_id,
@@ -350,6 +363,7 @@ async def list_processes() -> list[dict[str, Any]]:
                 "execution": value.get("strategy", "legacy") if isinstance(value, Mapping) else "legacy",
                 "strategy": value.get("strategy", "legacy") if isinstance(value, Mapping) else "legacy",
                 "inherit_user_model": value.get("inherit_user_model", False) if isinstance(value, Mapping) else False,
+                "user_model_allowed": active_provider(snapshot) == "baseline" or process_id not in LIVE_PROCESS_IDS,
                 "capabilities": list(spec.capabilities),
                 "strategies": ["sequential", "hedged"] if spec.hedging else ["sequential"],
                 "editable": spec.connected,

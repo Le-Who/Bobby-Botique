@@ -232,6 +232,16 @@ async def _extract_draw_prompt_ai(text: str) -> str | None:
 
     try:
         async with asyncio.timeout(3.0):
+            from app.core.selected_text import generate_selected_text
+            from app.process_policies import resolve_process
+
+            policy = await resolve_process("image.prompt_extract", (_TRANSLATE_MODEL,))
+            if any(model.startswith("openai-direct/") for model in policy.models):
+                text_result = await generate_selected_text(
+                    policy, text, system_instruction=get_prompt_text("image.prompt_extract"), timeout=3.0
+                )
+                text_result = text_result.lstrip(":—–-").strip()
+                return None if text_result.upper() == "NONE" else text_result or None
             result = await run_gemini_override("image.prompt_extract", (_TRANSLATE_MODEL,), execute, use_baseline=True)
             return result or None
     except Exception as error:
@@ -370,6 +380,14 @@ async def _translate_to_english(prompt: str, user_id: int | None = None) -> str:
 
     try:
         async with asyncio.timeout(10.0):
+            from app.core.selected_text import generate_selected_text
+            from app.process_policies import resolve_process
+
+            policy = await resolve_process("image.translate", (_TRANSLATE_MODEL,))
+            if any(model.startswith("openai-direct/") for model in policy.models):
+                return await generate_selected_text(
+                    policy, prompt, system_instruction=get_prompt_text("image.translate"), timeout=10.0
+                )
             return (
                 await run_gemini_override("image.translate", (_TRANSLATE_MODEL,), execute, use_baseline=True) or prompt
             )

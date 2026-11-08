@@ -20,6 +20,10 @@ async def cache_identity(process: str, identity: str, *prompts: str) -> str:
     snapshot = await operation_snapshot()
     keys = {f"process:{process}", *(f"prompt:{name}" for name in prompts)}
     values = {key: _plain(snapshot.values[key]) for key in keys if key in snapshot.values}
+    from app.runtime_settings.live_routes import LIVE_PROCESS_IDS, active_provider, effective_policy_value
+
+    if process in LIVE_PROCESS_IDS and active_provider(snapshot) != "baseline":
+        values[f"process:{process}"] = _plain(effective_policy_value(process, snapshot))
     if not values:
         return identity
     payload = json.dumps(values, sort_keys=True, ensure_ascii=False, separators=(",", ":"))

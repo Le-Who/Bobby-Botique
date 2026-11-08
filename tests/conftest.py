@@ -23,6 +23,8 @@ _SAFE_TEST_ENV = {
     "GEMINI_TTS_RPM_PER_KEY": "3",
     "TAVILY_API_KEYS": "dummy-tavily-key-for-tests",
     "OPENROUTER_API_KEYS": "dummy-openrouter-key-for-tests",
+    "OPENAI_API_KEYS": "",
+    "OPENAI_API_KEY": "",
     "OPENCODE_API_KEYS": "dummy-opencode-key-for-tests",
     "ELEVENLABS_API_KEYS": "",
     "FREETHEAI_API_KEYS": "",

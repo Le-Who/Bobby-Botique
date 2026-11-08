@@ -30,7 +30,8 @@ async def get_start_menu_content(chat_state, user_id=None):
 
     # Compact status line
     prompt_label = f"🎭 {chat_state.system_prompt[:40]}…" if chat_state.system_prompt else ""
-    status_parts = [f"`{chat_state.model}`", f"Поиск: {search_icon}"]
+    effective_model = get_admin_selected_chat_model() or chat_state.model
+    status_parts = [f"`{effective_model}`", f"Поиск: {search_icon}"]
     if prompt_label:
         status_parts.append(prompt_label)
     status_line = " · ".join(status_parts)
@@ -112,7 +113,7 @@ def _generate_model_buttons(models, current_model, start_index, provider="gemini
         models (list): Список моделей.
         current_model (str): Текущая выбранная model.
         start_index (int): Начальный индекс for callback_data.
-        provider (str): Провайдер ("gemini", "openrouter", "opencode", "freetheai").
+        provider (str): Провайдер ("gemini", "openai", "openrouter", "opencode", "freetheai").
 
     Returns:
         tuple: (list строк кнопок, следующий индекс)
@@ -126,7 +127,10 @@ def _generate_model_buttons(models, current_model, start_index, provider="gemini
         selected_mark = "✅ " if is_selected else ""
 
         # Определяем отображение по провайдеру
-        if provider == "openrouter":
+        if provider == "openai":
+            display_name = m.removeprefix("openai-direct/")
+            icon = "🟢"
+        elif provider == "openrouter":
             display_name = m.split("/")[-1] if "/" in m else m
             icon = "🌐"
         elif provider == "opencode":
@@ -150,9 +154,27 @@ def _generate_model_buttons(models, current_model, start_index, provider="gemini
     return rows, current_index
 
 
+def get_admin_selected_chat_model() -> str | None:
+    """Read the effective model of an admin-pinned profile without changing user state."""
+    from collections.abc import Mapping
+
+    from app.runtime_settings.lifecycle import current_operation_snapshot
+    from app.runtime_settings.live_routes import active_provider, effective_policy_value
+
+    snapshot = current_operation_snapshot()
+    if snapshot is None or active_provider(snapshot) not in {"gemini", "openai"}:
+        return None
+    policy = effective_policy_value("chat", snapshot)
+    models = policy.get("models") if isinstance(policy, Mapping) else None
+    return models[0] if isinstance(models, (list, tuple)) and models and isinstance(models[0], str) else None
+
+
 def get_visible_model_list(settings_obj=None, openrouter_keys=None) -> list[str]:
     """Return models in the exact order used by the selector keyboard."""
     active_settings = settings if settings_obj is None else settings_obj
+    admin_model = get_admin_selected_chat_model()
+    if admin_model:
+        return [admin_model]
 
     def configured(name: str) -> list[str]:
         value = getattr(active_settings, name, None)
@@ -164,11 +186,13 @@ def get_visible_model_list(settings_obj=None, openrouter_keys=None) -> list[str]
     if active_openrouter_keys:
         models.extend(configured("OPENROUTER_AVAILABLE_MODELS"))
     models.extend(configured("FREETHEAI_AVAILABLE_MODELS"))
+    models.extend(configured("OPENAI_AVAILABLE_MODELS"))
     return models
 
 
 def get_model_menu_content(chat_state, context):
-    current_model = chat_state.model
+    admin_model = get_admin_selected_chat_model()
+    current_model = admin_model or chat_state.model
 
     # Определяем, какой провайдер используется for текущей models
     openrouter_available = bool(get_openrouter_keys())
@@ -191,6 +215,19 @@ def get_model_menu_content(chat_state, context):
         if context.user_data is None:
             context.user_data = {}
         context.user_data["model_list"] = all_models
+
+    if admin_model:
+        provider_name = "OpenAI" if admin_model.startswith("openai-direct/") else "Google Gemini"
+        text = (
+            f"🧠 **Модель ответов**\n\nТекущая: `{admin_model}`\nПровайдер: {provider_name}\n\n"
+            "Модель выбрана администратором для всех пользователей."
+        )
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        return (
+            formatted_text,
+            parse_mode,
+            InlineKeyboardMarkup([[InlineKeyboardButton(t("menu.back"), callback_data="start_menu")]]),
+        )
 
     keyboard = []
     model_index = 0
@@ -238,10 +275,19 @@ def get_model_menu_content(chat_state, context):
         )
         keyboard.extend(buttons)
 
+    openai_models = getattr(settings, "OPENAI_AVAILABLE_MODELS", [])
+    if isinstance(openai_models, list) and openai_models:
+        if keyboard:
+            keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
+        buttons, model_index = _generate_model_buttons(openai_models, current_model, model_index, provider="openai")
+        keyboard.extend(buttons)
+
     # Build text with model hint for decision support
     from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
-    if current_model and is_opencode_model(current_model):
+    if current_model and current_model.startswith("openai-direct/"):
+        provider_name = "OpenAI"
+    elif current_model and is_opencode_model(current_model):
         provider_name = "Opencode Go"
     elif current_model and is_freetheai_model(current_model):
         provider_name = "FreeTheAI"

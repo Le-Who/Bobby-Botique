@@ -65,6 +65,7 @@ _LLM_TIMEOUT_S = 7.0
 # Fallback: single key, last resort — give it twice as long; player waits, not retypes.
 _LLM_FALLBACK_TIMEOUT_S = 14.0
 _JUDGE_TOTAL_TIMEOUT_S = 30.0
+_OPENAI_JUDGE_TIMEOUT_S = 12.0
 _JUDGE_MAX_ATTEMPTS = 2
 _JUDGE_RETRY_DELAY_S = 0.5
 _HINTS_TIMEOUT_S = 18.0
@@ -1085,16 +1086,19 @@ async def _generate_judgement(
             S=sense_context or category or "не указан",
         )
 
+    selected_openai = selected_model.startswith("openai-direct/")
+    total_timeout = _OPENAI_JUDGE_TIMEOUT_S if selected_openai else _JUDGE_TOTAL_TIMEOUT_S
+    max_attempts = 1 if selected_openai else _JUDGE_MAX_ATTEMPTS
     try:
-        async with asyncio.timeout(_JUDGE_TOTAL_TIMEOUT_S):
-            for attempt in range(1, _JUDGE_MAX_ATTEMPTS + 1):
+        async with asyncio.timeout(total_timeout):
+            for attempt in range(1, max_attempts + 1):
                 try:
                     if selected_model:
                         response = await generate_daily_text_for(
                             "judge",
                             prompt,
                             selected_model,
-                            timeout=_JUDGE_TOTAL_TIMEOUT_S,
+                            timeout=total_timeout,
                             response_schema=GuessJudgement,
                         )
                         result = GuessJudgement.model_validate_json(response)
@@ -1125,7 +1129,7 @@ async def _generate_judgement(
                     )
                     if not retryable:
                         return None
-                if attempt < _JUDGE_MAX_ATTEMPTS:
+                if attempt < max_attempts:
                     await asyncio.sleep(_JUDGE_RETRY_DELAY_S)
     except TimeoutError:
         logger.warning("Crocodile judge total deadline exceeded model=%s", selected_model or "auto")

@@ -123,6 +123,64 @@ def mock_boundaries():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reasoning", [None, "auto", "low", "high"])
+async def test_openai_profile_replaces_saved_gemini_model_and_preserves_explicit_reasoning(
+    mock_boundaries, monkeypatch, reasoning
+):
+    from app.process_policies import ResolvedPolicy
+
+    model = "openai-direct/test-chat"
+    monkeypatch.setattr(
+        "app.process_policies.resolve_process", AsyncMock(return_value=ResolvedPolicy((model,), "sequential", True, 42))
+    )
+    exact = AsyncMock(return_value=({"api_key": "test-openai", "key_hash": "hash"}, model, "direct"))
+    monkeypatch.setattr("app.agent_use_cases.AgentRequestUseCase.resolve_exact_ai_request", exact)
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    chat_state = make_chat_state(model="gemini-previous-user-choice", ltm_enabled=False, thinking_level=reasoning)
+
+    await _handle_regular_chat(placeholder, 123, "Explain this complex architecture", chat_state)
+
+    request = mock_boundaries["delivery"].stream.await_args.args[1]
+    assert request.models == (model,)
+    assert request.allow_model_fallback is False
+    assert (request.thinking_level.value if request.thinking_level else None) == (
+        reasoning if reasoning in {"low", "high"} else None
+    )
+    assert chat_state.model == "gemini-previous-user-choice"
+    exact.assert_awaited_once_with(model)
+    mock_boundaries["resolve"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_memory_recall_uses_separate_gemini_embedding_key(mock_boundaries, monkeypatch):
+    from app.process_policies import ResolvedPolicy
+    from app.repos.memory_config import EMBEDDING_MODEL
+
+    model = "openai-direct/test-chat"
+    monkeypatch.setattr(
+        "app.process_policies.resolve_process", AsyncMock(return_value=ResolvedPolicy((model,), "sequential", True, 42))
+    )
+    monkeypatch.setattr(
+        "app.agent_use_cases.AgentRequestUseCase.resolve_exact_ai_request",
+        AsyncMock(return_value=({"api_key": "test-openai", "key_hash": "hash"}, model, "direct")),
+    )
+    embedding = AsyncMock(return_value={"api_key": "test-gemini-embedding", "key_hash": "embedding"})
+    monkeypatch.setattr("app.repos.keys.get_available_gemini_key", embedding)
+    inject = AsyncMock(side_effect=lambda **kwargs: (kwargs["system_instruction"], {}))
+    monkeypatch.setattr("app.context.compression.inject_memory_layers", inject)
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    await _handle_regular_chat(
+        placeholder, 123, "A question about my project", make_chat_state(ltm_enabled=True), capture_text_memory=False
+    )
+    embedding.assert_awaited_once_with(model_name=EMBEDDING_MODEL)
+    assert inject.await_args.kwargs["api_key"] == "test-gemini-embedding"
+
+
+@pytest.mark.asyncio
 async def test_successful_chat_response_appended_to_history(mock_boundaries):
     """
     Risk Covered: System fails to persist AI reply or token counts.

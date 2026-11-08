@@ -385,8 +385,11 @@
     const checkbox = element("input");
     checkbox.type = "checkbox";
     checkbox.checked = !!current.inherit_user_model;
+    checkbox.disabled = item.user_model_allowed === false;
+    if (checkbox.disabled) checkbox.title = "Модель ответа задаёт активный профиль администратора.";
     if ((item.capabilities || []).includes("provider_order")) inherit.hidden = true;
     inherit.append(checkbox, element("span", "", "Учитывать модель пользователя"));
+    if (checkbox.disabled) inherit.append(element("span", "muted", "Активный профиль задаёт модель ответа; выбор пользователя не применяется."));
     const options = element("div", "options");
     options.append(strategyField, inherit);
     const status = feedback(node);
@@ -888,6 +891,56 @@
     });
   }
 
+  function renderLiveRoutes(data, processes) {
+    const holder = byId("live-route-profile");
+    if (!holder) return;
+    holder.replaceChildren();
+    const profile = data.live_routes;
+    if (!profile) { holder.hidden = true; return; }
+    holder.hidden = false;
+    const labels = {baseline:"Исходные маршруты",gemini:"Gemini",openai:"OpenAI напрямую"};
+    holder.append(element("h3", "", "Провайдер быстрых ответов"),
+      element("p", "", `Выбранный профиль: ${labels[profile.provider] || profile.provider}. Отдельные маршруты можно изменить ниже.`),
+      element("p", "muted", "Диалог, inline, поиск, документы, изображения, роли, игры и синхронная подготовка ответа переключаются вместе. Ежедневная подготовка, исследование, фоновая память, генерация медиа, распознавание и озвучивание сохраняют свои маршруты."));
+    const readiness = element("p", "muted");
+    readiness.textContent = ["openai", "gemini"].map(provider => `${labels[provider]}: ${profile.readiness?.[provider]?.configured ? "ключи настроены" : "ключи не настроены"}`).join(" · ");
+    holder.append(readiness, element("p", "muted", profile.note));
+    const details = element("details", "baseline");
+    details.append(element("summary", "", `Текущие модели · ${profile.process_ids.length} процессов`));
+    for (const item of processes.filter(item => profile.process_ids.includes(item.id))) {
+      details.append(element("p", "technical", `${item.title || item.id}: ${(item.models || []).join(" → ") || "—"}`));
+    }
+    holder.append(details);
+    const defaults = element("details", "baseline");
+    defaults.append(element("summary", "", "Модели нового профиля OpenAI"));
+    for (const model of [...new Set(Object.values(profile.openai_defaults || {}))]) defaults.append(element("p", "technical", model));
+    defaults.append(element("p", "muted", "Повторное включение восстанавливает сохранённые правки этого профиля. Переключение создаёт одну общую ревизию; исходные маршруты сохраняются для возврата."));
+    holder.append(defaults);
+    const actions = element("div", "actions");
+    for (const provider of ["openai", "gemini", "baseline"]) {
+      if (provider === "baseline" && !profile.can_restore_baseline) continue;
+      const button = mutationButton(provider === "baseline" ? "Вернуть исходные маршруты" : `Включить ${labels[provider]}`, "secondary", async () => {
+        if (busy || needsRefresh) return;
+        if (!window.confirm(`Включить профиль «${labels[provider]}» для ${profile.process_ids.length} процессов со следующего запроса?\nТекущие маршруты сохранятся для возврата. ${drafts.count() ? "Несохранённые черновики останутся на странице и потребуют сравнения." : ""}`)) return;
+        setBusy(true);
+        try {
+          const result = await api(`${endpoint}/live-provider`, {provider, expected_revision:data.revision});
+          minimumRevision = Math.max(minimumRevision, result.revision);
+          needsRefresh = true;
+          const refreshed = await load();
+          notice(refreshed.ok ? `Профиль «${labels[provider]}» сохранён · ревизия ${result.revision}.` : `Профиль сохранён · ревизия ${result.revision}. Обновите данные для просмотра маршрутов.`, !refreshed.ok);
+        } catch (error) {
+          needsRefresh = true;
+          if (error.outcomeUnknown) await load();
+          notice(error.outcomeUnknown ? "Результат переключения пока неизвестен. Сравните выбранный профиль и маршруты после обновления; автоматического повтора нет." : errorText(error), true);
+        } finally { setBusy(false); }
+      });
+      if (provider === profile.provider) { button.disabled = true; button.removeAttribute("data-mutation"); }
+      actions.append(button);
+    }
+    holder.append(actions);
+  }
+
   function render() {
     const focused = document.activeElement;
     const focusedCard = focused?.closest("article[data-id]");
@@ -896,6 +949,7 @@
     const data = drafts.getSnapshot();
     byId("revision").textContent = `Ревизия ${data.revision}`;
     const processes = Array.isArray(data.processes) ? data.processes : [];
+    renderLiveRoutes(data, processes);
     const prompts = Array.isArray(data.prompts) ? data.prompts : [];
     const catalogs = Array.isArray(data.catalogs) ? data.catalogs : [];
     const limits = Array.isArray(data.limits) ? data.limits : [];

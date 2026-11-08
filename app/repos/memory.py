@@ -220,6 +220,16 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
             raise
 
     try:
+        from app.core.selected_text import generate_selected_text
+        from app.process_policies import resolve_process
+
+        policy = await resolve_process("memory.expand", (QUERY_EXPANSION_MODEL,))
+        if any(model.startswith("openai-direct/") for model in policy.models):
+            expanded = await generate_selected_text(
+                policy, prompt, timeout=max(0.0, deadline - asyncio.get_running_loop().time())
+            )
+            expanded = expanded.strip('"')
+            return expanded if len(expanded) > 3 else query
         override = await asyncio.wait_for(
             run_gemini_override("memory.expand", (QUERY_EXPANSION_MODEL,), execute_override, initial_api_key=api_key),
             timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
@@ -1472,9 +1482,21 @@ async def _search_memories_with_llm_judge_impl(
                 raise ValueError("Memory relevance response must be an array")
             return parsed
 
-        judgements = await run_gemini_override(
-            "memory.relevance", (QUERY_EXPANSION_MODEL,), generate, initial_api_key=api_key
-        )
+        from app.core.selected_text import generate_selected_text
+        from app.process_policies import resolve_process
+
+        policy = await resolve_process("memory.relevance", (QUERY_EXPANSION_MODEL,))
+        if any(model.startswith("openai-direct/") for model in policy.models):
+            text = await generate_selected_text(
+                policy, prompt, timeout=8.0, user_id=user_id, privacy_epoch=expected_epoch
+            )
+            judgements = json.loads(text)
+            if not isinstance(judgements, list):
+                raise ValueError("Memory relevance response must be an array")
+        else:
+            judgements = await run_gemini_override(
+                "memory.relevance", (QUERY_EXPANSION_MODEL,), generate, initial_api_key=api_key
+            )
         if judgements is None:
             from app.repos.keys import reserve_available_gemini_key, reserve_gemini_key_usage
 

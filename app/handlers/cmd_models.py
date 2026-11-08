@@ -2,7 +2,7 @@
 """Admin /models wizard — zero-downtime model list management.
 
 Flow:
-  /models → provider selector  (Gemini | Opencode | OpenRouter | FreeTheAI)
+  /models → provider selector  (Gemini | Opencode | OpenRouter | FreeTheAI | OpenAI)
       → provider view: numbered model list + action buttons
           [➕ Добавить] [🔃 Сбросить к .env] [◀️ Назад]
           + individual [❌] buttons per model for removal
@@ -46,6 +46,7 @@ _PROVIDERS = {
     "opencode": "⚡ Opencode Go",
     "openrouter": "🌐 OpenRouter",
     "freetheai": "🚀 FreeTheAI",
+    "openai": "🟢 OpenAI",
 }
 
 

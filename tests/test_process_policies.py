@@ -4,6 +4,28 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+
+@pytest.mark.parametrize(
+    "process_id", ["crocodile.judge", "image.prompt_extract", "image.translate", "memory.expand", "memory.relevance"]
+)
+@pytest.mark.parametrize("model", ["openai/gpt-4", "opencode-go/minimax-m2.5"])
+def test_sdk_backed_live_process_rejects_provider_without_executor(process_id, model):
+    from app.process_policies import validate_policy
+
+    with pytest.raises(ValueError):
+        validate_policy(process_id, {"models": [model], "strategy": "sequential", "inherit_user_model": False})
+
+
+@pytest.mark.parametrize(
+    "process_id", ["crocodile.judge", "image.prompt_extract", "image.translate", "memory.expand", "memory.relevance"]
+)
+@pytest.mark.parametrize("model", ["gemini-3.6-flash", "openai-direct/gpt-6.1-terra"])
+def test_sdk_backed_live_process_accepts_both_implemented_providers(process_id, model):
+    from app.process_policies import validate_policy
+
+    assert validate_policy(process_id, {"models": [model]})["models"] == [model]
+
+
 from app.providers.router import ProviderRouter
 from app.providers.stream_types import GenerationRequest, PromptRole, PromptTurn, TextPart
 

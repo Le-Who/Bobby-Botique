@@ -24,6 +24,7 @@ PROVIDERS = {
     "opencode": "OPENCODE_AVAILABLE_MODELS",
     "openrouter": "OPENROUTER_AVAILABLE_MODELS",
     "freetheai": "FREETHEAI_AVAILABLE_MODELS",
+    "openai": "OPENAI_AVAILABLE_MODELS",
 }
 
 
@@ -42,7 +43,7 @@ def validate_model_id(model: Any) -> str:
 
 
 def validate_catalog(provider: str, models: Any) -> list[str]:
-    from app.config import is_freetheai_chat_model_id, is_gemini_chat_model_id
+    from app.config import is_freetheai_chat_model_id, is_gemini_chat_model_id, is_openai_chat_model_id
 
     if provider not in PROVIDERS:
         raise ValueError(f"Unknown model provider: {provider}")
@@ -58,6 +59,10 @@ def validate_catalog(provider: str, models: Any) -> list[str]:
             raise ValueError("Ожидается FreeTheAI chat model ID")
         if provider == "opencode" and not model.startswith("opencode-go/"):
             raise ValueError("Ожидается opencode-go/model")
+        if provider == "openai" and not is_openai_chat_model_id(model):
+            raise ValueError("Ожидается openai-direct/gpt-model для прямого OpenAI API")
+        if provider == "openrouter" and model.startswith("openai-direct/"):
+            raise ValueError("openai-direct/ использует прямой OpenAI API; выберите каталог OpenAI")
     return clean
 
 
@@ -157,6 +162,7 @@ async def list_limits(
     from app.process_policies import PROCESSES, baseline_models, resolve_policy_value
     from app.repos.keys import get_model_daily_limits
     from app.runtime_settings.lifecycle import runtime_settings_scope
+    from app.runtime_settings.live_routes import effective_policy_value
 
     snapshot = snapshot if snapshot is not None else await get_snapshot()
     models = set(settings.DAILY_LIMITS) | set(snapshot.values.get("catalog:gemini", settings.AVAILABLE_MODELS))
@@ -179,7 +185,7 @@ async def list_limits(
             for process_id, spec in PROCESSES.items():
                 if set(spec.capabilities) & excluded_capabilities:
                     continue
-                raw = snapshot.values.get(f"process:{process_id}")
+                raw = effective_policy_value(process_id, snapshot)
                 baseline = await baseline_models(process_id) if raw is None or raw.get("inherit_user_model") else ()
                 models.update(resolve_policy_value(process_id, raw, baseline, revision=snapshot.revision).models)
     supported = []

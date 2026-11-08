@@ -62,6 +62,7 @@ _PROVIDERS: dict[str, _ProviderSpec] = {
     "opencode": _ProviderSpec("OPENCODE_AVAILABLE_MODELS", "OPENCODE_AVAILABLE_MODELS"),
     "openrouter": _ProviderSpec("OPENROUTER_AVAILABLE_MODELS", "OPENROUTER_AVAILABLE_MODELS"),
     "freetheai": _ProviderSpec("FREETHEAI_AVAILABLE_MODELS", "FREETHEAI_AVAILABLE_MODELS"),
+    "openai": _ProviderSpec("OPENAI_AVAILABLE_MODELS", "OPENAI_AVAILABLE_MODELS"),
 }
 _catalog_sources: dict[str, ModelCatalogSource] = dict.fromkeys(_PROVIDERS, ModelCatalogSource.ENV)
 
@@ -98,6 +99,10 @@ def _normalize_models(provider: str, models: list[str]) -> list[str]:
         from app.config import is_freetheai_chat_model_id
 
         normalized = [model for model in normalized if is_freetheai_chat_model_id(model)]
+    elif provider == "openai":
+        from app.config import is_openai_chat_model_id
+
+        normalized = [model for model in normalized if is_openai_chat_model_id(model)]
     return normalized
 
 
@@ -127,6 +132,11 @@ def _provider_defaults(provider: str, settings_obj: Any) -> list[str]:
         return DEFAULT_GEMINI_MODELS.copy()
     if provider == "openrouter":
         return [getattr(settings_obj, "OPENROUTER_DEFAULT_MODEL", "")]
+    if provider == "openai":
+        return [
+            getattr(settings_obj, "OPENAI_DEFAULT_MODEL", "openai-direct/gpt-6.1-terra"),
+            getattr(settings_obj, "OPENAI_INLINE_MODEL", "openai-direct/gpt-6-luna"),
+        ]
     if provider == "opencode":
         return [
             getattr(settings_obj, "OPENCODE_DEFAULT_MODEL", ""),

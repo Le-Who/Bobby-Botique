@@ -106,7 +106,7 @@ and cancellation propagate normally.
 
 ## Provider latency
 
-Interactive requests have no application deadline for first text or for silence
+Legacy interactive requests have no application deadline for first text or for silence
 between text chunks: `GenerationRequest.first_text_timeout_seconds` and
 `stream_idle_timeout_seconds` are `None`. They remain owned until a provider outcome
 or request-owner cancellation (including user stop, supersession and shutdown).
@@ -115,13 +115,23 @@ key/model recovery path. Bounded workflows retain interface policy caps:
 
 | Request context | First visible text cap | Inline completion cap |
 | --- | --- | --- |
-| Interactive chat, any thinking level/model | No application deadline | — |
+| Legacy interactive chat, any thinking level/model | No application deadline | — |
+| Direct OpenAI interactive chat | 20 s shared across key attempts | — |
 | Deferred retry, Flash low/off | 12 s | — |
 | Deferred retry, Flash auto/medium | 20 s | — |
 | Deferred retry, high or other model families | 30 s | — |
 | Quick Search | 20 s | — |
 | Inline text, any reasoning level | 6 s | 12 s |
 | Inline with Search grounding | 10 s | 20 s |
+
+Direct OpenAI uses `openai-direct/<model>` through the typed Responses adapter;
+historical OpenRouter `openai/<model>` retains its original meaning. OpenAI
+credentials rotate sequentially without paid key races. The reversible live
+provider profile pins covered process routes for all users, preserving saved
+user models and the original process policies for restoration. Background daily
+preparation and specialized Gemini paths retain their own ownership. See the
+[runtime controls guide](runtime-controls.md#провайдер-ответов-в-реальном-времени)
+for the exact switch scope and configuration.
 
 Google recommends low thinking for latency-sensitive chat and explains that
 [3.8 Flash medium/high performs more reasoning](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.8).

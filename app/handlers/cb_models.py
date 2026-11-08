@@ -26,11 +26,13 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     # Игнорируем клики на разделитель
     if query.data == "model_none":
         return
-
     user_id = query.from_user.id
 
     if _is_user_busy(user_id):
         await query.answer(_BUSY_TOAST, show_alert=True)
+        return
+    if menus.get_admin_selected_chat_model():
+        await query.answer("Модель выбрана администратором для всех пользователей.", show_alert=True)
         return
 
     # Get model from индекса (new формат с хэшем) or from полного имени (old формат for совместимости)
@@ -129,11 +131,13 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
     """Handle model switch from smart suggestion hint."""
     query = update.callback_query
     await query.answer()
-
     user_id = query.from_user.id
 
     if _is_user_busy(user_id):
         await query.answer(_BUSY_TOAST, show_alert=True)
+        return
+    if menus.get_admin_selected_chat_model():
+        await query.answer("Модель выбрана администратором для всех пользователей.", show_alert=True)
         return
 
     model_name = (query.data or "").split(":", 1)[1] if ":" in (query.data or "") else None

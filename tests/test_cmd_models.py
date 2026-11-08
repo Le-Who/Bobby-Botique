@@ -22,6 +22,7 @@ def test_provider_selector_includes_all_chat_providers():
         "models:show:opencode",
         "models:show:openrouter",
         "models:show:freetheai",
+        "models:show:openai",
     }
 
 

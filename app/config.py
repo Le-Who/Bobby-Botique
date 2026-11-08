@@ -146,6 +146,27 @@ _EMPTY_MODEL_LIST_SENTINEL = "none"
 _DEPRECATED_GEMINI_ROLE_MODELS = frozenset({"gemini-2.5-pro", "gemini-3-flash-preview"})
 _FREETHEAI_NON_CHAT_PREFIXES = ("vhr/", "img/", "or/google/lyria-")
 
+OPENAI_DEFAULT_MODEL = "openai-direct/gpt-6.1-terra"
+OPENAI_FAST_MODEL = "openai-direct/gpt-6-luna"
+DEFAULT_OPENAI_MODELS = [OPENAI_FAST_MODEL, OPENAI_DEFAULT_MODEL]
+SUPPORTED_OPENAI_CHAT_MODELS = frozenset({"gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-4.1-mini", "gpt-4o-mini"})
+
+
+def is_openai_chat_model_id(model: str | None) -> bool:
+    """Recognize implemented direct models without claiming account availability."""
+    return (
+        isinstance(model, str)
+        and model.startswith("openai-direct/")
+        and model.removeprefix("openai-direct/") in SUPPORTED_OPENAI_CHAT_MODELS
+    )
+
+
+def normalize_openai_chat_model(model: str, *, fallback: str = OPENAI_DEFAULT_MODEL) -> str:
+    clean = model.strip()
+    if not clean.startswith("openai-direct/"):
+        clean = f"openai-direct/{clean}"
+    return clean if is_openai_chat_model_id(clean) else fallback
+
 
 def _dedupe_models(models: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -312,6 +333,7 @@ class Settings(BaseModel):
     GEMINI_API_KEYS: list[str]
     TAVILY_API_KEYS: list[str]
     OPENROUTER_API_KEYS: list[str] = []  # Optional, by default empty list
+    OPENAI_API_KEYS: list[str] = []  # Direct OpenAI API; separate from OpenRouter
     ELEVENLABS_API_KEYS: list[str] = []  # Optional, free-tier ElevenLabs keys
     ELEVENLABS_VOICE_ID: str = "XB0fDUnXU5powFXDhCwa"  # Charlotte — conversational
     ELEVENLABS_MODEL: str = "eleven_multilingual_v2"
@@ -399,6 +421,12 @@ class Settings(BaseModel):
     URL_SELECTION_MODEL: str = GEMINI_ECONOMY_MODEL
     TAXONOMY_MODEL: str = GEMINI_ECONOMY_MODEL  # MemPalace: wing/room classification + contradiction judge
 
+    # --- DIRECT OPENAI MODELS ---
+    OPENAI_AVAILABLE_MODELS: list[str] = DEFAULT_OPENAI_MODELS.copy()
+    OPENAI_DEFAULT_MODEL: str = OPENAI_DEFAULT_MODEL
+    OPENAI_QNA_MODEL: str = OPENAI_DEFAULT_MODEL
+    OPENAI_INLINE_MODEL: str = OPENAI_FAST_MODEL
+
     # --- OPENROUTER MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
     OPENROUTER_AVAILABLE_MODELS: list[str] = []
@@ -434,7 +462,7 @@ class Settings(BaseModel):
     # --- API PROVIDER SELECTION ---
     # "opencode" routes primary chat/search/inline through Opencode Go with Gemini fallback.
     # "gemini"   bypasses Opencode Go entirely (admin toggle via /set_provider).
-    PRIMARY_PROVIDER: str = "opencode"  # "opencode" | "gemini"
+    PRIMARY_PROVIDER: str = "opencode"  # opencode | gemini | openrouter | freetheai
     USE_OPENROUTER: bool = False  # По умолчанию use Gemini, можно переключить на OpenRouter
 
     # --- LIMITS ---
@@ -504,6 +532,19 @@ def load_settings() -> Settings:
         research_model = _load_gemini_role_model("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL)
         url_selection_model = _load_gemini_role_model("URL_SELECTION_MODEL", GEMINI_ECONOMY_MODEL)
         taxonomy_model = _load_gemini_role_model("TAXONOMY_MODEL", GEMINI_ECONOMY_MODEL)
+
+        openai_default_model = normalize_openai_chat_model(
+            _load_single_model("OPENAI_DEFAULT_MODEL", OPENAI_DEFAULT_MODEL)
+        )
+        openai_qna_model = normalize_openai_chat_model(_load_single_model("OPENAI_QNA_MODEL", OPENAI_DEFAULT_MODEL))
+        openai_inline_model = normalize_openai_chat_model(
+            _load_single_model("OPENAI_INLINE_MODEL", OPENAI_FAST_MODEL), fallback=OPENAI_FAST_MODEL
+        )
+        configured_openai_models = _load_available_models(
+            "OPENAI_AVAILABLE_MODELS",
+            _dedupe_models([openai_inline_model, openai_default_model, openai_qna_model, *DEFAULT_OPENAI_MODELS]),
+            validator=is_openai_chat_model_id,
+        )
 
         openrouter_default_model = _load_single_model("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free")
         openrouter_qna_model = _load_single_model("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free")
@@ -576,6 +617,8 @@ def load_settings() -> Settings:
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
+            "OPENAI_API_KEYS": _load_and_clean_keys("OPENAI_API_KEYS", required=False)
+            or _load_and_clean_keys("OPENAI_API_KEY", required=False),
             "ELEVENLABS_API_KEYS": _load_and_clean_keys("ELEVENLABS_API_KEYS", required=False),
             "ELEVENLABS_VOICE_ID": os.getenv("ELEVENLABS_VOICE_ID", "XB0fDUnXU5powFXDhCwa"),
             "ELEVENLABS_MODEL": os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
@@ -598,6 +641,10 @@ def load_settings() -> Settings:
             # Load models from env or use значения by default
             "AVAILABLE_MODELS": configured_gemini_models,
             "OPENROUTER_AVAILABLE_MODELS": configured_openrouter_models,
+            "OPENAI_AVAILABLE_MODELS": configured_openai_models,
+            "OPENAI_DEFAULT_MODEL": openai_default_model,
+            "OPENAI_QNA_MODEL": openai_qna_model,
+            "OPENAI_INLINE_MODEL": openai_inline_model,
             "DEFAULT_MODEL": default_model,
             "QNA_MODEL": qna_model,
             "INLINE_MODEL": inline_model,
@@ -880,6 +927,8 @@ def get_all_available_models() -> list[str]:
         models.extend(s.OPENCODE_AVAILABLE_MODELS)
     if s.FREETHEAI_AVAILABLE_MODELS:
         models.extend(s.FREETHEAI_AVAILABLE_MODELS)
+    if s.OPENAI_AVAILABLE_MODELS:
+        models.extend(s.OPENAI_AVAILABLE_MODELS)
     return models
 
 
@@ -906,7 +955,7 @@ def get_primary_provider() -> str:
     3. ``settings.PRIMARY_PROVIDER`` (from env, default ``"opencode"``).
 
     Returns:
-        ``"opencode"`` | ``"gemini"`` | ``"openrouter"``
+        ``"opencode"`` | ``"gemini"`` | ``"openrouter"`` | ``"freetheai"``
     """
     global _primary_provider_cache
     if _primary_provider_cache is not None:

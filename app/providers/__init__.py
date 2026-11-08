@@ -14,12 +14,15 @@ from app.providers.base import (
     _build_thinking_config,
     get_provider_for_model,
     is_freetheai_model,
+    is_openai_model,
     is_opencode_model,
     is_openrouter_model,
 )
 from app.providers.elevenlabs_tts import close_elevenlabs_client
 from app.providers.freetheai import FreeTheAIProvider
 from app.providers.gemini import GeminiProvider, close_cached_genai_clients
+from app.providers.openai import OpenAIProvider
+from app.providers.openai import close_http_clients as _close_openai_http_clients
 from app.providers.opencode import OpencodeGoProvider
 from app.providers.openrouter import OpenRouterProvider
 from app.providers.openrouter import close_http_clients as _close_openrouter_http_clients
@@ -30,6 +33,7 @@ async def close_http_clients() -> None:
     """Close provider pools independently once their request owners are drained."""
     results = await asyncio.gather(
         _close_openrouter_http_clients(),
+        _close_openai_http_clients(),
         close_cached_genai_clients(),
         close_elevenlabs_client(),
         return_exceptions=True,
@@ -46,6 +50,7 @@ __all__ = [
     "GeminiProvider",
     "OpencodeGoProvider",
     "OpenRouterProvider",
+    "OpenAIProvider",
     "ProviderRouter",
     "_build_thinking_config",
     "close_http_clients",
@@ -55,4 +60,5 @@ __all__ = [
     "is_freetheai_model",
     "is_opencode_model",
     "is_openrouter_model",
+    "is_openai_model",
 ]

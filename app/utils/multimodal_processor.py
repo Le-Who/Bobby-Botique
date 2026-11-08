@@ -354,10 +354,18 @@ async def _classify_intent_with_fallback(
 
     policy = await resolve_process("media.intent", tuple(_INTENT_MODEL_CHAIN))
     try:
+        if any(model.startswith("openai-direct/") for model in policy.models):
+            from app.core.selected_text import generate_selected_text
+
+            text = "".join(part.text for part in prompt_parts if part.text)
+            return await generate_selected_text(policy, text, timeout=8.0)
         async with asyncio.timeout(_MEDIA_PLAN_TIMEOUT if policy.explicit else None):
             return await _classify_intent_plan(prompt_parts, api_key, policy)
     except TimeoutError:
         logging.warning("Configured media intent chain exhausted its deadline")
+        return None
+    except Exception as error:
+        logging.warning("Configured media intent failed (error_type=%s)", type(error).__name__)
         return None
 
 
