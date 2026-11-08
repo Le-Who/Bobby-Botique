@@ -45,8 +45,9 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
   A local classifier routes text tasks with multiple constraints/dependencies to
   the separate `chat.complex` process, initially Terra Flex with low reasoning.
   The dashboard selects the model, reasoning override and Standard/Flex separately.
-  An explicit process reasoning policy takes precedence over saved user thinking;
-  user preferences remain stored for routes without an override. Flex waits up
+  OpenAI reasoning is controlled by the administrator; an absent override uses
+  the model default, and saved user thinking cannot change OpenAI requests.
+  User preferences remain available for Gemini. Flex waits up
   to 15 seconds for model text, including native GPT-6 web search. Telegram
   delivery has a separate budget. A Flex
   capacity error offers a manual retry without switching to Standard.
@@ -457,7 +458,7 @@ deployed Secret.
 | `AGENTIC_MAX_TOKENS` | ⚙️ | `100000`—`500000` | `100000` | Known usage plus reservations for missing usage gate the next iteration/fallback. An admitted call and final synthesis may overshoot; not a billing ceiling. |
 | `AGENTIC_TIMEOUT_SECONDS` | ⚙️ | `90`—`300` | `90` | Shared cooperative async deadline for research attempts/tools/fallback, with `min(15 seconds, timeout / 6)` reserved for synthesis. Cleanup may add time; initial key lookup and final Telegram delivery are outside the interval. |
 | `AGENTIC_PAGE_CONTENT_LIMIT` | ⚙️ | `4096`—`16384` | `8192` | Maximum characters extracted from each web page before truncation. Higher = more context per page, more LLM tokens consumed. |
-| `ADAPTIVE_THINKING_ENABLED` | ⚙️ | `true` / `false` | `true` | Enables the chat thinking resolver: explicit user level/off, then model-specific defaults, then the heuristic classifier in `app/thinking_classifier.py`. |
+| `ADAPTIVE_THINKING_ENABLED` | ⚙️ | `true` / `false` | `true` | Enables the Gemini chat thinking resolver: explicit user level/off, then model-specific defaults, then the heuristic classifier. OpenAI uses administrator reasoning or the model default; automatic complex-chat routing is separate. |
 
 The agentic loop in `app/core/agentic.py` uses the Gemini SDK directly. Its handler
 chooses `model_override` → `chat_state.model` → `AGENTIC_MODEL` → `RESEARCH_MODEL`;

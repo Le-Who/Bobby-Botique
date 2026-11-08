@@ -446,7 +446,7 @@ body {
 <div id="page-settings" class="page">
   <div class="section-header">LLM & Персонаж</div>
   <div class="section">
-    <div class="setting-row" onclick="openSheet('sheet-models')">
+    <div class="setting-row" id="setting-model" onclick="openSheet('sheet-models')">
       <div class="setting-label">AI Модель</div>
       <div class="setting-val" id="val-model">--- ❭</div>
     </div>
@@ -508,10 +508,10 @@ body {
 
   <div class="section-header">Дополнительно</div>
   <div class="section">
-    <div class="setting-row" onclick="openSheet('sheet-thinking')">
+    <div class="setting-row" id="setting-thinking" onclick="openSheet('sheet-thinking')">
       <div>
         <div class="setting-label">Уровень размышлений</div>
-        <div class="setting-hint-text">Длительность thinking-фазы</div>
+        <div class="setting-hint-text" id="thinking-hint">Длительность thinking-фазы</div>
       </div>
       <div class="setting-val" id="val-thinking">Выкл ❭</div>
     </div>
@@ -1117,13 +1117,17 @@ function toggleProviderGroup(groupId) {
 
 function renderSettings(d, r, v) {
   settingsData = d.settings;
+  settingsData.thinking_editable = d.thinking_editable !== false;
+  settingsData.model_editable = d.model_editable !== false;
+  settingsData.effective_reasoning = d.effective_reasoning || null;
   availableModels = d.available_models || [];
   groupedModels = d.grouped_models || [];
   roleDataCache = r.roles || [];
   
   // Populate model sheet
   buildModelSheet();
-  document.getElementById('val-model').textContent = `${modelDisplayName(settingsData.model)} ❭`;
+  document.getElementById('val-model').textContent = `${modelDisplayName(settingsData.model)}${settingsData.model_editable ? ' ❭' : ' · Администратор'}`;
+  document.getElementById('setting-model').setAttribute('aria-disabled', String(!settingsData.model_editable));
   
   renderRoles(settingsData.system_prompt);
   
@@ -1180,7 +1184,7 @@ async function loadSettings() {
         if (!err && val) {
           try {
             const cached = JSON.parse(val);
-            renderSettings(cached.d, cached.r, cached.v);
+            renderSettings({...cached.d, thinking_editable:false, effective_reasoning:{source:'loading'}}, cached.r, cached.v);
           } catch(e) {}
         }
       });
@@ -1238,9 +1242,9 @@ async function saveSettings() {
   if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
   
   const body = {
-    model: settingsData.model,
+    ...(settingsData.model_editable !== false ? {model: settingsData.model} : {}),
     system_prompt: document.getElementById('s-prompt-area').value.trim(),
-    thinking_level: settingsData.thinking_level,
+    ...(settingsData.thinking_editable !== false ? {thinking_level: settingsData.thinking_level} : {}),
     ltm_enabled: document.getElementById('s-ltm').checked,
     search_enabled: document.getElementById('s-search').checked,
     temperature: settingsData.temperature,
@@ -1265,6 +1269,8 @@ async function saveSettings() {
 
 // ── UI Helpers ──
 function openSheet(id) {
+  if (id === 'sheet-thinking' && settingsData?.thinking_editable === false) return;
+  if (id === 'sheet-models' && settingsData?.model_editable === false) return;
   if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
   currentTargetSheet = id;
   const overlay = document.getElementById('sheet-overlay');
@@ -1275,8 +1281,12 @@ function openSheet(id) {
 function closeSheet() { document.getElementById('sheet-overlay').classList.remove('show'); currentTargetSheet = null;}
 
 function setModel(model, element) {
+  if (settingsData.model_editable === false) return;
   if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
   settingsData.model = model;
+  settingsData.thinking_editable = !model.startsWith('openai-direct/');
+  settingsData.effective_reasoning = settingsData.thinking_editable ? null : {effort: null, source: 'model_default', model};
+  setThinking(settingsData.thinking_level || 'off', true);
   document.getElementById('val-model').textContent = `${modelDisplayName(model)} ❭`;
   // Update active state in sheet
   document.querySelectorAll('#sheet-models .sheet-row').forEach(row => row.classList.remove('active'));
@@ -1286,6 +1296,23 @@ function setModel(model, element) {
 }
 
 function setThinking(level, init=false) {
+  const editable = settingsData.thinking_editable !== false;
+  const row = document.getElementById('setting-thinking');
+  row.setAttribute('aria-disabled', String(!editable));
+  if (!editable) {
+    if (!init) return;
+    const current = settingsData.effective_reasoning || {};
+    if (current.source === 'loading') {
+      document.getElementById('val-thinking').textContent = 'Проверяем настройки…';
+      document.getElementById('thinking-hint').textContent = 'Получаем действующий уровень рассуждений.';
+      return;
+    }
+    const label = current.effort == null ? 'По умолчанию модели' : thinkingMap[current.effort === 'none' ? 'off' : current.effort] || current.effort;
+    document.getElementById('val-thinking').textContent = `${label} · Администратор`;
+    document.getElementById('thinking-hint').textContent = 'Рассуждения OpenAI задаются в панели администратора.';
+    return;
+  }
+  document.getElementById('thinking-hint').textContent = 'Длительность thinking-фазы';
   if (!init && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
   settingsData.thinking_level = level;
   document.getElementById('val-thinking').textContent = `${thinkingMap[level]} ❭`;

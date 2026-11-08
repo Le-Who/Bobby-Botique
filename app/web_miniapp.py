@@ -1089,25 +1089,43 @@ async def api_delete_memory(memory_id: int, user_id: int):
 # ── Settings API ─────────────────────────────────────────────────────────────
 
 
+def _miniapp_chat_model_editable() -> bool:
+    from app.runtime_settings.lifecycle import current_operation_snapshot
+    from app.runtime_settings.live_routes import active_provider, effective_policy_value
+
+    snapshot = current_operation_snapshot()
+    if snapshot is None:
+        return True
+    policy = effective_policy_value("chat", snapshot)
+    return active_provider(snapshot) == "baseline" and (policy is None or bool(policy.get("inherit_user_model")))
+
+
 @miniapp_blueprint.route("/api/settings")
 @require_webapp_auth
 @require_authorized_webapp_user
+@runtime_settings_scope()
 async def api_get_settings(user_id: int):
     """Get current chat settings for the user."""
     try:
+        from app.handlers import menus
         from app.repos.chats import get_user_chat
         from app.repos.roles import get_user_custom_roles
 
         chat_state = await get_user_chat(user_id)
         if not chat_state:
             return jsonify({"error": "no_chat"}), 404
+        thinking_editable = not menus.openai_reasoning_readonly(chat_state)
+        model_editable = _miniapp_chat_model_editable()
+        effective_model = menus.effective_chat_model(chat_state)
+        effort = menus.get_admin_reasoning_effort() if not thinking_editable else None
 
         # Build available models list grouped by provider
         gemini_models = list(settings.AVAILABLE_MODELS or [])
         openrouter_models = list(settings.OPENROUTER_AVAILABLE_MODELS or [])
         opencode_models = list(settings.OPENCODE_AVAILABLE_MODELS or [])
         freetheai_models = list(settings.FREETHEAI_AVAILABLE_MODELS or [])
-        all_models = gemini_models + openrouter_models + opencode_models + freetheai_models
+        openai_models = list(getattr(settings, "OPENAI_AVAILABLE_MODELS", []) or [])
+        all_models = gemini_models + openrouter_models + opencode_models + freetheai_models + openai_models
 
         # Build grouped structure for the frontend picker
         grouped_models = []
@@ -1119,6 +1137,11 @@ async def api_get_settings(user_id: int):
             grouped_models.append({"provider": "FreeTheAI", "icon": "🦅", "models": freetheai_models})
         if openrouter_models:
             grouped_models.append({"provider": "OpenRouter", "icon": "🌐", "models": openrouter_models})
+        if openai_models:
+            grouped_models.append({"provider": "OpenAI", "icon": "✨", "models": openai_models})
+        if not model_editable:
+            all_models = [effective_model]
+            grouped_models = [{"provider": "Администратор", "icon": "🔒", "models": all_models}]
 
         user_roles = await get_user_custom_roles(user_id)
 
@@ -1126,7 +1149,7 @@ async def api_get_settings(user_id: int):
             {
                 "settings": {
                     "system_prompt": chat_state.system_prompt or "",
-                    "model": chat_state.model,
+                    "model": effective_model,
                     "thinking_level": chat_state.thinking_level or "off",
                     "ltm_enabled": chat_state.ltm_enabled,
                     "search_enabled": chat_state.search_enabled,
@@ -1136,7 +1159,14 @@ async def api_get_settings(user_id: int):
                 },
                 "available_models": all_models,
                 "grouped_models": grouped_models,
-                "thinking_levels": ["off", "low", "medium", "high"],
+                "thinking_levels": ["off", "low", "medium", "high"] if thinking_editable else [],
+                "thinking_editable": thinking_editable,
+                "model_editable": model_editable,
+                "effective_reasoning": {
+                    "effort": effort if not thinking_editable else chat_state.thinking_level or "off",
+                    "source": "user" if thinking_editable else "admin" if effort is not None else "model_default",
+                    "model": effective_model,
+                },
                 "custom_roles": user_roles,
             }
         )
@@ -1159,6 +1189,25 @@ async def api_update_settings(user_id: int):
             return jsonify({"error": "no_chat"}), 404
 
         body = await request.get_json(silent=True) or {}
+        from app.handlers import menus
+
+        if not _miniapp_chat_model_editable():
+            body = {key: value for key, value in body.items() if key != "model"}
+        if "thinking_level" in body:
+            from copy import copy
+
+            from app.config import get_all_available_models
+
+            prospective = copy(chat_state)
+            if isinstance(body.get("model"), str) and body["model"] in get_all_available_models():
+                prospective.model = body["model"]
+            if menus.openai_reasoning_readonly(prospective):
+                saved_level = getattr(chat_state, "thinking_level", None) or "off"
+                if body["thinking_level"] != saved_level:
+                    return jsonify(
+                        {"error": "thinking_readonly", "message": "Уровень рассуждений OpenAI задаёт администратор."}
+                    ), 403
+                body = {key: value for key, value in body.items() if key != "thinking_level"}
         if "voice_id" in body and body["voice_id"] is not None:
             voice_id = body["voice_id"]
             if not isinstance(voice_id, str) or not await valid_user_voice(voice_id):

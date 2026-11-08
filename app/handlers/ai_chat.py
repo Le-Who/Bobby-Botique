@@ -692,6 +692,8 @@ async def _handle_regular_chat(
             reasoning_effort=(
                 "model_default"
                 if request.thinking_level is None
+                or request.openai_uses_model_default
+                and request.models[0].startswith("openai-direct/")
                 else "none"
                 if request.thinking_level.value == "off"
                 else request.thinking_level.value

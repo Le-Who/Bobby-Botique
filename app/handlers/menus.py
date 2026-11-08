@@ -170,7 +170,7 @@ def get_admin_selected_chat_model(process_id: str = "chat") -> str | None:
 
 
 def get_admin_reasoning_effort(process_id: str = "chat") -> str | None:
-    """Read the pinned process override; absence leaves the saved preference active."""
+    """Read the pinned process override, independently of the user preference."""
     from collections.abc import Mapping
 
     from app.runtime_settings.lifecycle import current_operation_snapshot
@@ -184,6 +184,35 @@ def get_admin_reasoning_effort(process_id: str = "chat") -> str | None:
     policy = effective_policy_value(process_id, snapshot)
     effort = policy.get("reasoning_effort") if isinstance(policy, Mapping) else None
     return effort if isinstance(effort, str) and effort in {"none", "low", "medium", "high"} else None
+
+
+def effective_chat_model(chat_state) -> str:
+    """Resolve the same pinned primary model used by the chat request factory."""
+    from app.process_policies import resolve_policy_value
+    from app.runtime_settings.lifecycle import current_operation_snapshot
+    from app.runtime_settings.live_routes import effective_policy_value
+
+    snapshot = current_operation_snapshot()
+    baseline = (chat_state.model,) if chat_state.model else ()
+    if snapshot is not None:
+        policy = resolve_policy_value(
+            "chat", effective_policy_value("chat", snapshot), baseline, revision=snapshot.revision
+        )
+        if policy.models:
+            return policy.models[0]
+    return chat_state.model or ""
+
+
+def openai_reasoning_readonly(chat_state) -> bool:
+    """OpenAI reasoning belongs to the administrator, including old saved user models."""
+    from app.providers.base import is_openai_model
+    from app.runtime_settings.lifecycle import current_operation_snapshot
+    from app.runtime_settings.live_routes import active_provider
+
+    snapshot = current_operation_snapshot()
+    return bool(snapshot is not None and active_provider(snapshot) == "openai") or is_openai_model(
+        effective_chat_model(chat_state)
+    )
 
 
 def get_visible_model_list(settings_obj=None, openrouter_keys=None) -> list[str]:

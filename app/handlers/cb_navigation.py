@@ -279,6 +279,17 @@ async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAU
         return
 
     chat_state = await get_user_chat(user_id)
+    if menus.openai_reasoning_readonly(chat_state):
+        lang = _lang(update)
+        formatted_text, parse_mode, keyboard = _build_settings_view(chat_state, lang)
+        with contextlib.suppress(telegram.error.BadRequest):
+            await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=keyboard)
+        await query.answer(
+            "OpenAI reasoning is set by the administrator."
+            if lang == "en"
+            else "Мышление OpenAI задаётся администратором."
+        )
+        return
     cycle = [None, "off", "low", "medium", "high"]
     try:
         idx = cycle.index(chat_state.thinking_level)
@@ -350,7 +361,7 @@ def _build_settings_view(chat_state, lang: str):
     """Build settings menu text and keyboard (shared by thinking + ltm toggles)."""
     from app.handlers.commands import _thinking_display
 
-    model_name = menus.get_admin_selected_chat_model() or chat_state.model or t("settings.default_model", lang)
+    model_name = menus.effective_chat_model(chat_state) or t("settings.default_model", lang)
     thinking_str = _thinking_display(chat_state, lang)
     search_str = (
         t("settings.search_enabled", lang) if chat_state.search_enabled else t("settings.search_disabled", lang)
@@ -383,7 +394,11 @@ def _build_settings_view(chat_state, lang: str):
         [
             [
                 InlineKeyboardButton(t("settings.btn_change_model", lang), callback_data="model_menu"),
-                InlineKeyboardButton(t("settings.btn_thinking", lang), callback_data="settings_thinking"),
+                *(
+                    []
+                    if menus.openai_reasoning_readonly(chat_state)
+                    else [InlineKeyboardButton(t("settings.btn_thinking", lang), callback_data="settings_thinking")]
+                ),
             ],
             [
                 InlineKeyboardButton(t("settings.btn_search", lang), callback_data="toggle_search"),

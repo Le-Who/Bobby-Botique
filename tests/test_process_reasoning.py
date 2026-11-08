@@ -1,4 +1,4 @@
-"""Admin process reasoning supersedes user preferences only when explicit."""
+"""Direct OpenAI reasoning comes from an admin process policy or model defaults."""
 
 from unittest.mock import AsyncMock
 
@@ -63,7 +63,7 @@ def test_known_reasoning_is_typed_for_direct_gpt6(process_id, effort):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "override,expected", [("none", "none"), ("low", "low"), ("medium", "medium"), ("high", "high"), (None, "high")]
+    "override,expected", [("none", "none"), ("low", "low"), ("medium", "medium"), ("high", "high"), (None, "none")]
 )
 async def test_actual_factory_sdk_payload_respects_admin_override_and_null(tiers, override, expected):
     from app.providers.openai import responses_payload
@@ -86,7 +86,9 @@ async def test_actual_factory_sdk_payload_respects_admin_override_and_null(tiers
     assert request.models == (LUNA,)
     assert request.service_tier.value == "flex"
     assert request.first_text_timeout_seconds == 15
-    assert request.thinking_level is (ThinkingLevel.OFF if expected == "none" else ThinkingLevel(expected))
+    assert request.thinking_level is (
+        None if override is None else ThinkingLevel.OFF if expected == "none" else ThinkingLevel(expected)
+    )
     assert (await responses_payload(request, LUNA))["reasoning"]["effort"] == expected
 
 
@@ -170,7 +172,8 @@ async def test_reasoning_changes_cached_result_identity():
 
 
 @pytest.mark.asyncio
-async def test_completed_text_adapter_applies_reasoning_override(tiers):
+@pytest.mark.parametrize("effort", ["none", "low", "high"])
+async def test_completed_text_adapter_applies_reasoning_override(tiers, effort):
     from app.process_policies import execute_text_process
     from app.providers.stream_types import (
         FinishReason,
@@ -197,10 +200,11 @@ async def test_completed_text_adapter_applies_reasoning_override(tiers):
             )
 
     snapshot = await tiers.set_value(
-        "process:chat", {"models": [LUNA], "reasoning_effort": "none"}, expected_revision=0, actor="test"
+        "process:chat", {"models": [LUNA], "reasoning_effort": effort}, expected_revision=0, actor="test"
     )
     async with runtime_settings_scope(snapshot):
         await execute_text_process(
             "chat", (LUNA,), [{"role": "user", "parts": ["Synthetic"]}], router=Router(), thinking_level="high"
         )
-    assert captured[0].thinking_level is ThinkingLevel.OFF
+    assert captured[0].thinking_level is (ThinkingLevel.OFF if effort == "none" else ThinkingLevel(effort))
+    assert captured[0].openai_uses_model_default is False

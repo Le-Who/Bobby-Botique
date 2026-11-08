@@ -6,6 +6,7 @@ from typing import Any
 
 from PIL import Image
 
+from app.providers.base import is_openai_model
 from app.providers.stream_types import (
     GenerationRequest,
     GroundingMode,
@@ -98,7 +99,12 @@ async def generation_request_from_history(
     process_id: str | None = None,
     service_tier: ServiceTier = ServiceTier.DEFAULT,
 ) -> GenerationRequest:
-    """Perform the only JSON/handler-history conversion before provider routing."""
+    """Convert handler history and legacy/user preferences before provider routing.
+
+    Direct OpenAI uses model defaults unless a resolved process supplies an
+    administrator reasoning override. Internal typed requests retain their own
+    explicit reasoning and do not use this user-preference conversion.
+    """
     turns: list[PromptTurn] = []
     for entry in history:
         if not isinstance(entry, dict):
@@ -122,6 +128,7 @@ async def generation_request_from_history(
     route_strategy = "legacy"
     explicit = False
     revision = 0
+    admin_reasoning = False
     if process_id is not None:
         from app.process_policies import policy_thinking_level, resolve_process
 
@@ -129,7 +136,12 @@ async def generation_request_from_history(
         models = policy.models
         route_strategy, explicit, revision = policy.strategy, policy.explicit, policy.revision
         service_tier = ServiceTier(getattr(policy, "service_tier", ServiceTier.DEFAULT))
+        admin_reasoning = getattr(policy, "reasoning_effort", None) is not None
+        if not admin_reasoning and all(is_openai_model(model) for model in models):
+            typed_thinking = None
         typed_thinking = policy_thinking_level(policy, typed_thinking)
+    elif all(is_openai_model(model) for model in models):
+        typed_thinking = None
 
     return GenerationRequest(
         models=tuple(models),
@@ -147,6 +159,7 @@ async def generation_request_from_history(
         allow_model_fallback=not explicit,
         policy_revision=revision,
         service_tier=service_tier,
+        openai_uses_model_default=not admin_reasoning,
     )
 
 

@@ -156,8 +156,13 @@ class GenerationRequest:
     allow_key_race: bool = True
     response_schema: type[BaseModel] | None = None
     service_tier: ServiceTier = ServiceTier.DEFAULT
+    # History factories carry user preferences; direct OpenAI accepts reasoning
+    # only from an explicit admin policy or an internal typed request.
+    openai_uses_model_default: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.openai_uses_model_default) is not bool:
+            raise TypeError("GenerationRequest.openai_uses_model_default must be a boolean")
         if not isinstance(self.service_tier, ServiceTier):
             raise TypeError("GenerationRequest.service_tier must be a ServiceTier")
         if self.response_schema is not None and (

@@ -142,8 +142,11 @@ The process policy stores `service_tier` separately from the model ID. New OpenA
 profiles use Luna Flex without reasoning for ordinary chat and quick search,
 and Terra Flex with low reasoning for the separate `chat.complex` process.
 A local conservative classifier selects complex text requests without another
-model call. Process reasoning overrides take precedence over saved user levels;
-absent overrides preserve legacy inheritance. Inline and Crocodile judgement
+model call. OpenAI reasoning is administrator-owned: history-derived requests
+without an explicit process override use the model default. Saved user thinking
+remains available to Gemini, including the Gemini member of a mixed chain.
+Typed internal administrator requests retain their explicit reasoning.
+Inline and Crocodile judgement
 use Luna Standard without reasoning; other OpenAI routes use Standard.
 Saved 22-process profiles remain valid when the complex-chat route is added.
 Flex capacity failures preserve key health and offer manual retry,

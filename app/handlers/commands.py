@@ -499,22 +499,44 @@ _THINKING_LABELS = {
 def _thinking_display(chat_state, lang: str = "ru") -> str:
     """Describe effective chat/search reasoning without changing saved preferences."""
     effort = menus.get_admin_reasoning_effort()
-    level = "off" if effort == "none" else effort if effort is not None else chat_state.thinking_level
+    readonly = menus.openai_reasoning_readonly(chat_state)
+    fallback_level = (
+        ("low" if menus.effective_chat_model(chat_state) == "openai-direct/gpt-6.1-sol" else "off")
+        if readonly
+        else chat_state.thinking_level
+    )
+    level = "off" if effort == "none" else effort if effort is not None else fallback_level
     label = _THINKING_LABELS.get(level, level or _THINKING_LABELS[None])
     if effort is not None:
         label += " (set by administrator)" if lang == "en" else " (задан администратором)"
+    elif readonly:
+        label += (
+            " (OpenAI model default; administrator controlled)"
+            if lang == "en"
+            else " (по умолчанию OpenAI; выбор управляется администратором)"
+        )
     search_effort = menus.get_admin_reasoning_effort("search")
     if search_effort != effort:
-        search_level = "off" if search_effort == "none" else search_effort or chat_state.thinking_level
+        search_level = "off" if search_effort == "none" else search_effort or fallback_level
         search_label = _THINKING_LABELS.get(search_level, search_level or _THINKING_LABELS[None])
         if search_effort is not None:
             search_label += " (set by administrator)" if lang == "en" else " (задан администратором)"
         label += ("; search: " if lang == "en" else "; поиск: ") + search_label
     complex_effort = menus.get_admin_reasoning_effort("chat.complex")
-    if complex_effort is not None:
-        complex_level = "off" if complex_effort == "none" else complex_effort
+    complex_model = menus.get_admin_selected_chat_model("chat.complex")
+    if readonly and complex_model:
+        complex_level = (
+            "off"
+            if complex_effort == "none"
+            else complex_effort
+            if complex_effort is not None
+            else "low"
+            if complex_model == "openai-direct/gpt-6.1-sol"
+            else "off"
+        )
         complex_label = _THINKING_LABELS[complex_level]
-        complex_model = menus.get_admin_selected_chat_model("chat.complex")
+        if complex_effort is None:
+            complex_label += " (model default)" if lang == "en" else " (по умолчанию модели)"
         label += (
             "\nAutomatic for complex tasks: " if lang == "en" else "\nДля сложных задач автоматически: "
         ) + f"{complex_label} (`{complex_model}`)"
@@ -526,6 +548,16 @@ async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Set or show the thinking level for AI reasoning."""
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
+
+    if menus.openai_reasoning_readonly(chat_state):
+        text = (
+            f"🧠 *Текущий уровень мышления:* {_thinking_display(chat_state)}\n\n"
+            "Для OpenAI уровень мышления задаётся администратором; пользовательский выбор недоступен.\n"
+            f"Текущая модель: `{menus.effective_chat_model(chat_state)}`"
+        )
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        return
 
     if not context.args:
         # Show current level
@@ -545,7 +577,7 @@ async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             "• `/thinking medium` — 🧠 сбалансированный\n"
             "• `/thinking high` — 🔬 максимальная глубина\n"
             "• `/thinking auto` — 🔄 вернуть авто-режим\n\n"
-            f"Текущая модель: `{menus.get_admin_selected_chat_model() or chat_state.model}`"
+            f"Текущая модель: `{menus.effective_chat_model(chat_state)}`"
         )
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
@@ -584,7 +616,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
-    model = menus.get_admin_selected_chat_model() or chat_state.model or "(по умолчанию)"
+    model = menus.effective_chat_model(chat_state) or "(по умолчанию)"
     thinking = _thinking_display(chat_state)
     search = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
     role = chat_state.system_prompt
@@ -606,7 +638,11 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     keyboard = [
         [
             InlineKeyboardButton(t("settings.btn_change_model"), callback_data="model_menu"),
-            InlineKeyboardButton(t("settings.btn_thinking"), callback_data="settings_thinking"),
+            *(
+                []
+                if menus.openai_reasoning_readonly(chat_state)
+                else [InlineKeyboardButton(t("settings.btn_thinking"), callback_data="settings_thinking")]
+            ),
         ],
         [
             InlineKeyboardButton(t("settings.btn_search"), callback_data="toggle_search"),

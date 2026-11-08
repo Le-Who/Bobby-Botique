@@ -588,6 +588,7 @@ async def execute_text_process(
         policy_revision=policy.revision,
         service_tier=policy.service_tier,
         thinking_level=policy_thinking_level(policy, request.thinking_level),
+        openai_uses_model_default=getattr(policy, "reasoning_effort", None) is None,
     )
     chunks: list[str] = []
     async with asyncio.timeout(float(legacy_options.get("timeout") or 120.0)):

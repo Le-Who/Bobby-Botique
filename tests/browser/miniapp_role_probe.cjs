@@ -29,6 +29,12 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
     const settings = { model: 'initial-model', system_prompt: 'Initial saved prompt',
       ltm_enabled: false, search_enabled: false, temperature: 0.7, tts_temperature: 1,
       thinking_level: 'off', voice_id: null };
+    const reasoningScenario = payload.scenario.startsWith('reasoning_');
+    const readonly = reasoningScenario && payload.scenario !== 'reasoning_gemini';
+    if (reasoningScenario) {
+      settings.model = readonly ? 'openai-direct/gpt-6-luna' : 'gemini-3.5-flash-lite';
+      settings.thinking_level = 'high';
+    }
     await page.route('**/*', route => {
       const request = route.request();
       const url = new URL(request.url());
@@ -42,6 +48,8 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
           return route.fulfill({ json: { ok: true } });
         }
         return route.fulfill({ json: { settings, available_models: [model],
+          ...(reasoningScenario ? {thinking_editable:!readonly,model_editable:!readonly,
+            effective_reasoning:{effort:readonly ? payload.scenario === 'reasoning_default' ? null : 'none' : 'high', source:readonly ? 'admin' : 'user', model:settings.model}} : {}),
           grouped_models: payload.scenario === 'model_grouped'
             ? [{ provider: "Tutor's provider", icon: 'P', models: [model] }] : [] } });
       }
@@ -53,7 +61,24 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
     });
     await page.goto('http://ui.test/page?tab=settings');
     await page.waitForSelector('#s-roles-wrap .chip:nth-child(2)');
-    if (payload.scenario.startsWith('role_')) {
+    if (reasoningScenario) {
+      if (readonly) {
+        const label = await page.locator('#val-thinking').textContent();
+        assert.match(label,/Администратор/);
+        assert.ok(label.includes(payload.scenario === 'reasoning_default' ? 'По умолчанию модели' : 'Выкл'));
+        assert.ok(!label.includes('Высокий'));
+        await page.locator('#setting-thinking').click();
+        assert.equal(await page.locator('#sheet-overlay').evaluate(el=>el.classList.contains('show')),false);
+        await page.evaluate(()=>setThinking('high'));
+        assert.equal(await page.locator('#val-thinking').textContent(),label);
+      } else {
+        await page.locator('#setting-thinking').click();
+        await page.locator('#sheet-thinking .sheet-row[data-val="low"]').click();
+        assert.match(await page.locator('#val-thinking').textContent(),/Низкий/);
+      }
+      await page.locator('#s-search + .toggle-track').click();
+      assert.equal(await page.locator('#s-search').isChecked(),true);
+    } else if (payload.scenario.startsWith('role_')) {
       const standard = payload.scenario === 'role_standard';
       await page.locator('#s-roles-wrap .chip').nth(standard ? 0 : 1).click();
       assert.equal(await page.locator('#s-prompt-area').inputValue(), standard ? '' : prompt);
@@ -68,9 +93,21 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
     }
     await page.evaluate(() => window.saveCallback());
     assert.equal(writes.length, 1);
-    if (payload.scenario.startsWith('role_')) assert.equal(writes[0].system_prompt,
+    if (reasoningScenario) {
+      assert.equal(writes[0].search_enabled,true);
+      if (readonly) {
+        assert.equal(Object.hasOwn(writes[0],'thinking_level'),false);
+        assert.equal(Object.hasOwn(writes[0],'model'),false);
+      } else assert.equal(writes[0].thinking_level,'low');
+    } else if (payload.scenario.startsWith('role_')) assert.equal(writes[0].system_prompt,
       payload.scenario === 'role_standard' ? '' : prompt);
     else assert.equal(writes[0].model, model);
     assert.deepEqual(errors, []);
+    if (reasoningScenario && payload.mobile) {
+      await page.setViewportSize({width:390,height:844});
+      await page.locator('#setting-thinking').scrollIntoViewIfNeeded();
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+      await page.screenshot({path:payload.mobile});
+    }
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

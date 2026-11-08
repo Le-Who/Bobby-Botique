@@ -78,6 +78,7 @@ process.stdin.on('end',async()=>{
   const chat=page.locator('article[data-section="process"][data-id="chat"]');
   const picker=chat.getByLabel('Выбрать модель OpenAI 1'),tier=chat.getByLabel('Тариф обработки',{exact:true});
   const reasoning=chat.getByLabel('Reasoning effort',{exact:true});
+  assert.equal(await reasoning.locator('option[value=""]').textContent(),'По умолчанию модели');
   const complex=page.locator('article[data-section="process"][data-id="chat.complex"]');
   assert.equal(await complex.getByLabel('Тариф обработки',{exact:true}).inputValue(),'flex');
   assert.equal(await complex.getByLabel('Reasoning effort',{exact:true}).inputValue(),'low');
@@ -107,8 +108,10 @@ process.stdin.on('end',async()=>{
   const profile=page.locator('#live-route-profile');
   await profile.getByRole('button',{name:'Включить Gemini',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('6'));
+  assert.equal(await reasoning.isVisible(),false);
   await profile.getByRole('button',{name:'Включить OpenAI напрямую',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('7'));
+  assert.equal(await reasoning.isVisible(),true);
   assert.equal(await tier.inputValue(),'flex');assert.equal(await chat.locator('.model-input').inputValue(),luna);assert.equal(await reasoning.inputValue(),'low');
   await page.evaluate(()=>window.scrollTo(0,0));await page.evaluate(()=>new Promise(requestAnimationFrame));
   await page.screenshot({path:data.desktop,fullPage:true});

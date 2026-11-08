@@ -455,12 +455,12 @@
     const choices = ["chat", "chat.complex", "search"].includes(id) ? [...new Set([...(catalog?.models || []), ...(catalog?.supported_models || [])])] : [];
     const reasoning = element("select", "reasoning-effort");
     reasoning.setAttribute("aria-label", "Reasoning effort");
-    [["", "Без переопределения"], ["none", "None — без рассуждений"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]].forEach(([value, label]) => {
+    [["", "По умолчанию модели"], ["none", "None — без рассуждений"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]].forEach(([value, label]) => {
       const option = element("option", "", label); option.value = value; reasoning.append(option);
     });
     reasoning.value = current.reasoning_effort ?? "";
     const reasoningField = element("label", "field", "Рассуждения OpenAI");
-    reasoningField.append(reasoning, element("span", "muted", "Явный выбор задаёт рассуждения для процесса, включая сохранённые настройки пользователя. Без переопределения сохраняется прежний выбор. Более высокий уровень может увеличить задержку и расход токенов."));
+    reasoningField.append(reasoning, element("span", "muted", "Уровень рассуждений задаёт администратор. По умолчанию модели используется базовый режим выбранной модели. Более высокий уровень может увеличить задержку и расход токенов."));
     options.append(reasoningField);
     const compatibleReasoning = models => models.length > 0 && models.every(model => model.startsWith("openai-direct/gpt-6") && (catalog?.supported_models || []).includes(model));
     reasoningField.hidden = !compatibleReasoning(current.models) && !reasoning.value;
@@ -507,7 +507,9 @@
         });
         const models = Array.isArray(result.models) ? result.models.join(" → ") : "—";
         const notes = Array.isArray(result.notes) ? result.notes.join(" · ") : "";
-        message(status, `Маршрут: ${models} · тариф ${result.service_tier === "flex" ? "Flex" : "Standard"} · reasoning ${result.reasoning_effort ?? "без переопределения"}${notes ? ` · ${notes}` : ""}`, !result.valid);
+        const reasoningNote = Array.isArray(result.models) && result.models.length && result.models.every(model => model.startsWith("openai-direct/"))
+          ? ` · reasoning ${result.reasoning_effort ?? "по умолчанию модели"}` : "";
+        message(status, `Маршрут: ${models} · тариф ${result.service_tier === "flex" ? "Flex" : "Standard"}${reasoningNote}${notes ? ` · ${notes}` : ""}`, !result.valid);
       } catch (error) { message(status, errorText(error), true); }
     }));
     actions.append(mutationButton("Сбросить", "quiet", () => save("process", id, status, true)));

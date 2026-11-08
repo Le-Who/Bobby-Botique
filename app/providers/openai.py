@@ -98,8 +98,9 @@ async def responses_payload(request: GenerationRequest, model_name: str) -> dict
                 raise UnsupportedResponsesRequest("Unsupported Responses prompt part")
         inputs.append({"role": "assistant" if turn.role is PromptRole.MODEL else "user", "content": content})
     effort = "low" if model == "gpt-6.1-sol" else "none"
-    if request.thinking_level in {ThinkingLevel.LOW, ThinkingLevel.MEDIUM, ThinkingLevel.HIGH}:
-        effort = request.thinking_level.value
+    thinking = None if request.openai_uses_model_default else request.thinking_level
+    if thinking in {ThinkingLevel.LOW, ThinkingLevel.MEDIUM, ThinkingLevel.HIGH}:
+        effort = thinking.value
     payload: dict[str, Any] = {
         "model": model,
         "input": inputs,
@@ -108,7 +109,7 @@ async def responses_payload(request: GenerationRequest, model_name: str) -> dict
     }
     if model.startswith("gpt-6"):
         payload["reasoning"] = {"effort": effort}
-    elif request.thinking_level in {ThinkingLevel.LOW, ThinkingLevel.MEDIUM, ThinkingLevel.HIGH}:
+    elif thinking in {ThinkingLevel.LOW, ThinkingLevel.MEDIUM, ThinkingLevel.HIGH}:
         raise UnsupportedResponsesRequest("This direct OpenAI model does not support reasoning effort")
     if request.system_instruction:
         payload["instructions"] = request.system_instruction

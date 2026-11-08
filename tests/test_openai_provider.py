@@ -210,6 +210,100 @@ async def test_responses_payload_stream_usage_and_direct_identity(transport):
     assert get_provider_for_model("openai/gpt-4o-mini", "synthetic").provider_name == "openrouter"
 
 
+@pytest.mark.parametrize(
+    "model,expected",
+    [
+        ("openai-direct/gpt-6-luna", "none"),
+        ("openai-direct/gpt-6.1-terra", "none"),
+        ("openai-direct/gpt-6.1-sol", "low"),
+    ],
+)
+@pytest.mark.parametrize("override", ["absent", None])
+async def test_saved_user_high_cannot_set_openai_reasoning_on_real_sdk_wire(transport, model, expected, override):
+    from app.providers.request_factory import generation_request_from_history
+    from app.runtime_settings.lifecycle import runtime_settings_scope
+    from app.runtime_settings.store import SettingsSnapshot
+
+    install, calls = transport
+    install([frame("response.output_text.delta", delta="synthetic"), completed()])
+    policy = {"models": [model]}
+    if override is None:
+        policy["reasoning_effort"] = None
+    async with runtime_settings_scope(SettingsSnapshot(4, {"process:chat": policy})):
+        req = await generation_request_from_history(
+            process_id="chat",
+            models=("gemini-stale-user",),
+            history=[{"role": "user", "parts": ["synthetic"]}],
+            thinking_level="high",
+        )
+    assert req.thinking_level is None
+    events = [event async for event in openai.OpenAIProvider("synthetic-key").stream(req, model_name=model)]
+    assert isinstance(events[-1], StreamCompleted)
+    assert json.loads(calls[0].content)["reasoning"]["effort"] == expected
+
+
+@pytest.mark.parametrize("primary_openai", [False, True])
+async def test_mixed_factory_plan_keeps_gemini_user_high_but_openai_uses_model_default(transport, primary_openai):
+    from app.providers.request_factory import generation_request_from_history
+
+    install, calls = transport
+    install([frame("response.output_text.delta", delta="synthetic"), completed()])
+    models = (MODEL, "gemini-3.5-flash-lite") if primary_openai else ("gemini-3.5-flash-lite", MODEL)
+    req = await generation_request_from_history(
+        models=models,
+        history=[{"role": "user", "parts": ["synthetic"]}],
+        thinking_level="high",
+    )
+    assert req.thinking_level is ThinkingLevel.HIGH
+    events = [event async for event in openai.OpenAIProvider("synthetic-key").stream(req, model_name=MODEL)]
+    assert isinstance(events[-1], StreamCompleted)
+    assert json.loads(calls[0].content)["reasoning"]["effort"] == "none"
+
+
+@pytest.mark.parametrize("process_id", [None, "chat"])
+async def test_explicit_admin_and_internal_typed_reasoning_are_preserved_on_sdk_wire(transport, process_id):
+    from app.providers.request_factory import generation_request_from_history
+    from app.runtime_settings.lifecycle import runtime_settings_scope
+    from app.runtime_settings.store import SettingsSnapshot
+
+    install, calls = transport
+    install([frame("response.output_text.delta", delta="synthetic"), completed()])
+    req = request(thinking_level=ThinkingLevel.HIGH)
+    if process_id is not None:
+        async with runtime_settings_scope(
+            SettingsSnapshot(4, {"process:chat": {"models": [MODEL], "reasoning_effort": "high"}})
+        ):
+            req = await generation_request_from_history(
+                process_id=process_id,
+                models=(MODEL,),
+                history=[{"role": "user", "parts": ["synthetic"]}],
+                thinking_level="low",
+            )
+    events = await collect(req)
+    assert isinstance(events[-1], StreamCompleted)
+    assert json.loads(calls[0].content)["reasoning"]["effort"] == "high"
+
+
+async def test_legacy_router_direct_openai_drops_user_thinking_before_typed_dispatch(monkeypatch):
+    captured = []
+
+    async def stream(_self, req):
+        captured.append(req)
+        yield StreamFailed(
+            ErrorCode.OVERLOADED, FailurePhase.BEFORE_TEXT, RetryDisposition.DO_NOT_RETRY, KeyDisposition.UNCHANGED
+        )
+
+    monkeypatch.setattr(ProviderRouter, "stream", stream)
+    await ProviderRouter().get_response(MODEL, [{"role": "user", "parts": ["synthetic"]}], thinking_level="high")
+    assert captured[0].thinking_level is None
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true"])
+def test_openai_model_default_provenance_is_a_strict_boolean(value):
+    with pytest.raises(TypeError, match="openai_uses_model_default"):
+        request(openai_uses_model_default=value)
+
+
 async def test_grounding_images_and_model_history_are_preserved(transport):
     install, calls = transport
     stream = install(
