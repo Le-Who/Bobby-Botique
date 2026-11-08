@@ -124,7 +124,7 @@ def mock_boundaries():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reasoning", [None, "auto", "low", "high"])
-async def test_openai_profile_replaces_saved_gemini_model_and_preserves_explicit_reasoning(
+async def test_openai_profile_replaces_saved_gemini_model_and_ignores_user_reasoning(
     mock_boundaries, monkeypatch, reasoning
 ):
     from app.process_policies import ResolvedPolicy
@@ -145,10 +145,10 @@ async def test_openai_profile_replaces_saved_gemini_model_and_preserves_explicit
     request = mock_boundaries["delivery"].stream.await_args.args[1]
     assert request.models == (model,)
     assert request.allow_model_fallback is False
-    assert (request.thinking_level.value if request.thinking_level else None) == (
-        reasoning if reasoning in {"low", "high"} else None
-    )
+    assert request.thinking_level is None
+    assert request.openai_uses_model_default is True
     assert chat_state.model == "gemini-previous-user-choice"
+    assert chat_state.thinking_level == reasoning
     exact.assert_awaited_once_with(model)
     mock_boundaries["resolve"].assert_not_awaited()
 

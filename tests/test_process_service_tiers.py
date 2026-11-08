@@ -143,7 +143,7 @@ async def test_tier_change_separates_cached_results():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("process_id", ["chat", "search"])
 @pytest.mark.parametrize("thinking", [None, "low"])
-async def test_actual_factory_and_sdk_payload_keep_tier_without_changing_thinking(tiers, process_id, thinking):
+async def test_actual_factory_and_sdk_payload_keep_tier_and_ignore_user_thinking(tiers, process_id, thinking):
     from app.providers.openai import responses_payload
     from app.providers.request_factory import generation_request_from_history
     from app.runtime_settings.lifecycle import runtime_settings_scope
@@ -164,7 +164,9 @@ async def test_actual_factory_and_sdk_payload_keep_tier_without_changing_thinkin
     assert request.allow_model_fallback is False
     payload = await responses_payload(request, LUNA)
     assert payload["service_tier"] == "flex"
-    assert payload["reasoning"]["effort"] == (thinking or "none")
+    assert payload["reasoning"]["effort"] == "none"
+    assert request.thinking_level is None
+    assert request.openai_uses_model_default is True
 
 
 @pytest.mark.asyncio
