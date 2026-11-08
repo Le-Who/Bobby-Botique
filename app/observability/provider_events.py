@@ -14,6 +14,7 @@ from app.observability.redaction import provider_key_fields
 from app.observability.schema import JsonValue
 from app.providers.stream_types import (
     GenerationEvent,
+    RouteUsed,
     StreamCompleted,
     StreamDeferred,
     StreamFailed,
@@ -38,6 +39,7 @@ class ProviderAttempt:
     max_attempts: int | None = None
     race_id: str | None = None
     key_source: str | None = None
+    requested_service_tier: str | None = None
 
     def fields(self) -> dict[str, JsonValue]:
         return {
@@ -53,6 +55,7 @@ class ProviderAttempt:
             "max_attempts": self.max_attempts,
             "race_id": self.race_id,
             "key_source": self.key_source,
+            **({"requested_service_tier": self.requested_service_tier} if self.requested_service_tier else {}),
         }
 
 
@@ -67,6 +70,7 @@ def start_provider_attempt(
     max_attempts: int | None = None,
     race_id: str | None = None,
     key_source: str | None = None,
+    requested_service_tier: str | None = None,
 ) -> ProviderAttempt:
     """Create and log one real provider call attempt."""
     key_identity = provider_key_fields(provider, api_key, key_hash=key_hash)
@@ -83,6 +87,7 @@ def start_provider_attempt(
         max_attempts=max_attempts,
         race_id=race_id,
         key_source=key_source,
+        requested_service_tier=requested_service_tier,
     )
     emit(
         "provider.attempt_started",
@@ -156,6 +161,16 @@ def _duration_ms(attempt: ProviderAttempt) -> float:
     return round(max(0, time.monotonic_ns() - attempt.started_ns) / 1_000_000, 2)
 
 
+def _tier_fields(route: RouteUsed | None) -> dict[str, JsonValue]:
+    fields: dict[str, JsonValue] = {}
+    if route is not None:
+        if route.requested_service_tier is not None:
+            fields["requested_service_tier"] = route.requested_service_tier.value
+        if route.actual_service_tier is not None:
+            fields["actual_service_tier"] = route.actual_service_tier
+    return fields
+
+
 def _terminal_fields(terminal: GenerationEvent) -> tuple[str, str, dict[str, JsonValue]]:
     if isinstance(terminal, StreamCompleted):
         return (
@@ -170,6 +185,7 @@ def _terminal_fields(terminal: GenerationEvent) -> tuple[str, str, dict[str, Jso
                 "cached_tokens": terminal.usage.cached,
                 "grounding_sources": len(terminal.grounding.sources),
                 "grounding_queries": len(terminal.grounding.search_queries),
+                **_tier_fields(terminal.route),
             },
         )
     if isinstance(terminal, StreamFailed):
@@ -183,6 +199,7 @@ def _terminal_fields(terminal: GenerationEvent) -> tuple[str, str, dict[str, Jso
                 "key_disposition": terminal.key.value,
                 "diagnostic": terminal.diagnostic,
                 "error_id": terminal.error_id,
+                **_tier_fields(terminal.route),
             },
         )
     if isinstance(terminal, StreamDeferred):
@@ -202,6 +219,7 @@ async def observe_provider_stream(
     max_attempts: int | None = None,
     race_id: str | None = None,
     key_source: str | None = None,
+    requested_service_tier: str | None = None,
 ) -> AsyncGenerator[GenerationEvent]:
     """Yield unchanged provider events while recording one attempt lifecycle."""
     attempt = start_provider_attempt(
@@ -214,6 +232,7 @@ async def observe_provider_stream(
         max_attempts=max_attempts,
         race_id=race_id,
         key_source=key_source,
+        requested_service_tier=requested_service_tier,
     )
     saw_text = False
     terminal_seen = False
@@ -250,8 +269,7 @@ async def observe_provider_stream(
                     outcome=outcome,
                     duration_ms=_duration_ms(attempt),
                     text_emitted=saw_text,
-                    **attempt.fields(),
-                    **terminal_fields,
+                    **{**attempt.fields(), **terminal_fields},
                 )
             yield event
         if not terminal_seen:

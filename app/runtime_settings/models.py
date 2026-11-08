@@ -141,7 +141,7 @@ async def refresh_catalogs(
 
 
 async def list_catalogs(*, snapshot: SettingsSnapshot | None = None) -> list[dict[str, Any]]:
-    from app.config import settings
+    from app.config import SUPPORTED_OPENAI_CHAT_MODELS, SUPPORTED_OPENAI_FLEX_MODELS, settings
     from app.repos.models_repo import _catalog_sources
 
     await refresh_catalogs(snapshot=snapshot)
@@ -150,6 +150,14 @@ async def list_catalogs(*, snapshot: SettingsSnapshot | None = None) -> list[dic
             "provider": provider,
             "models": list(getattr(settings, attr, []) or []),
             "source": _catalog_sources[provider].value,
+            **(
+                {
+                    "supported_models": [f"openai-direct/{model}" for model in sorted(SUPPORTED_OPENAI_CHAT_MODELS)],
+                    "flex_models": [f"openai-direct/{model}" for model in sorted(SUPPORTED_OPENAI_FLEX_MODELS)],
+                }
+                if provider == "openai"
+                else {}
+            ),
         }
         for provider, attr in PROVIDERS.items()
     ]

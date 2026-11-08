@@ -105,6 +105,8 @@ input,select{min-height:44px}
 }
 
 /* Queue state remains readable while individual sources or commands are unknown. */
+.model-picker{min-width:0;max-width:270px;font-size:12px}.options>.muted{flex-basis:100%;margin:0}.service-tier{min-width:0;width:100%}
+@media(max-width:650px){.model-picker{margin-left:26px;max-width:calc(100% - 26px);flex-basis:calc(100% - 26px)}.options>.field{width:100%}}
 .queue-lanes,.queue-load{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin:20px 0}
 .queue-lane{padding:20px;min-width:0}.queue-lane .check{display:flex;flex-direction:row;margin:12px 0;align-items:center}.queue-lane>button{margin-top:10px}
 .queue-facts,.queue-summary{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px 14px;font-size:12px}

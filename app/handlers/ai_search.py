@@ -83,6 +83,7 @@ async def _handle_qna_search(
     search_query: str | None = None,
     *,
     user_id: int,
+    retry_request=None,
 ) -> str | None:
     """Lease private query/role data through provider and Telegram delivery."""
     from app.repos.memory_consent import private_data_lease
@@ -107,6 +108,7 @@ async def _handle_qna_search(
             chat_state,
             search_query,
             user_id=user_id,
+            retry_request=retry_request,
         )
 
 
@@ -117,6 +119,7 @@ async def _handle_qna_search_leased_impl(
     search_query: str | None = None,
     *,
     user_id: int,
+    retry_request=None,
 ) -> str | None:
     """Quick search with web grounding.
 
@@ -130,6 +133,11 @@ async def _handle_qna_search_leased_impl(
     path is also used respectively.
     """
     actual_search_query = search_query if search_query else user_message
+    from app.handlers.retry_requests import begin_request
+
+    logical_request = begin_request(
+        user_id, "search", user_message, chat_state, search_query=actual_search_query, retry=retry_request
+    )
 
     await _retire_placeholder_notice(placeholder_message)
     await metrics_collector.record_search_query()
@@ -181,6 +189,7 @@ async def _handle_qna_search_leased_impl(
         fallback_chain = [GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL]
     history = [{"role": "user", "parts": [actual_search_query]}]
 
+    from app.errors import build_retry_and_roles_keyboard
     from app.providers.request_factory import generation_request_from_history
     from app.providers.stream_types import GroundingMode, Workload
     from app.response_delivery.delivery import (
@@ -212,9 +221,14 @@ async def _handle_qna_search_leased_impl(
         request,
         presentation=FixedPresentation(
             actions=_qna_reply_markup(),
+            failure_actions=build_retry_and_roles_keyboard(retry_callback=logical_request.callback_data),
+            recovery_actions=build_retry_and_roles_keyboard(retry_callback=logical_request.callback_data),
             long_read_title=actual_search_query[:60].strip() or "Быстрый поиск",
         ),
     )
+    from app.handlers.retry_requests import bind_response
+
+    bind_response(logical_request, outcome)
     if isinstance(outcome, (CompleteDelivery, PartialDelivery)):
         if isinstance(outcome, PartialDelivery):
             mark_operation_failed()

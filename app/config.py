@@ -150,6 +150,7 @@ OPENAI_DEFAULT_MODEL = "openai-direct/gpt-6.1-terra"
 OPENAI_FAST_MODEL = "openai-direct/gpt-6-luna"
 DEFAULT_OPENAI_MODELS = [OPENAI_FAST_MODEL, OPENAI_DEFAULT_MODEL]
 SUPPORTED_OPENAI_CHAT_MODELS = frozenset({"gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-4.1-mini", "gpt-4o-mini"})
+SUPPORTED_OPENAI_FLEX_MODELS = frozenset({"gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"})
 
 
 def is_openai_chat_model_id(model: str | None) -> bool:

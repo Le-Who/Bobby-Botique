@@ -637,6 +637,7 @@ def register_controls(app, require_auth) -> None:
         data = await _mutation_body()
         section, identity, value = _validated(data)
         planned_models = []
+        planned_tier = "default"
         if section == "command":
             from app.command_aliases import PREFIX
 
@@ -664,17 +665,18 @@ def register_controls(app, require_auth) -> None:
                 if data.get("reset")
                 else value
             )
-            planned_models = list(
-                resolve_policy_value(
-                    identity,
-                    preview_value,
-                    baseline,
-                    allow_user_model=not controlled,
-                ).models
+            policy = resolve_policy_value(
+                identity,
+                preview_value,
+                baseline,
+                allow_user_model=not controlled,
             )
+            planned_models = list(policy.models)
+            planned_tier = policy.service_tier.value
         return jsonify(
             valid=True,
             models=planned_models,
+            service_tier=planned_tier,
             notes=(
                 ["Проверены формат и конфликты алиасов. Основная команда и проверки доступа сохраняются."]
                 if section == "command"

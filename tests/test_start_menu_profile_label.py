@@ -19,7 +19,8 @@ async def test_start_menu_displays_openai_profile_over_persisted_gemini(missing_
         values["process:chat"] = {"models": ["openai-direct/gpt-6.1-terra"], "inherit_user_model": False}
     async with runtime_settings_scope(SettingsSnapshot(8, values)):
         text, _, _ = await get_start_menu_content(state)
-    assert "openai-direct/gpt-6.1-terra" in text
+    expected = "openai-direct/gpt-6-luna" if missing_policy else "openai-direct/gpt-6.1-terra"
+    assert expected in text
     assert saved_model not in text
     assert state.model == saved_model
 

@@ -19,12 +19,14 @@ from telegram.ext import (
     filters,
 )
 
+from app import state
 from app.bot_commands import (
     build_help_overview_rows,
     language_from_telegram,
     render_help_overview,
 )
 from app.handlers import menus
+from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
 from app.handlers.tarot_chat import leave_tarot_for_chat
 from app.i18n import t
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
@@ -287,11 +289,18 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # context используется for совместимости с другими командами
     user_id = update.effective_user.id
 
-    chat_state = await get_user_chat(user_id)
-    chat_state.history = []
-    chat_state.token_count = 0
-    chat_state.system_prompt = None
-    await update_user_chat(user_id, chat_state)
+    if _is_user_busy(user_id):
+        await update.message.reply_text(_BUSY_TOAST)
+        return
+    async with state.get_user_lock(user_id):
+        chat_state = await get_user_chat(user_id)
+        chat_state.history = []
+        chat_state.token_count = 0
+        chat_state.system_prompt = None
+        await update_user_chat(user_id, chat_state)
+        from app.state import clear_retry_request
+
+        clear_retry_request(user_id)
     await leave_tarot_for_chat(user_id, update.message)
 
     from app.middleware.dedup import clear_user_dedup
@@ -744,6 +753,9 @@ async def clearmemory_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     try:
         deleted = await delete_user_memories(user_id)
+        from app.state import clear_retry_request
+
+        clear_retry_request(user_id)
     except Exception as exc:
         logging.error("Memory deletion failed for user %s: %s", user_id, exc, exc_info=True)
         await update.message.reply_text(

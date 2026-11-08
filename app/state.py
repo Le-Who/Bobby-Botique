@@ -50,6 +50,7 @@ class UserState:
         "last_custom_role_prompt",
         "generating_custom_role",
         "last_sent_message_text",
+        "retry_request",
         # Manual role creation fields
         "awaiting_manual_role_title",
         "awaiting_manual_role_prompt",
@@ -80,6 +81,7 @@ class UserState:
         self.last_custom_role_prompt: str | None = None
         self.generating_custom_role: bool = False
         self.last_sent_message_text: str | None = None
+        self.retry_request: object | None = None  # Runtime only; cleared with this user generation.
         # Manual role creation
         self.awaiting_manual_role_title: bool = False
         self.awaiting_manual_role_prompt: bool = False
@@ -178,6 +180,8 @@ def purge_user_runtime_state(user_id: int) -> None:
         if old_state is not None:
             # A detached pre-erasure reference cannot schedule another durable write.
             old_state._user_id = 0
+            old_state.retry_request = None
+            old_state.last_sent_message_text = None
     _NETWORK_STALL_SINCE.pop(user_id, None)
     _LAST_BOT_MESSAGE.pop(user_id, None)
 
@@ -504,6 +508,16 @@ def set_last_sent_message(user_id: int, text: str):
 
 def get_last_sent_message(user_id: int) -> str | None:
     return get_user_state(user_id).last_sent_message_text
+
+
+def clear_retry_request(user_id: int) -> None:
+    """Invalidate old response buttons after an explicit conversation/privacy reset."""
+    user_state = get_user_state(user_id)
+    user_state.retry_request = None
+    had_legacy_text = user_state.last_sent_message_text is not None
+    user_state.last_sent_message_text = None
+    if had_legacy_text:
+        _schedule_persist(user_state)
 
 
 # --- Manual role creation ---

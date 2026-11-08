@@ -27,7 +27,7 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
 
 ## Feature Overview
 
-- Chat with Gemini, Opencode, OpenRouter and FreeTheAI routing, model selection,
+- Chat with direct OpenAI, Gemini, Opencode, OpenRouter and FreeTheAI routing, model selection,
   key rotation and recovery from partial responses. Interactive Gemini chat
   can start a second model after three seconds without text; at most two model
   routes run at once, and the first to produce text wins.
@@ -40,6 +40,11 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
   or 10 with Search, and returns a ready standby immediately. See the
   [latency policy and evidence limits](docs/ARCHITECTURE.md#provider-latency).
   Router deadlines do not suspend otherwise healthy keys.
+- The OpenAI live-answer profile uses Luna Flex for chat and quick search.
+  The dashboard selects the model and Standard/Flex separately. Flex waits up
+  to 15 seconds for model text; search retrieval and Telegram delivery have
+  separate budgets. Inline and Crocodile judgement use Standard. A Flex
+  capacity error offers a manual retry without switching to Standard.
 - Quick search (`?`), bounded agentic research (`??`), URL/document/photo
   understanding and deterministic weather/currency/crypto shortcuts.
 - Document Q&A preserves the file explicitly selected in `/documents`; an
@@ -89,8 +94,8 @@ and [natal readiness](docs/natal-chart-product-readiness.md) for their boundarie
 
 ## Non-Goals / Limitations
 
-- There is no dedicated direct OpenAI provider module; OpenAI-compatible gateways
-  are separate integrations. Updating Codex guidance does not add that provider.
+- Direct OpenAI uses the official SDK and a separate credential pool.
+  OpenAI-compatible gateways retain their own routing and credentials.
 - No ORM: persistence uses asyncpg and numbered SQL.
 - Redis absence selects local fallbacks only where implemented; it does not make
   Reader, deferred delivery or every multi-replica feature equivalent.
@@ -378,8 +383,8 @@ and does not consume this ADC file.
 | `PRIMARY_PROVIDER` | ⚙️ | `opencode` / `gemini` / `openrouter` / `freetheai` | `opencode` | Legacy default provider selection; persisted `/set_provider` overrides take precedence. The live-answer profile in `/controls` pins all covered processes, including existing users, independently of their saved model. Use that profile for a complete OpenAI/Gemini switch. |
 | `OPENAI_API_KEYS` | ⚙️ | `synthetic-key-one,synthetic-key-two` | `[]` | Direct OpenAI credentials, separate from OpenRouter; comma-separated pool with rotation. `OPENAI_API_KEY` is the local single-key fallback when the pool is empty. Deployment forwards `OPENAI_API_KEYS`. |
 | `OPENAI_AVAILABLE_MODELS` | ⚙️ | `openai-direct/gpt-6-luna,openai-direct/gpt-6.1-terra` | Luna + Terra | Exact ordered direct-OpenAI catalog. `none` keeps an intentionally empty selector catalog without disabling internal process routes. `openai/…` retains its existing OpenRouter meaning. |
-| `OPENAI_DEFAULT_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Initial OpenAI profile for conversational and document/image answers; role overrides also accept bare OpenAI IDs. Saved dashboard process plans take precedence. |
-| `OPENAI_QNA_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Initial OpenAI profile for search answers. Search tool calls have their own provider charges. |
+| `OPENAI_DEFAULT_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Initial OpenAI profile for document/image and other live answers, including Crocodile judgement. Chat has its own Luna Flex profile default. Role overrides also accept bare IDs; saved dashboard plans take precedence. |
+| `OPENAI_QNA_MODEL` | ⚙️ | `openai-direct/gpt-6.1-terra` | `openai-direct/gpt-6.1-terra` | Legacy OpenAI baseline for search. The active OpenAI profile starts with Luna Flex; saved dashboard plans take precedence. Quick search retrieves Jina sources before model synthesis. |
 | `OPENAI_INLINE_MODEL` | ⚙️ | `openai-direct/gpt-6-luna` | `openai-direct/gpt-6-luna` | Initial fast OpenAI profile for inline and short live classifiers. Crocodile answer checking uses `OPENAI_DEFAULT_MODEL`. Daily preparation keeps its existing Gemini routes. |
 | `OPENCODE_DEFAULT_MODEL` | ⚙️ | `opencode-go/qwen3.5-plus` | `opencode-go/qwen3.5-plus` | Default Opencode chat role. |
 | `OPENCODE_QNA_MODEL` | ⚙️ | `opencode-go/qwen3.6-plus` | `opencode-go/qwen3.6-plus` | Model for quick Q&A search synthesis (`?` prefix). |

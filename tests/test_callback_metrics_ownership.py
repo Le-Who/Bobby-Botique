@@ -197,9 +197,12 @@ async def test_chat_recovery_callback_owns_its_job(monkeypatch, collector, callb
     from app.handlers import cb_ai_actions
     from tests.test_cb_ai_actions import _make_update
 
-    update, query = _make_update(f"{callback}:confirm")
+    update, query = _make_update("retry_last" if callback == "retry_last" else f"{callback}:confirm")
     query.message.text = "Synthetic partial response long enough to continue"
-    query.message.reply_text = AsyncMock(return_value=SimpleNamespace(edit_text=AsyncMock()))
+    query.message.reply_text = AsyncMock(
+        return_value=SimpleNamespace(edit_text=AsyncMock(), message_id=101, chat=SimpleNamespace(id=42))
+    )
+    state.get_user_state(42).retry_request = None
     query.message.reply_to_message = SimpleNamespace(from_user=SimpleNamespace(id=42), text="Synthetic request")
     tasks = set()
     monkeypatch.setattr(cb_ai_actions, "_background_tasks", tasks)

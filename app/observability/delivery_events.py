@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.observability.schema import JsonValue
-from app.providers.stream_types import StreamCompleted, StreamFailed
+from app.providers.stream_types import RouteUsed, StreamCompleted, StreamFailed
 from app.response_delivery.outcomes import CompleteDelivery, DeferredDelivery, FailedDelivery, PartialDelivery
 
 
@@ -41,6 +41,7 @@ def delivery_outcome_fields(outcome: object) -> dict[str, JsonValue]:
                 reason_code=outcome.terminal.code.value,
                 failure_phase=outcome.terminal.phase.value,
                 upstream_error_id=outcome.terminal.error_id,
+                **_tier_fields(outcome.terminal.route),
             )
         else:
             fields.update(_completion_fields(outcome.terminal))
@@ -66,6 +67,16 @@ def delivery_outcome_fields(outcome: object) -> dict[str, JsonValue]:
     raise AssertionError("unreachable delivery outcome")
 
 
+def _tier_fields(route: RouteUsed | None) -> dict[str, JsonValue]:
+    fields: dict[str, JsonValue] = {}
+    if route is not None:
+        if route.requested_service_tier is not None:
+            fields["requested_service_tier"] = route.requested_service_tier.value
+        if route.actual_service_tier is not None:
+            fields["actual_service_tier"] = route.actual_service_tier
+    return fields
+
+
 def _completion_fields(completion: StreamCompleted) -> dict[str, JsonValue]:
     return {
         "finish_kind": completion.finish_reason.kind.value,
@@ -73,6 +84,7 @@ def _completion_fields(completion: StreamCompleted) -> dict[str, JsonValue]:
         "provider": completion.route.provider.value,
         "requested_model": completion.route.requested_model,
         "actual_model": completion.route.actual_model,
+        **_tier_fields(completion.route),
     }
 
 

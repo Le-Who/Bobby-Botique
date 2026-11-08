@@ -25,6 +25,7 @@ import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app import state
 from app.bot_commands import (
     build_help_overview_rows,
     language_from_telegram,
@@ -69,13 +70,17 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if action == "new_topic":
-        chat_state = await get_user_chat(user_id)
-        chat_state.history = []
-        chat_state.token_count = 0
-        chat_state.system_prompt = None
-        chat_state.context_summary = None
-        chat_state.is_deep_dive = False
-        await update_user_chat(user_id, chat_state)
+        async with state.get_user_lock(user_id):
+            chat_state = await get_user_chat(user_id)
+            chat_state.history = []
+            chat_state.token_count = 0
+            chat_state.system_prompt = None
+            chat_state.context_summary = None
+            chat_state.is_deep_dive = False
+            await update_user_chat(user_id, chat_state)
+            from app.state import clear_retry_request
+
+            clear_retry_request(user_id)
         await query.message.reply_text(t("chat.new_topic", _lang(update)))
         await query.edit_message_reply_markup(reply_markup=None)
 
@@ -107,14 +112,18 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     # Clear chat history and system prompt, similar to /newchat command
-    chat_state = await get_user_chat(user_id)
-    chat_state.history = []
-    chat_state.token_count = 0
-    chat_state.system_prompt = None
-    chat_state.context_summary = None
-    chat_state.is_deep_dive = False
-    chat_state.deep_dive_thread_id = None
-    await update_user_chat(user_id, chat_state)
+    async with state.get_user_lock(user_id):
+        chat_state = await get_user_chat(user_id)
+        chat_state.history = []
+        chat_state.token_count = 0
+        chat_state.system_prompt = None
+        chat_state.context_summary = None
+        chat_state.is_deep_dive = False
+        chat_state.deep_dive_thread_id = None
+        await update_user_chat(user_id, chat_state)
+        from app.state import clear_retry_request
+
+        clear_retry_request(user_id)
     await leave_tarot_for_chat(user_id, query.message)
 
     # Remove the old inline keyboard
@@ -133,14 +142,18 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.answer(_BUSY_TOAST, show_alert=True)
         return
 
-    chat_state = await get_user_chat(user_id)
-    chat_state.history = []
-    chat_state.token_count = 0
-    chat_state.system_prompt = None
-    chat_state.context_summary = None
-    chat_state.is_deep_dive = False
-    chat_state.deep_dive_thread_id = None
-    await update_user_chat(user_id, chat_state)
+    async with state.get_user_lock(user_id):
+        chat_state = await get_user_chat(user_id)
+        chat_state.history = []
+        chat_state.token_count = 0
+        chat_state.system_prompt = None
+        chat_state.context_summary = None
+        chat_state.is_deep_dive = False
+        chat_state.deep_dive_thread_id = None
+        await update_user_chat(user_id, chat_state)
+        from app.state import clear_retry_request
+
+        clear_retry_request(user_id)
     await leave_tarot_for_chat(user_id, query.message)
 
     lang = _lang(update)
@@ -305,6 +318,9 @@ async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_state = await get_user_chat(user_id)
     chat_state.ltm_enabled = not chat_state.ltm_enabled
     chat_state.memory_epoch = await set_ltm_enabled(user_id, chat_state.ltm_enabled)
+    from app.state import clear_retry_request
+
+    clear_retry_request(user_id)
     if not chat_state.ltm_enabled:
         from app.repos.memory_autosave import cancel_user_memory_tasks
 

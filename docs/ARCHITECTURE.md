@@ -116,7 +116,8 @@ key/model recovery path. Bounded workflows retain interface policy caps:
 | Request context | First visible text cap | Inline completion cap |
 | --- | --- | --- |
 | Legacy interactive chat, any thinking level/model | No application deadline | — |
-| Direct OpenAI interactive chat | 20 s shared across key attempts | — |
+| Direct OpenAI Standard interactive chat | 20 s shared across key attempts | — |
+| Direct OpenAI Flex chat or quick-search synthesis | 15 s shared across key attempts | — |
 | Deferred retry, Flash low/off | 12 s | — |
 | Deferred retry, Flash auto/medium | 20 s | — |
 | Deferred retry, high or other model families | 30 s | — |
@@ -136,6 +137,13 @@ user models and the original process policies for restoration. Background daily
 preparation and specialized Gemini paths retain their own ownership. See the
 [runtime controls guide](runtime-controls.md#провайдер-ответов-в-реальном-времени)
 for the exact switch scope and configuration.
+
+The process policy stores `service_tier` separately from the model ID. New OpenAI
+profiles use Luna Flex for chat and quick-search synthesis; other OpenAI routes
+use Standard. Flex capacity failures preserve key health and offer manual retry,
+without an automatic Standard fallback. The 15-second model-text budget starts
+after quick-search source retrieval. SDK metadata and reasoning do not extend it.
+Requested and actual tiers remain separate in the route result and telemetry.
 
 Google recommends low thinking for latency-sensitive chat and explains that
 [3.8 Flash medium/high performs more reasoning](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.8).

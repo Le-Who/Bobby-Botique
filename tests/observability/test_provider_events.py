@@ -10,8 +10,10 @@ from app.providers.stream_types import (
     FinishReason,
     GroundingReport,
     KeyDisposition,
+    ProviderKind,
     RetryDisposition,
     RouteUsed,
+    ServiceTier,
     StreamCompleted,
     StreamFailed,
     TextDelta,
@@ -208,3 +210,36 @@ async def test_empty_completion_records_failed_attempt_terminal(monkeypatch):
     assert finished[0]["outcome"] == "failed"
     assert finished[0]["reason_code"] == ErrorCode.EMPTY_RESPONSE.value
     assert finished[0]["failure_phase"] == FailurePhase.BEFORE_TEXT.value
+
+
+@pytest.mark.asyncio
+async def test_observed_openai_stream_retains_safe_requested_and_actual_tiers(monkeypatch):
+    from app.observability import provider_events
+
+    captured = []
+    monkeypatch.setattr(provider_events, "emit", lambda event, **fields: captured.append((event, fields)))
+    route = RouteUsed(
+        ProviderKind.OPENAI, "openai-direct/gpt-6-luna", "openai-direct/gpt-6-luna", ServiceTier.FLEX, "default"
+    )
+
+    async def source():
+        yield TextDelta("synthetic")
+        yield StreamCompleted(FinishReason.from_raw("stop"), TokenUsage(total=3), GroundingReport(), route)
+
+    events = [
+        event
+        async for event in provider_events.observe_provider_stream(
+            source(),
+            provider="openai",
+            requested_model=route.requested_model,
+            actual_model=route.actual_model,
+            api_key="synthetic-private-key-1234",
+            requested_service_tier="flex",
+        )
+    ]
+    assert isinstance(events[-1], StreamCompleted)
+    assert captured[0][1]["requested_service_tier"] == "flex"
+    assert captured[-1][1]["requested_service_tier"] == "flex"
+    assert captured[-1][1]["actual_service_tier"] == "default"
+    assert "synthetic-private-key-1234" not in repr(captured)
+    assert "synthetic" not in repr(captured[-1][1].get("response_body", ""))

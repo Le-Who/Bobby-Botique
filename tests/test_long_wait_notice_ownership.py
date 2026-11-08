@@ -373,7 +373,7 @@ async def test_real_delivery_joins_notice_before_successor_write(request_flow, t
     await settle()
     assert flow.message.notice_finished.is_set()
     assert "retry_wait:1100" not in buttons(flow.message.visible.get("reply_markup"))
-    assert "retry_last" in buttons(flow.message.visible.get("reply_markup"))
+    assert any(value.startswith("retry_last:") for value in buttons(flow.message.visible.get("reply_markup")))
     if terminal == "text":
         assert "synthetic answer" in flow.message.visible["text"]
         assert "tts_reply" in buttons(flow.message.visible["reply_markup"])

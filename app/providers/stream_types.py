@@ -54,6 +54,11 @@ class ProviderKind(StrEnum):
     FREETHEAI = "freetheai"
 
 
+class ServiceTier(StrEnum):
+    DEFAULT = "default"
+    FLEX = "flex"
+
+
 class FinishKind(StrEnum):
     STOP = "stop"
     MAX_TOKENS = "max_tokens"
@@ -150,8 +155,11 @@ class GenerationRequest:
     policy_revision: int = 0
     allow_key_race: bool = True
     response_schema: type[BaseModel] | None = None
+    service_tier: ServiceTier = ServiceTier.DEFAULT
 
     def __post_init__(self) -> None:
+        if not isinstance(self.service_tier, ServiceTier):
+            raise TypeError("GenerationRequest.service_tier must be a ServiceTier")
         if self.response_schema is not None and (
             not isinstance(self.response_schema, type) or not issubclass(self.response_schema, BaseModel)
         ):
@@ -198,6 +206,8 @@ class GenerationRequest:
     @property
     def first_text_timeout_seconds(self) -> float | None:
         """Interactive calls finish on provider outcome or owner cancellation."""
+        if self.service_tier is ServiceTier.FLEX and self.workload in {Workload.INTERACTIVE, Workload.QUICK_SEARCH}:
+            return 15.0
         if self.models[0].startswith("openai-direct/") and self.workload is Workload.INTERACTIVE:
             return 20.0
         if self.workload is Workload.INTERACTIVE:
@@ -350,8 +360,16 @@ class RouteUsed:
     provider: ProviderKind
     requested_model: str
     actual_model: str
+    requested_service_tier: ServiceTier | None = None
+    actual_service_tier: str | None = None
 
     def __post_init__(self) -> None:
+        if self.requested_service_tier is not None and not isinstance(self.requested_service_tier, ServiceTier):
+            raise TypeError("RouteUsed.requested_service_tier must be a ServiceTier")
+        if self.actual_service_tier is not None and (
+            not isinstance(self.actual_service_tier, str) or not self.actual_service_tier.strip()
+        ):
+            raise ValueError("RouteUsed.actual_service_tier must be a non-empty string")
         if not self.requested_model.strip() or not self.actual_model.strip():
             raise ValueError("RouteUsed model names must be non-empty")
 
@@ -417,6 +435,7 @@ __all__ = [
     "RequestScope",
     "RetryDisposition",
     "RouteUsed",
+    "ServiceTier",
     "StreamCompleted",
     "StreamDeferred",
     "StreamFailed",

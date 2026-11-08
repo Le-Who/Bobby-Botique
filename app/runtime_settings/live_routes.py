@@ -73,7 +73,10 @@ def default_policy(process_id: str, provider: str) -> dict[str, Any]:
         model = getattr(settings, spec.setting, spec.fallback) if spec.setting else spec.fallback
         if not model.startswith("gemini-"):
             model = GEMINI_ECONOMY_MODEL if process_id in _FAST_PROCESSES else GEMINI_PRIMARY_MODEL
-    return validate_policy(process_id, {"models": [model], "strategy": "sequential", "inherit_user_model": False})
+    value = {"models": [model], "strategy": "sequential", "inherit_user_model": False}
+    if provider == "openai" and process_id in {"chat", "search"}:
+        value["service_tier"] = "flex"
+    return validate_policy(process_id, value)
 
 
 def effective_policy_value(process_id: str, snapshot: store.SettingsSnapshot) -> Any:
@@ -117,10 +120,10 @@ def validate_value(identity: str, value: Any) -> None:
 def _openai_model(process_id: str) -> str:
     from app.config import settings
 
+    if process_id in {"chat", "search"}:
+        return "openai-direct/gpt-6-luna"
     if process_id in _FAST_PROCESSES:
         return getattr(settings, "OPENAI_INLINE_MODEL", "openai-direct/gpt-6-luna")
-    if process_id == "search":
-        return getattr(settings, "OPENAI_QNA_MODEL", "openai-direct/gpt-6.1-terra")
     return getattr(settings, "OPENAI_DEFAULT_MODEL", "openai-direct/gpt-6.1-terra")
 
 
@@ -199,5 +202,9 @@ def status(snapshot: store.SettingsSnapshot) -> dict[str, Any]:
         },
         "can_restore_baseline": "live_route:saved:baseline" in snapshot.values,
         "openai_defaults": {process_id: _openai_model(process_id) for process_id in LIVE_PROCESS_IDS},
+        "service_tiers": {
+            process_id: (effective_policy_value(process_id, snapshot) or {}).get("service_tier", "default")
+            for process_id in LIVE_PROCESS_IDS
+        },
         "note": "Проверено только наличие настроенных ключей; доступ к моделям не проверялся.",
     }

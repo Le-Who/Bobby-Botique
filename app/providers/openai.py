@@ -11,7 +11,7 @@ import httpx2
 from openai import APIConnectionError, APIError, APIStatusError, APITimeoutError, AsyncOpenAI, omit
 from openai.types.responses import Response
 
-from app.config import SUPPORTED_OPENAI_CHAT_MODELS
+from app.config import SUPPORTED_OPENAI_CHAT_MODELS, SUPPORTED_OPENAI_FLEX_MODELS
 from app.errors import ErrorCode, tag_error
 from app.metrics import metrics_collector
 from app.observability.provider_events import record_provider_exception
@@ -30,6 +30,7 @@ from app.providers.stream_types import (
     ProviderKind,
     RetryDisposition,
     RouteUsed,
+    ServiceTier,
     StreamCompleted,
     StreamFailed,
     TextDelta,
@@ -72,6 +73,8 @@ async def responses_payload(request: GenerationRequest, model_name: str) -> dict
     model = model_name.removeprefix("openai-direct/")
     if not is_openai_model(model_name) or model not in _MODELS:
         raise UnsupportedResponsesRequest("Unsupported direct OpenAI model")
+    if request.service_tier is ServiceTier.FLEX and model not in SUPPORTED_OPENAI_FLEX_MODELS:
+        raise UnsupportedResponsesRequest("This direct OpenAI model does not support Flex processing")
     inputs: list[dict[str, Any]] = []
     for turn in request.turns:
         content: list[dict[str, Any]] = []
@@ -100,6 +103,7 @@ async def responses_payload(request: GenerationRequest, model_name: str) -> dict
         "model": model,
         "input": inputs,
         "store": False,
+        "service_tier": request.service_tier.value,
     }
     if model.startswith("gpt-6"):
         payload["reasoning"] = {"effort": effort}
@@ -152,7 +156,7 @@ class OpenAIProvider(BaseAIProvider):
     provider_name = "openai"
 
     async def stream(self, request: GenerationRequest, *, model_name: str):
-        route = RouteUsed(ProviderKind.OPENAI, request.models[0], model_name)
+        route = RouteUsed(ProviderKind.OPENAI, request.models[0], model_name, request.service_tier)
         visible = False
         buffer = VisibleTextBuffer()
 
@@ -198,6 +202,12 @@ class OpenAIProvider(BaseAIProvider):
                         kind = native_event.type
                         if not isinstance(kind, str):
                             raise ValueError("Invalid Responses event")
+                        native_response = getattr(native_event, "response", None)
+                        actual_tier = getattr(native_response, "service_tier", None)
+                        if isinstance(actual_tier, str) and actual_tier:
+                            route = RouteUsed(
+                                ProviderKind.OPENAI, request.models[0], model_name, request.service_tier, actual_tier
+                            )
                         if kind == "response.output_text.delta":
                             raw_delta = getattr(native_event, "delta", None)
                             if not isinstance(raw_delta, str):
@@ -208,7 +218,11 @@ class OpenAIProvider(BaseAIProvider):
                         elif kind in {"error", "response.failed"}:
                             result = getattr(native_event, "response", None)
                             error = getattr(result, "error", None)
-                            error_code = getattr(error, "code", None) or getattr(native_event, "code", None)
+                            error_code = (
+                                getattr(error, "code", None)
+                                or getattr(error, "type", None)
+                                or getattr(native_event, "code", None)
+                            )
                             code, key, retry = self._error_disposition(0, error_code)
                             terminal = failed(code, "Responses API reported failure", key, retry)
                             break
@@ -239,6 +253,8 @@ class OpenAIProvider(BaseAIProvider):
                                     ProviderKind.OPENAI,
                                     request.models[0],
                                     f"openai-direct/{actual}" if isinstance(actual, str) and actual else model_name,
+                                    request.service_tier,
+                                    route.actual_service_tier,
                                 )
                                 terminal = StreamCompleted(
                                     FinishReason.from_raw("stop"), _usage(result), grounding, terminal_route
@@ -256,7 +272,8 @@ class OpenAIProvider(BaseAIProvider):
                 ErrorCode.TIMEOUT, "Responses deadline expired", KeyDisposition.UNCHANGED, RetryDisposition.TRY_NEXT_KEY
             )
         except APIStatusError as exc:
-            code, key, retry = self._error_disposition(exc.status_code, exc.code if isinstance(exc.code, str) else None)
+            error_code = exc.code if isinstance(exc.code, str) else exc.type if isinstance(exc.type, str) else None
+            code, key, retry = self._error_disposition(exc.status_code, error_code)
             yield failed(code, f"Responses HTTP {exc.status_code}", key, retry)
         except UnsupportedResponsesRequest:
             yield failed(ErrorCode.INVALID_REQUEST, "Unsupported Responses request")
@@ -286,11 +303,14 @@ class OpenAIProvider(BaseAIProvider):
                 error_id=error_id,
             )
         except APIError as exc:
-            code, key, retry = self._error_disposition(0, exc.code if isinstance(exc.code, str) else None)
+            error_code = exc.code if isinstance(exc.code, str) else exc.type if isinstance(exc.type, str) else None
+            code, key, retry = self._error_disposition(0, error_code)
             yield failed(code, "OpenAI SDK reported Responses failure", key, retry)
 
     @staticmethod
     def _error_disposition(status: int, code: str | None):
+        if code == "resource_unavailable":
+            return ErrorCode.OVERLOADED, KeyDisposition.UNCHANGED, RetryDisposition.RETRY_LATER
         if status == 401 or code == "invalid_api_key":
             return ErrorCode.INVALID_KEY, KeyDisposition.INVALID, RetryDisposition.TRY_NEXT_KEY
         if code == "insufficient_quota":

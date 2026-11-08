@@ -9,6 +9,8 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any
 
+from app.providers.stream_types import ServiceTier
+
 TTS_DEFAULT_MODELS = ("gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts")
 
 
@@ -222,15 +224,16 @@ class ResolvedPolicy:
     strategy: str = "legacy"
     explicit: bool = False
     revision: int = 0
+    service_tier: ServiceTier = ServiceTier.DEFAULT
 
 
 def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
-    from app.config import is_freetheai_chat_model_id, is_openai_chat_model_id
+    from app.config import SUPPORTED_OPENAI_FLEX_MODELS, is_freetheai_chat_model_id, is_openai_chat_model_id
 
     spec = PROCESSES[process_id]
     if not spec.connected:
         raise ValueError(spec.note or "Исполнитель ещё не подключён к редактированию политики")
-    if not isinstance(value, Mapping) or set(value) - {"models", "strategy", "inherit_user_model"}:
+    if not isinstance(value, Mapping) or set(value) - {"models", "strategy", "inherit_user_model", "service_tier"}:
         raise ValueError("Неизвестные поля политики")
     models = value.get("models")
     if not isinstance(models, (list, tuple)) or not 1 <= len(models) <= 12:
@@ -307,7 +310,24 @@ def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
         raise ValueError("inherit_user_model должен быть boolean")
     if inherit and "provider_order" in spec.capabilities:
         raise ValueError("Порядок провайдеров не наследует модель пользователя")
-    return {"models": clean, "strategy": strategy, "inherit_user_model": inherit}
+    tier = value.get("service_tier", ServiceTier.DEFAULT.value)
+    if not isinstance(tier, str) or tier not in {item.value for item in ServiceTier}:
+        raise ValueError("Неизвестный тариф: выберите Standard или Flex")
+    if tier == ServiceTier.FLEX.value and (
+        process_id not in {"chat", "search"}
+        or inherit
+        or not all(
+            model.startswith("openai-direct/") and model.removeprefix("openai-direct/") in SUPPORTED_OPENAI_FLEX_MODELS
+            for model in clean
+        )
+    ):
+        raise ValueError(
+            "Flex доступен только для chat/search с поддерживаемыми моделями OpenAI без наследования модели пользователя"
+        )
+    result = {"models": clean, "strategy": strategy, "inherit_user_model": inherit}
+    if "service_tier" in value:
+        result["service_tier"] = tier
+    return result
 
 
 async def resolve_process(process_id: str, baseline: tuple[str, ...]) -> ResolvedPolicy:
@@ -337,7 +357,7 @@ def resolve_policy_value(
     if value["inherit_user_model"] and baseline and allow_user_model:
         models = tuple(dict.fromkeys((baseline[0], *models)))
         validate_policy(process_id, {**value, "models": models})
-    return ResolvedPolicy(models, value["strategy"], True, revision)
+    return ResolvedPolicy(models, value["strategy"], True, revision, ServiceTier(value.get("service_tier", "default")))
 
 
 async def list_processes() -> list[dict[str, Any]]:
@@ -362,6 +382,9 @@ async def list_processes() -> list[dict[str, Any]]:
                 "source": "admin" if value else "baseline",
                 "execution": value.get("strategy", "legacy") if isinstance(value, Mapping) else "legacy",
                 "strategy": value.get("strategy", "legacy") if isinstance(value, Mapping) else "legacy",
+                "service_tier": value.get("service_tier", "default") if isinstance(value, Mapping) else "default",
+                "service_tiers": ["default", "flex"] if process_id in {"chat", "search"} else ["default"],
+                "service_tier_explicit": isinstance(value, Mapping) and "service_tier" in value,
                 "inherit_user_model": value.get("inherit_user_model", False) if isinstance(value, Mapping) else False,
                 "user_model_allowed": active_provider(snapshot) == "baseline" or process_id not in LIVE_PROCESS_IDS,
                 "capabilities": list(spec.capabilities),
@@ -506,7 +529,11 @@ async def execute_text_process(
         thinking_level=legacy_options.get("thinking_level"),
     )
     request = replace(
-        request, allow_model_fallback=False, route_strategy=policy.strategy, policy_revision=policy.revision
+        request,
+        allow_model_fallback=False,
+        route_strategy=policy.strategy,
+        policy_revision=policy.revision,
+        service_tier=policy.service_tier,
     )
     chunks: list[str] = []
     async with asyncio.timeout(float(legacy_options.get("timeout") or 120.0)):

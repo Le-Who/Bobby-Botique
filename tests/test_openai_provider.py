@@ -6,7 +6,7 @@ import json
 from contextlib import aclosing
 from types import SimpleNamespace
 from typing import Literal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx2 as httpx
 import pytest
@@ -28,6 +28,7 @@ from app.providers.stream_types import (
     PromptTurn,
     ProviderKind,
     RetryDisposition,
+    ServiceTier,
     StreamCompleted,
     StreamFailed,
     TextDelta,
@@ -581,3 +582,147 @@ async def test_sdk_client_pool_disables_retries_pins_origin_and_closes(monkeypat
     await openai.close_http_clients()
     assert first.is_closed() and second.is_closed()
     assert not openai._sdk_clients
+
+
+@pytest.mark.parametrize("tier", [ServiceTier.DEFAULT, ServiceTier.FLEX])
+async def test_sdk_explicit_service_tier_and_actual_tier_are_distinct(transport, tier):
+    install, calls = transport
+    install([frame("response.output_text.delta", delta="answer"), completed(service_tier="priority")])
+    terminal = (await collect(request(service_tier=tier)))[-1]
+    assert isinstance(terminal, StreamCompleted)
+    assert json.loads(calls[0].content)["service_tier"] == tier.value
+    assert terminal.route.requested_service_tier is tier
+    assert terminal.route.actual_service_tier == "priority"
+
+
+@pytest.mark.parametrize("workload", [Workload.INTERACTIVE, Workload.QUICK_SEARCH])
+def test_flex_has_fifteen_second_first_visible_budget(workload):
+    assert request(service_tier=ServiceTier.FLEX, workload=workload).first_text_timeout_seconds == 15.0
+    assert request(service_tier=ServiceTier.FLEX, workload=workload).provider_timeout_seconds == 120.0
+
+
+@pytest.mark.parametrize(
+    "level,effort",
+    [
+        (None, "none"),
+        (ThinkingLevel.OFF, "none"),
+        (ThinkingLevel.LOW, "low"),
+        (ThinkingLevel.MEDIUM, "medium"),
+        (ThinkingLevel.HIGH, "high"),
+    ],
+)
+@pytest.mark.parametrize("tier", [ServiceTier.DEFAULT, ServiceTier.FLEX])
+async def test_service_tier_never_changes_explicit_or_default_thinking(level, effort, tier):
+    payload = await openai.responses_payload(request(service_tier=tier, thinking_level=level), MODEL)
+    assert payload["reasoning"] == {"effort": effort}
+    assert payload["service_tier"] == tier.value
+
+
+@pytest.mark.parametrize("status", [200, 429])
+@pytest.mark.parametrize("error_field", ["code", "type"])
+async def test_flex_capacity_failure_never_rotates_suspends_or_falls_back(transport, monkeypatch, status, error_field):
+    install, calls = transport
+    chunks = (
+        [frame("response.failed", response={"error": {"code": None, error_field: "resource_unavailable"}})]
+        if status == 200
+        else [
+            json.dumps(
+                {"error": {"code": None, error_field: "resource_unavailable", "message": "private body"}}
+            ).encode()
+        ]
+    )
+    stream = install(chunks, status=status)
+    monkeypatch.setattr(
+        agent_use_cases, "settings", SimpleNamespace(OPENAI_API_KEYS=["synthetic-one", "synthetic-two"])
+    )
+    suspend = Mock()
+    monkeypatch.setattr(agent_use_cases, "suspend_openai_key", suspend)
+    monkeypatch.setattr(
+        agent_use_cases, "get_available_gemini_key", AsyncMock(side_effect=AssertionError("Gemini fallback"))
+    )
+    before = dict(agent_use_cases._openai_key_health)
+    events = [event async for event in ProviderRouter().stream(request(service_tier=ServiceTier.FLEX))]
+    assert len(events) == len(calls) == 1
+    failure = events[0]
+    assert failure.code is ErrorCode.OVERLOADED
+    assert failure.retry is RetryDisposition.RETRY_LATER
+    assert failure.key is KeyDisposition.UNCHANGED
+    assert failure.route.requested_service_tier is ServiceTier.FLEX
+    assert failure.route.actual_service_tier is None
+    assert "private body" not in failure.diagnostic
+    assert agent_use_cases._openai_key_health == before
+    suspend.assert_not_called()
+    assert stream.closed
+
+
+async def test_actual_tier_from_created_survives_missing_completed_tier(transport):
+    install, _ = transport
+    install(
+        [
+            frame(
+                "response.created",
+                response={"id": "resp_test", "status": "in_progress", "output": [], "service_tier": "flex"},
+            ),
+            frame("response.output_text.delta", delta="answer"),
+            completed(),
+        ]
+    )
+    terminal = (await collect(request(service_tier=ServiceTier.FLEX)))[-1]
+    assert isinstance(terminal, StreamCompleted)
+    assert terminal.route.requested_service_tier is ServiceTier.FLEX
+    assert terminal.route.actual_service_tier == "flex"
+
+
+async def test_router_uses_one_flex_deadline_despite_metadata(transport, monkeypatch):
+    from app.providers import router as router_module
+
+    install, calls = transport
+    stream = install([b": keepalive\n\n"] * 50, delay=0.02)
+    real_deadline = router_module._deadline_after
+    budgets = []
+
+    def accelerated_deadline(seconds):
+        budgets.append(seconds)
+        return real_deadline(0.06 if seconds == 15.0 else seconds)
+
+    monkeypatch.setattr(router_module, "_deadline_after", accelerated_deadline)
+    monkeypatch.setattr(
+        agent_use_cases, "settings", SimpleNamespace(OPENAI_API_KEYS=["synthetic-one", "synthetic-two"])
+    )
+    events = [event async for event in ProviderRouter().stream(request(service_tier=ServiceTier.FLEX))]
+    assert events[-1].code is ErrorCode.TIMEOUT
+    assert events[-1].phase is FailurePhase.BEFORE_TEXT
+    assert budgets.count(15.0) == 1
+    assert len(calls) == 1
+    assert stream.closed
+
+
+async def test_flex_unsupported_model_rejected_before_transport(transport):
+    _, calls = transport
+    events = [
+        event
+        async for event in openai.OpenAIProvider("synthetic").stream(
+            request(service_tier=ServiceTier.FLEX), model_name="openai-direct/gpt-4o-mini"
+        )
+    ]
+    assert events[0].code is ErrorCode.INVALID_REQUEST
+    assert not calls
+
+
+async def test_request_factory_forwards_policy_tier_and_preserves_explicit_direct_request(monkeypatch):
+    from app.providers.request_factory import generation_request_from_history
+
+    policy = SimpleNamespace(
+        models=(MODEL,), strategy="sequential", explicit=True, revision=7, service_tier=ServiceTier.FLEX
+    )
+    monkeypatch.setattr("app.process_policies.resolve_process", AsyncMock(return_value=policy))
+    req = await generation_request_from_history(
+        models=("gemini-original",), history=[{"parts": ["synthetic"]}], process_id="chat"
+    )
+    assert req.service_tier is ServiceTier.FLEX
+    assert req.models == (MODEL,)
+    assert req.allow_model_fallback is False
+    req = await generation_request_from_history(
+        models=(MODEL,), history=[{"parts": ["synthetic"]}], service_tier=ServiceTier.FLEX
+    )
+    assert req.service_tier is ServiceTier.FLEX

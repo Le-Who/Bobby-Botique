@@ -161,7 +161,7 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
     application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
     application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))
-    application.add_handler(CallbackQueryHandler(retry_last_callback, pattern="^retry_last$"))
+    application.add_handler(CallbackQueryHandler(retry_last_callback, pattern=r"^retry_last(?::[a-f0-9]{16})?$"))
     _add_fast_callback(application, cancel_long_wait_callback, r"^retry_wait:\d+$")
     application.add_handler(CallbackQueryHandler(continue_stream_callback, pattern="^continue_stream$"))
     _add_fast_callback(application, tts_reply_callback, "^tts_reply$")

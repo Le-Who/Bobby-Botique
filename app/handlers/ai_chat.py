@@ -80,6 +80,7 @@ def _build_chat_response_markup(
     is_forward_batch: bool,
     memories_injected: int,
     graph_triples_count: int,
+    retry_callback: str = "retry_last",
 ) -> InlineKeyboardMarkup:
     """Build the complete action keyboard before streaming finalizes the message."""
     from app.utils.response_tags import INTENT_BUTTONS, extract_first_code_block
@@ -106,7 +107,7 @@ def _build_chat_response_markup(
         label, callback_data = INTENT_BUTTONS[intent]
         buttons.append([InlineKeyboardButton(label, callback_data=callback_data)])
 
-    buttons.append([InlineKeyboardButton(t("btn.retry", lang), callback_data="retry_last")])
+    buttons.append([InlineKeyboardButton(t("btn.retry", lang), callback_data=retry_callback)])
     buttons.append(
         [
             InlineKeyboardButton(t("btn.roles", lang), callback_data="open_roles:from_response"),
@@ -143,7 +144,7 @@ def _build_chat_response_markup(
     return InlineKeyboardMarkup(buttons)
 
 
-def _build_interrupted_reply_markup(lang: str) -> InlineKeyboardMarkup:
+def _build_interrupted_reply_markup(lang: str, retry_callback: str = "retry_last") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
@@ -151,7 +152,7 @@ def _build_interrupted_reply_markup(lang: str) -> InlineKeyboardMarkup:
                     "▶️ " + t("btn.continue_stream", lang),
                     callback_data="continue_stream",
                 ),
-                InlineKeyboardButton(t("btn.retry", lang), callback_data="retry_last"),
+                InlineKeyboardButton(t("btn.retry", lang), callback_data=retry_callback),
             ]
         ]
     )
@@ -251,6 +252,7 @@ async def _handle_regular_chat(
     is_forward_batch: bool = False,
     capture_text_memory: bool = True,
     user_parts: list | None = None,
+    retry_request=None,
 ):
     # Freeze the generation carried by this request.  Every external use and
     # the final persistence CAS must use this exact value; reading the mutable
@@ -301,6 +303,23 @@ async def _handle_regular_chat(
                 return
             await _handle_lyria_audio(placeholder_message, user_id, user_message, model_for_this_request)
         return
+
+    from app.handlers.retry_requests import begin_request, request_is_current, retry_history
+
+    logical_request = begin_request(user_id, "chat", user_message, chat_state, retry=retry_request)
+    if retry_request is None:
+        logical_request.capture_text_memory = capture_text_memory
+        logical_request.is_forward_batch = is_forward_batch
+        logical_request.reply_with_voice = reply_with_voice
+        if user_parts is not None:
+            logical_request.replayable = all(
+                isinstance(part, str) or isinstance(part, dict) and isinstance(part.get("text"), str)
+                for part in user_parts
+            )
+            logical_request.text_parts = tuple(
+                part if isinstance(part, str) else part.get("text", "")
+                for part in _canonical_user_parts(user_message, user_parts)
+            )
 
     if process_policy.explicit:
         from app.agent_use_cases import AgentRequestUseCase
@@ -396,8 +415,11 @@ async def _handle_regular_chat(
 
     # Assemble context within token budget
     history_before_request = list(chat_state.history)
+    assembly_history = (
+        retry_history(logical_request, chat_state.history) if retry_request is not None else chat_state.history
+    )
     assembled = assembler.assemble(
-        history=chat_state.history,
+        history=assembly_history,
         user_message=user_message,
         system_instruction=system_instruction,
         existing_summary=existing_summary,
@@ -580,6 +602,7 @@ async def _handle_regular_chat(
             is_forward_batch=is_forward_batch,
             memories_injected=_memories_injected,
             graph_triples_count=_graph_triples_count,
+            retry_callback=logical_request.callback_data,
         )
 
     # The response request always contains private active history.  If any LTM
@@ -624,8 +647,9 @@ async def _handle_regular_chat(
 
         mark_operation_failed()
         await provider_lease.aclose()
-        chat_state.history = history_before_request
-        chat_state.context_summary = existing_summary
+        if request_is_current(user_id, logical_request, chat_state):
+            chat_state.history = history_before_request
+            chat_state.context_summary = existing_summary
         await _retire_placeholder_notice(placeholder_message)
         await placeholder_message.edit_text(t("error.generic", lang))
         return
@@ -644,21 +668,32 @@ async def _handle_regular_chat(
             # retaining the private prompt.
             allow_deferred=False,
         )
-        outcome = await get_telegram_response_delivery().stream(
-            TelegramTarget(
-                placeholder_message=placeholder_message,
-                bot=_bot,
-                chat_id=_chat_id,
-                private_content=True,
-            ),
-            request,
-            presentation=ChatPresentation(
-                action_builder=_actions,
-                recovery_actions=_build_interrupted_reply_markup(lang),
-                failure_actions=build_retry_and_roles_keyboard(),
-                footer=_footer_text,
-            ),
-        )
+        try:
+            outcome = await get_telegram_response_delivery().stream(
+                TelegramTarget(
+                    placeholder_message=placeholder_message,
+                    bot=_bot,
+                    chat_id=_chat_id,
+                    private_content=True,
+                ),
+                request,
+                presentation=ChatPresentation(
+                    action_builder=_actions,
+                    recovery_actions=_build_interrupted_reply_markup(lang, logical_request.callback_data),
+                    failure_actions=build_retry_and_roles_keyboard(retry_callback=logical_request.callback_data),
+                    footer=_footer_text,
+                ),
+            )
+        except asyncio.CancelledError:
+            if request_is_current(user_id, logical_request, chat_state):
+                if retry_request is not None:
+                    chat_state.history = history_before_request
+                    chat_state.context_summary = existing_summary
+                else:
+                    # Initial cancellation keeps the assembled user turn. Its
+                    # position may move when context compaction drops a prefix.
+                    logical_request.history_start = len(chat_state.history) - 1
+            raise
         await _complete_regular_chat_response(
             outcome=outcome,
             model_used=model_used,
@@ -680,6 +715,8 @@ async def _handle_regular_chat(
             user_message=user_message,
             placeholder_message=placeholder_message,
             lang=lang,
+            logical_request=logical_request,
+            replace_retry_history=retry_request is not None,
         )
     finally:
         await provider_lease.aclose()
@@ -712,12 +749,21 @@ async def _complete_regular_chat_response(
     user_message: str,
     placeholder_message: Message,
     lang: str,
+    logical_request=None,
+    replace_retry_history: bool = False,
 ) -> None:
     """Finish private response side effects before the request lease closes."""
     from app.context.summarizer import schedule_llm_summarization
+    from app.handlers.retry_requests import request_is_current
     from app.providers.stream_types import StreamCompleted
     from app.response_delivery.outcomes import CompleteDelivery, PartialDelivery
     from app.utils.metrics_middleware import mark_operation_failed
+
+    def still_owned() -> bool:
+        return logical_request is None or request_is_current(user_id, logical_request, chat_state)
+
+    if not still_owned():
+        return
 
     terminal = (
         outcome.completion
@@ -732,10 +778,17 @@ async def _complete_regular_chat_response(
     from app.metrics import metrics_collector as _mc
 
     response_text = outcome.content_text if isinstance(outcome, (CompleteDelivery, PartialDelivery)) else ""
+    if logical_request is not None:
+        from app.handlers.retry_requests import bind_response
+
+        bind_response(logical_request, outcome)
     if isinstance(outcome, PartialDelivery):
         mark_operation_failed()
     if response_text:
         await _mc.record_model_response(actual_model, user_id=user_id)
+
+    if not still_owned():
+        return
 
     if not response_text:
         mark_operation_failed()
@@ -793,12 +846,17 @@ async def _complete_regular_chat_response(
 
         new_token_count = estimate_tokens_cyrillic(response_text)
 
+    if not still_owned():
+        return
+
     chat_state.history.append({"role": "model", "parts": [response_text]})
+    if logical_request is not None:
+        logical_request.history_start = len(chat_state.history) - 2
     chat_state.token_count = new_token_count
     await update_user_chat(
         user_id,
         chat_state,
-        rewrite_history=assembled.was_truncated,
+        rewrite_history=assembled.was_truncated or replace_retry_history,
         expected_epoch=request_epoch,
     )
 
@@ -831,7 +889,13 @@ async def _complete_regular_chat_response(
     from app.repos.memory_consent import capture_epoch
 
     memory_epoch = capture_epoch(chat_state)
-    if capture_text_memory and memory_epoch is not None:
+    if (
+        capture_text_memory
+        and memory_epoch is not None
+        and (logical_request is None or not logical_request.memory_scheduled)
+    ):
+        if logical_request is not None:
+            logical_request.memory_scheduled = True
         _store_memory_in_background(
             user_id,
             user_message,

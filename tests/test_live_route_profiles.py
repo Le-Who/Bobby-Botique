@@ -30,7 +30,8 @@ async def test_provider_switch_is_one_revision_and_preserves_original_and_custom
     await backend.set_value("process:daily.trivia", {"models": ["gemini-offline"]}, expected_revision=1, actor="test")
     saved = await routes.switch_provider("openai", expected_revision=2, actor="test")
     assert saved.revision == 3 and database.writes == 3
-    assert saved.values["process:chat"]["models"] == ("openai-direct/gpt-6.1-terra",)
+    assert saved.values["process:chat"]["models"] == ("openai-direct/gpt-6-luna",)
+    assert saved.values["process:chat"]["service_tier"] == "flex"
     assert saved.values["process:inline"]["models"] == ("openai-direct/gpt-6-luna",)
     assert saved.values["process:crocodile.judge"]["models"] == ("openai-direct/gpt-6.1-terra",)
     assert saved.values["process:daily.trivia"]["models"] == ("gemini-offline",)
@@ -166,7 +167,7 @@ async def test_profile_routes_pin_exact_openai_request_without_gemini_fallback(p
         request = await generation_request_from_history(
             process_id="chat", models=("gemini-legacy",), history=[{"role": "user", "parts": ["hello"]}]
         )
-    assert request.models == ("openai-direct/gpt-6.1-terra",)
+    assert request.models == ("openai-direct/gpt-6-luna",)
     assert request.allow_model_fallback is False
     assert request.route_strategy == "sequential"
     assert request.policy_revision == snapshot.revision
@@ -222,11 +223,12 @@ async def test_reset_stays_provider_pinned_in_runtime_preview_and_inventory(prof
         "process:chat", {"models": ["openai-direct/gpt-6.1-sol"]}, expected_revision=1, actor="test"
     )
     reset = await reset_process("chat", expected_revision=2, actor="test")
-    assert reset.values["process:chat"]["models"] == ("openai-direct/gpt-6.1-terra",)
+    assert reset.values["process:chat"]["models"] == ("openai-direct/gpt-6-luna",)
     async with runtime_settings_scope(reset):
-        assert (await resolve_process("chat", ("gemini-stale-user",))).models == ("openai-direct/gpt-6.1-terra",)
+        assert (await resolve_process("chat", ("gemini-stale-user",))).models == ("openai-direct/gpt-6-luna",)
         row = next(row for row in await list_processes() if row["id"] == "chat")
-        assert row["models"] == ["openai-direct/gpt-6.1-terra"]
+        assert row["models"] == ["openai-direct/gpt-6-luna"]
+        assert row["service_tier"] == "flex"
         assert row["user_model_allowed"] is False
     client = quart_app.test_client()
     async with client.session_transaction() as session:
@@ -243,7 +245,8 @@ async def test_reset_stays_provider_pinned_in_runtime_preview_and_inventory(prof
         headers={"X-CSRF-Token": "test-profile-csrf"},
     )
     assert response.status_code == 200
-    assert (await response.get_json())["models"] == ["openai-direct/gpt-6.1-terra"]
+    assert (await response.get_json())["models"] == ["openai-direct/gpt-6-luna"]
+    assert (await response.get_json())["service_tier"] == "flex"
 
 
 @pytest.mark.asyncio
@@ -255,7 +258,7 @@ async def test_active_snapshot_missing_policy_uses_default_and_invalid_policy_fa
     snapshot = store.SettingsSnapshot(8, {"live_route:provider": "openai"})
     async with runtime_settings_scope(snapshot):
         policy = await resolve_process("chat", ("gemini-stale-user",))
-        assert policy.explicit and policy.models == ("openai-direct/gpt-6.1-terra",)
+        assert policy.explicit and policy.models == ("openai-direct/gpt-6-luna",)
         assert await cache_identity("chat", "original-cache") != "original-cache"
     invalid = store.SettingsSnapshot(9, {"live_route:provider": "openai", "process:chat": {"models": []}})
     async with runtime_settings_scope(invalid):

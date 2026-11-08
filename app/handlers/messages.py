@@ -665,6 +665,10 @@ async def _handle_request(
 
         from app.handlers.msg_speech import handle_speech_request, speech_request_for_message
 
+        if effective_msg.text and message_text:
+            # The merged text is the actual request, including its search prefix.
+            state.set_last_sent_message(user_id, message_text)
+
         if effective_msg.text and not is_photo:
             speech_request = speech_request_for_message(effective_msg, debounce_result)
             if speech_request.action != "none":

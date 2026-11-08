@@ -13,6 +13,7 @@ from app.providers.stream_types import (
     PromptRole,
     PromptTurn,
     RequestScope,
+    ServiceTier,
     TextPart,
     ThinkingLevel,
     Workload,
@@ -95,6 +96,7 @@ async def generation_request_from_history(
     allow_deferred: bool = True,
     allow_key_race: bool = True,
     process_id: str | None = None,
+    service_tier: ServiceTier = ServiceTier.DEFAULT,
 ) -> GenerationRequest:
     """Perform the only JSON/handler-history conversion before provider routing."""
     turns: list[PromptTurn] = []
@@ -126,6 +128,7 @@ async def generation_request_from_history(
         policy = await resolve_process(process_id, tuple(models))
         models = policy.models
         route_strategy, explicit, revision = policy.strategy, policy.explicit, policy.revision
+        service_tier = ServiceTier(getattr(policy, "service_tier", ServiceTier.DEFAULT))
 
     return GenerationRequest(
         models=tuple(models),
@@ -142,6 +145,7 @@ async def generation_request_from_history(
         route_strategy=route_strategy,
         allow_model_fallback=not explicit,
         policy_revision=revision,
+        service_tier=service_tier,
     )
 
 

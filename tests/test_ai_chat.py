@@ -482,7 +482,7 @@ async def test_streamed_chat_delegates_complete_keyboard_to_delivery(mock_bounda
     callback_data = [button.callback_data for row in prepared.actions.inline_keyboard for button in row]
     assert any(value and value.startswith("suggest:") for value in callback_data)
     assert "intent_route:research" in callback_data
-    assert "retry_last" in callback_data
+    assert any(value and value.startswith("retry_last:") for value in callback_data)
 
 
 def test_chat_response_markup_preserves_all_dynamic_actions():
@@ -541,7 +541,8 @@ async def test_interrupted_chat_delegates_recovery_keyboard_to_stream(mock_bound
     interrupted_markup = presentation.recovery_actions
     assert interrupted_markup is not None
     callback_data = [button.callback_data for row in interrupted_markup.inline_keyboard for button in row]
-    assert callback_data == ["continue_stream", "retry_last"]
+    assert callback_data[0] == "continue_stream"
+    assert callback_data[1].startswith("retry_last:")
     from app.utils.metrics_middleware import consume_operation_failure
 
     assert consume_operation_failure() is True

@@ -40,6 +40,46 @@ def test_controls_page_has_csrf_and_section_navigation():
         assert f'id="{section}"' in page
 
 
+def test_ambiguous_process_save_must_confirm_service_tier_too():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node unavailable")
+    script = r"""
+const assert=require('node:assert/strict');
+const {matchesSubmittedSection}=require('./app/static/js/controls.js');
+const row={id:'chat',models:['openai-direct/gpt-6-luna'],strategy:'sequential',inherit_user_model:false,service_tier:'default'};
+const value={models:row.models,strategy:row.strategy,inherit_user_model:false,service_tier:'flex'};
+const payload={section:'process',id:'chat',value,expected_revision:7};
+assert.equal(matchesSubmittedSection({revision:8,processes:[row]},payload),false);
+assert.equal(matchesSubmittedSection({revision:8,processes:[{...row,service_tier:'flex'}]},payload),true);
+"""
+    result = subprocess.run([node, "-e", script], cwd=ROOT, encoding="utf-8", capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_legacy_draft_unknown_post_cannot_confirm_unchanged_server_flex():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node unavailable")
+    script = r"""
+const assert=require('node:assert/strict');
+const {createDraftManager,matchesSubmittedSection}=require('./app/static/js/controls.js');
+const drafts=createDraftManager();drafts.setSnapshot({revision:7});
+const legacy={models:['openai-direct/gpt-6-luna'],strategy:'sequential',inherit_user_model:false};
+drafts.setDraft('process','chat',legacy);
+const draft=drafts.getDraft('process','chat');
+// The POST outcome is unknown; an unrelated write advanced the server revision.
+const payload={section:'process',id:'chat',value:draft.value,expected_revision:draft.expected_revision};
+const snapshot={revision:8,processes:[{id:'chat',...legacy,service_tier:'flex'}]};
+assert.equal(matchesSubmittedSection(snapshot,payload),false,'legacy absence means Standard, not server Flex');
+assert.equal(drafts.getDraft('process','chat'),draft,'unknown save retains the original draft');
+assert.equal(matchesSubmittedSection({...snapshot,processes:[{id:'chat',...legacy,service_tier:'default'}]},payload),true);
+assert.equal(matchesSubmittedSection({...snapshot,processes:[{id:'chat',...legacy}]},payload),true);
+"""
+    result = subprocess.run([node, "-e", script], cwd=ROOT, encoding="utf-8", capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_drafts_keep_their_original_revision_across_refresh_and_other_save():
     node = shutil.which("node")
     if not node:

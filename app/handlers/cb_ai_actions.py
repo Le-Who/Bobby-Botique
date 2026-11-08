@@ -255,65 +255,145 @@ async def cancel_long_wait_callback(update: Update, context: ContextTypes.DEFAUL
 
 
 async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Повтор последнего пользовательского запроса по кнопке."""
+    """Replay the owned logical request, preserving its original chat/search route."""
+    del context
     query = update.callback_query
-    set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
-    set_user_context(
-        query.from_user.id,
-        getattr(query.message.chat, "id", None) if query.message else None,
-    )
+    if query is None or query.message is None:
+        return
     user_id = query.from_user.id
-
-    # Hydrate persisted state from DB
+    set_request_id(f"tgcb-{user_id}-{query.id}")
+    set_user_context(user_id, getattr(query.message.chat, "id", None))
+    from app.handlers.retry_requests import (
+        StaleRetryRequest,
+        current_request,
+        legacy_request,
+        retry_history,
+        scope_matches,
+    )
     from app.state import ensure_state_loaded, get_last_sent_message
 
     await ensure_state_loaded(user_id)
-
-    chat_state = await get_user_chat(user_id)
-    last_text = None
-    try:
-        last_text = get_last_sent_message(user_id)
-    except Exception:
-        last_text = None
-    if not last_text:
+    identity = (query.data or "").partition(":")[2]
+    legacy_text = get_last_sent_message(user_id) if not identity else None
+    if not identity and current_request(user_id) is None and not legacy_text:
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.answer()
         await query.edit_message_text(
-            t("error.no_retry_data"),
-            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
+            t("error.no_retry_data"), reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
         )
         return
 
-    # P4+P5: single query.answer() with toast if busy; check BEFORE creating placeholder
     user_lock = state.get_user_lock(user_id)
-    await query.answer(_BUSY_TOAST if user_lock.locked() else "")
-    if user_lock.locked():
+    owner = state.get_active_task(user_id)
+    if user_lock.locked() or (owner is not None and not owner.done()):
+        await query.answer(_BUSY_TOAST)
         return
+    # No intervening await after the check: acquisition and reservation are one
+    # event-loop admission; the worker inherits this lock until its finally.
+    await user_lock.acquire()
+    handed_off = False
+    request = None
+    try:
+        chat_state = await get_user_chat(user_id)
+        request = current_request(user_id)
+        source_ref = (query.message.message_id, query.message.chat.id)
+        if identity:
+            if request is None or request.identity != identity or request.response_ref != source_ref:
+                raise StaleRetryRequest("Retry no longer owns this response")
+        elif request is not None and request.response_ref is not None and request.response_ref != source_ref:
+            raise StaleRetryRequest("Legacy retry no longer owns this response")
+        if request is None:
+            if not legacy_text:
+                raise StaleRetryRequest("Retry data expired")
+            request = legacy_request(user_id, legacy_text, chat_state)
+        if not scope_matches(request, chat_state) or not request.replayable:
+            raise StaleRetryRequest("Retry generation or branch changed")
+        if request.running:
+            await query.answer(_BUSY_TOAST)
+            return
+        if request.kind == "chat":
+            retry_history(request, chat_state.history)
+        request.running = True
+        await query.answer()
+        reply_text = getattr(query.message, "reply_text", None)
+        if not callable(reply_text):
+            return
+        placeholder_message = await reply_text(t("processing.retry"))
+        state.set_last_bot_message(user_id, placeholder_message.message_id, placeholder_message.chat.id)
+        replay = request
+        response_ref_before_attempt = replay.response_ref
+        released = False
+        task = None
 
-    # Create плейсхолдер и запускаем обычную обработку как on новом сообщении
-    placeholder_message = await query.message.reply_text(t("processing.retry"))
-    from app.handlers.agent import _handle_regular_chat
+        def release_admission() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            replay.running = False
+            if state.get_active_task(user_id) is task:
+                state.clear_active_task(user_id)
+            user_lock.release()
 
-    async def _retry_wrapper() -> None:
-        try:
-            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock, MetricsMiddleware("retry_last_callback", user_id=user_id):
-                await _handle_regular_chat(placeholder_message, user_id, last_text, chat_state)
-        except Exception as e:
-            logging.error("retry_last_callback failed: %s", e, exc_info=True)
+        async def _retry_wrapper() -> None:
             try:
-                from app.utils.keyboards import error_with_back_keyboard
+                async with _HEAVY_CALLBACK_SEMAPHORE, MetricsMiddleware("retry_last_callback", user_id=user_id):
+                    if current_request(user_id) is not replay or not scope_matches(replay, chat_state):
+                        raise StaleRetryRequest("Retry was superseded before execution")
+                    if replay.kind == "search":
+                        await agent._handle_qna_search(
+                            placeholder_message,
+                            replay.user_text,
+                            chat_state,
+                            search_query=replay.search_query,
+                            user_id=user_id,
+                            retry_request=replay,
+                        )
+                    else:
+                        await agent._handle_regular_chat(
+                            placeholder_message,
+                            user_id,
+                            replay.user_text,
+                            chat_state,
+                            retry_request=replay,
+                            capture_text_memory=replay.capture_text_memory,
+                            is_forward_batch=replay.is_forward_batch,
+                            reply_with_voice=replay.reply_with_voice,
+                            user_parts=list(replay.text_parts) if replay.text_parts is not None else None,
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logging.error("retry_last_callback failed (error_type=%s)", type(error).__name__)
+                if replay.response_ref != response_ref_before_attempt:
+                    # Delivery already owns the final answer/actions. Later
+                    # persistence failures must not replace that presentation.
+                    return
+                with contextlib.suppress(Exception):
+                    from app.errors import build_retry_and_roles_keyboard
 
-                await placeholder_message.edit_text(
-                    t("error.retry_failed"),
-                    reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
-                )
-            except Exception:
-                pass
+                    await placeholder_message.edit_text(
+                        t("error.retry_failed"),
+                        reply_markup=build_retry_and_roles_keyboard(retry_callback=replay.callback_data),
+                    )
+                    replay.response_ref = (placeholder_message.message_id, placeholder_message.chat.id)
+            finally:
+                release_admission()
 
-    _task = asyncio.create_task(_retry_wrapper())
-    _background_tasks.add(_task)
-    _task.add_done_callback(_background_tasks.discard)
+        task = asyncio.create_task(_retry_wrapper())
+        state.register_active_task(user_id, task)
+        _background_tasks.add(task)
+        task.add_done_callback(lambda _: release_admission())
+        task.add_done_callback(_background_tasks.discard)
+        handed_off = True
+    except StaleRetryRequest:
+        await query.answer("Этот запрос уже изменён или устарел. Отправьте его снова.", show_alert=True)
+    finally:
+        if not handed_off:
+            if request is not None:
+                request.running = False
+            user_lock.release()
 
 
 async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

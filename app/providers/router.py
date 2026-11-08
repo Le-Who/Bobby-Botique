@@ -1364,6 +1364,7 @@ class ProviderRouter:
                             max_attempts=attempt_limit,
                             race_id=provider_race_id,
                             key_source=key_data.get("source"),
+                            requested_service_tier=request.service_tier.value if is_openai_model(race_model) else None,
                         )
                         async with aclosing(observed_events):
                             async for event in observed_events:

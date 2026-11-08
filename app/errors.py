@@ -755,11 +755,13 @@ def classify_key_error(text: str | Exception) -> str:
 # =============================================================================
 
 
-def build_retry_and_roles_keyboard(include_roles: bool = True) -> InlineKeyboardMarkup:
+def build_retry_and_roles_keyboard(
+    include_roles: bool = True, *, retry_callback: str = "retry_last"
+) -> InlineKeyboardMarkup:
     """Builds keyboard with retry button, edit query, and optional roles button."""
     buttons = [
         [
-            InlineKeyboardButton("🔁 Повторить", callback_data="retry_last"),
+            InlineKeyboardButton("🔁 Повторить", callback_data=retry_callback),
             InlineKeyboardButton("✏️ Изменить запрос", callback_data="edit_query"),
         ],
     ]

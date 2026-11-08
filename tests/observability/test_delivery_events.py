@@ -14,6 +14,7 @@ from app.providers.stream_types import (
     ProviderKind,
     RetryDisposition,
     RouteUsed,
+    ServiceTier,
     StreamCompleted,
     StreamFailed,
     TokenUsage,
@@ -38,6 +39,32 @@ def _completed() -> StreamCompleted:
         grounding=GroundingReport(),
         route=RouteUsed(ProviderKind.GEMINI, "requested", "actual"),
     )
+
+
+def test_delivery_retains_requested_and_reported_service_tier():
+    terminal = StreamCompleted(
+        FinishReason.from_raw("stop"),
+        TokenUsage(total=3),
+        GroundingReport(),
+        RouteUsed(
+            ProviderKind.OPENAI, "openai-direct/gpt-6-luna", "openai-direct/gpt-6-luna", ServiceTier.FLEX, "default"
+        ),
+    )
+    fields = delivery_outcome_fields(CompleteDelivery("synthetic", "synthetic", terminal, False, _receipt()))
+    assert fields["requested_service_tier"] == "flex"
+    assert fields["actual_service_tier"] == "default"
+    assert "publication_url" not in fields
+    failure = StreamFailed(
+        ErrorCode.TIMEOUT,
+        FailurePhase.AFTER_TEXT,
+        RetryDisposition.DO_NOT_RETRY,
+        KeyDisposition.UNCHANGED,
+        "synthetic timeout",
+        terminal.route,
+    )
+    partial = delivery_outcome_fields(PartialDelivery("synthetic", "synthetic", failure, False, _receipt()))
+    assert partial["requested_service_tier"] == "flex"
+    assert partial["actual_service_tier"] == "default"
 
 
 def test_delivery_outcomes_have_distinct_terminal_semantics_without_public_url():

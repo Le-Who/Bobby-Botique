@@ -48,9 +48,11 @@
     const value = payload.section === "prompt" ? item.text : payload.section === "catalog" ? item.models
       : payload.section === "rpm" ? item.rpm_limit : payload.section === "limit" ? item.limit : payload.section === "command" ? item.aliases
       : payload.section === "process" ? {models:item.models,strategy:item.strategy,inherit_user_model:item.inherit_user_model} : item.value;
+    if (payload.section === "process") value.service_tier = item.service_tier || "default";
+    const submitted = payload.section === "process" ? {...payload.value, service_tier:payload.value.service_tier || "default"} : payload.value;
     const canonical = value => Array.isArray(value) ? value.map(canonical)
       : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key,canonical(value[key])])) : value;
-    return JSON.stringify(canonical(value)) === JSON.stringify(canonical(payload.value));
+    return JSON.stringify(canonical(value)) === JSON.stringify(canonical(submitted));
   }
 
   if (typeof module !== "undefined" && module.exports) {
@@ -264,12 +266,20 @@
     if (!draft && !reset) { message(status, "Изменений для сохранения нет."); return; }
     const payload = { section, id, expected_revision: draft ? draft.expected_revision : drafts.getSnapshot().revision };
     if (reset) payload.reset = true;
-    else payload.value = draft.value;
+    else payload.value = section === "process" && (id === "chat" || id === "search")
+      ? {...draft.value, service_tier:draft.value.service_tier || "default"} : draft.value;
     if (!reset && (section === "process" || section === "catalog")) {
       const models = section === "process" ? payload.value.models : payload.value;
       if (!Array.isArray(models) || (section === "process" && models.length === 0) || models.some((model) => !model)) {
         message(status, section === "process" ? "Укажите хотя бы один непустой ID модели." : "Уберите пустые строки модели перед сохранением.", true);
         return;
+      }
+      if (section === "process" && payload.value.service_tier === "flex") {
+        const supported = drafts.getSnapshot().catalogs.find(item => item.provider === "openai")?.flex_models || [];
+        if (!supported.length || !models.every(model => supported.includes(model)) || payload.value.inherit_user_model) {
+          message(status, "Flex требует поддерживаемые модели OpenAI в каждой строке и отключённое наследование. Выберите Standard или совместимую модель; тариф не изменён автоматически.", true);
+          return;
+        }
       }
     }
     if (!reset && (section === "limit" || section === "rpm") && payload.value !== null &&
@@ -308,7 +318,7 @@
     } finally { setBusy(false); }
   }
 
-  function modelRows(holder, models, changed) {
+  function modelRows(holder, models, changed, availableModels = []) {
     holder.replaceChildren();
     models.forEach((name, index) => {
       const row = element("div", "model-row");
@@ -320,6 +330,23 @@
       input.placeholder = "ID модели";
       input.addEventListener("input", changed);
       row.append(input);
+      if (availableModels.length) {
+        const picker = element("select", "model-picker");
+        picker.setAttribute("aria-label", `Выбрать модель OpenAI ${index + 1}`);
+        picker.append(element("option", "", "Выбрать OpenAI…"));
+        picker.firstElementChild.value = "";
+        availableModels.forEach(model => {
+          const option = element("option", "", model);
+          option.value = model;
+          picker.append(option);
+        });
+        picker.addEventListener("change", () => {
+          if (!picker.value) return;
+          input.value = picker.value;
+          changed();
+        });
+        row.append(picker);
+      }
       const commands = [
         ["↑", "Выше", index > 0, -1],
         ["↓", "Ниже", index < models.length - 1, 1],
@@ -330,7 +357,7 @@
           const next = [...holder.querySelectorAll(".model-input")].map((field) => field.value);
           if (delta === 0) next.splice(index, 1);
           else [next[index], next[index + delta]] = [next[index + delta], next[index]];
-          modelRows(holder, next, changed);
+          modelRows(holder, next, changed, availableModels);
           changed();
           const nextIndex = delta === 0 ? Math.min(index, next.length - 1) : index + delta;
           const target = holder.children[nextIndex]?.querySelector("input") ||
@@ -367,10 +394,13 @@
         : "Этот процесс пока не подключён к управлению. Настройка здесь недоступна."));
       return node;
     }
-    const current = drafts.getDraft("process", id)?.value || {
+    const draft = drafts.getDraft("process", id);
+    const current = {...{
       models: item.models || [], strategy: item.strategy || "sequential",
       inherit_user_model: !!item.inherit_user_model,
-    };
+      ...(item.service_tier_explicit || id === "chat" || id === "search" ? {service_tier:item.service_tier || "default"} : {}),
+    }, ...(draft?.value || {})};
+    if (draft && (id === "chat" || id === "search") && !Object.hasOwn(draft.value, "service_tier")) current.service_tier = "default";
     const chain = element("div", "model-chain");
     const strategyField = element("label", "field", "Порядок выполнения");
     const strategy = element("select");
@@ -392,22 +422,46 @@
     if (checkbox.disabled) inherit.append(element("span", "muted", "Активный профиль задаёт модель ответа; выбор пользователя не применяется."));
     const options = element("div", "options");
     options.append(strategyField, inherit);
+    const tier = element("select", "service-tier");
+    tier.setAttribute("aria-label", "Тариф обработки");
+    [["default", "Standard"], ["flex", "Flex"]].forEach(([value, label]) => {
+      const option = element("option", "", label); option.value = value; tier.append(option);
+    });
+    tier.value = current.service_tier || "default";
+    const tierNote = element("p", "muted", "Flex дешевле, но задержка и доступность переменные. Локальный предел ожидания первого текста — 15 секунд. При нехватке ресурсов запрос может завершиться ошибкой; автоматического перехода на Standard нет.");
+    if (id === "search") tierNote.textContent += " Поиск источников выполняется до этого ожидания и имеет отдельный срок.";
+    tierNote.hidden = tier.value !== "flex";
+    if (id === "chat" || id === "search") {
+      const field = element("label", "field", "Тариф обработки OpenAI"); field.append(tier); options.append(field);
+      options.append(tierNote);
+    }
+    const catalog = drafts.getSnapshot().catalogs.find(item => item.provider === "openai");
+    const choices = id === "chat" || id === "search" ? [...new Set([...(catalog?.models || []), ...(catalog?.supported_models || [])])] : [];
     const status = feedback(node);
     const readValue = () => ({
       models: [...chain.querySelectorAll(".model-input")].map((input) => input.value.trim()),
       strategy: strategy.value, inherit_user_model: checkbox.checked,
+      ...(Object.hasOwn(current, "service_tier") ? {service_tier:tier.value} : {}),
     });
-    const changed = () => markDraft("process", id, readValue(), node, status);
-    modelRows(chain, Array.isArray(current.models) ? current.models : [], changed);
+    const changed = () => {
+      const value = readValue();
+      tierNote.hidden = tier.value !== "flex";
+      markDraft("process", id, value, node, status);
+      if (value.service_tier === "flex" && (value.inherit_user_model || !value.models.every(model => (catalog?.flex_models || []).includes(model)))) {
+        message(status, "Несовместимая комбинация Flex и модели. Тариф сохранён в черновике; выберите Standard или совместимую модель OpenAI.", true);
+      }
+    };
+    modelRows(chain, Array.isArray(current.models) ? current.models : [], changed, choices);
     strategy.addEventListener("change", changed);
     checkbox.addEventListener("change", changed);
+    tier.addEventListener("change", changed);
     node.insertBefore(chain, status);
     node.insertBefore(options, status);
     const actions = actionRow(node);
     actions.append(action("Добавить модель", "secondary", () => {
       const next = [...chain.querySelectorAll(".model-input")].map((field) => field.value);
       next.push("");
-      modelRows(chain, next, changed);
+      modelRows(chain, next, changed, choices);
       changed();
       chain.lastElementChild?.querySelector("input")?.focus();
     }));
@@ -421,7 +475,7 @@
         });
         const models = Array.isArray(result.models) ? result.models.join(" → ") : "—";
         const notes = Array.isArray(result.notes) ? result.notes.join(" · ") : "";
-        message(status, `Маршрут: ${models}${notes ? ` · ${notes}` : ""}`, !result.valid);
+        message(status, `Маршрут: ${models} · тариф ${result.service_tier === "flex" ? "Flex" : "Standard"}${notes ? ` · ${notes}` : ""}`, !result.valid);
       } catch (error) { message(status, errorText(error), true); }
     }));
     actions.append(mutationButton("Сбросить", "quiet", () => save("process", id, status, true)));
@@ -429,6 +483,7 @@
     staleDraftControl(node, "process", id, {
       models: item.models || [], strategy: item.strategy || "sequential",
       inherit_user_model: !!item.inherit_user_model,
+      ...(Object.hasOwn(current, "service_tier") ? {service_tier:item.service_tier || "default"} : {}),
     }, status);
     if (drafts.getDraft("process", id)) message(status, `Черновик · исходная ревизия ${drafts.getDraft("process", id).expected_revision}`);
     return node;
@@ -597,6 +652,13 @@
     const id = String(item.provider);
     const node = card("catalog", id);
     node.append(header({ title: id, source: item.source }, id));
+    if (id === "openai") {
+      const supported = element("details", "baseline");
+      supported.append(element("summary", "", "Поддерживаемые OpenAI model ID"));
+      (item.supported_models || []).forEach(model => supported.append(element("p", "technical", model)));
+      supported.append(element("p", "muted", "Добавьте нужный ID кнопкой ниже. Назначение модели: «Маршруты моделей» → «Диалог» или «Ответ с поиском». Каталог не меняет назначенные маршруты; новые неподдерживаемые API ID требуют обновления интеграции."));
+      node.append(supported);
+    }
     const status = feedback(node);
     const chain = element("div", "model-chain");
     const current = drafts.getDraft("catalog", id)?.value ?? item.models ?? [];
@@ -908,13 +970,14 @@
     const details = element("details", "baseline");
     details.append(element("summary", "", `Текущие модели · ${profile.process_ids.length} процессов`));
     for (const item of processes.filter(item => profile.process_ids.includes(item.id))) {
-      details.append(element("p", "technical", `${item.title || item.id}: ${(item.models || []).join(" → ") || "—"}`));
+      details.append(element("p", "technical", `${item.title || item.id}: ${(item.models || []).join(" → ") || "—"} · ${item.service_tier === "flex" ? "Flex" : "Standard"}`));
     }
     holder.append(details);
     const defaults = element("details", "baseline");
     defaults.append(element("summary", "", "Модели нового профиля OpenAI"));
     for (const model of [...new Set(Object.values(profile.openai_defaults || {}))]) defaults.append(element("p", "technical", model));
     defaults.append(element("p", "muted", "Повторное включение восстанавливает сохранённые правки этого профиля. Переключение создаёт одну общую ревизию; исходные маршруты сохраняются для возврата."));
+    defaults.append(element("p", "muted", "Новый профиль: Диалог и Ответ с поиском — Luna / Flex; остальные процессы OpenAI — Standard. Действующий сохранённый профиль не перезаписывается новыми значениями автоматически."));
     holder.append(defaults);
     const actions = element("div", "actions");
     for (const provider of ["openai", "gemini", "baseline"]) {

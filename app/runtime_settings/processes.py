@@ -31,8 +31,10 @@ async def save_primary_model_at_revision(
     process_id: str, model: str, *, expected_revision: int, actor: str
 ) -> store.SettingsSnapshot:
     """Apply a browser edit to exactly the settings revision it was based on."""
+    from app.runtime_settings.live_routes import effective_policy_value
+
     current = await snapshot_at_revision(expected_revision)
-    previous = current.values.get(f"process:{process_id}")
+    previous = effective_policy_value(process_id, current)
     reserves = (
         list(previous.get("models", ()))[1:]
         if isinstance(previous, Mapping)
@@ -41,6 +43,7 @@ async def save_primary_model_at_revision(
     value = validate_policy(
         process_id,
         {
+            **(dict(previous) if isinstance(previous, Mapping) else {}),
             "models": list(dict.fromkeys((model, *reserves))),
             "strategy": previous.get("strategy", "sequential") if isinstance(previous, Mapping) else "sequential",
             "inherit_user_model": False,
