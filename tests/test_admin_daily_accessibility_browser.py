@@ -112,11 +112,16 @@ async def test_controls_ambiguous_save_reconciles_only_equal_section_without_dup
         await new Promise(resolve=>setTimeout(resolve,200));
         return route.fulfill({json:{revision}}).catch(()=>{});
       }
+      if(writes)await new Promise(resolve=>setTimeout(resolve,100));
       return route.fulfill({json:snapshot()});
     });
     await page.goto('http://natal.test/controls#prompts');
     await page.waitForSelector('#prompt-list textarea');
-    await page.evaluate(()=>{const original=AdminApi.adminRequest;AdminApi.adminRequest=(url,options={})=>original(url,{...options,timeoutMs:40});});
+    await page.evaluate(()=>{
+      const original=AdminApi.adminRequest;
+      const mutationDeadline=options=>['GET','HEAD'].includes((options.method || 'GET').toUpperCase())?options:{...options,timeoutMs:40};
+      AdminApi.adminRequest=(url,options={})=>original(url,mutationDeadline(options));
+    });
     await page.locator('#prompt-list textarea').fill('confirmed draft');
     await page.locator('#prompt-list button.save').click();
     await page.waitForFunction(()=>!document.getElementById('refresh').disabled);
@@ -145,11 +150,16 @@ async def test_2048_short_save_timeout_reconciles_and_preserves_later_typing():
         await new Promise(resolve=>setTimeout(resolve,300));
         return route.fulfill({json:{success:true,puzzle}}).catch(()=>{});
       }
+      if(writes)await new Promise(resolve=>setTimeout(resolve,100));
       return route.fulfill({json:{puzzles:[puzzle]}});
     });
     await page.goto('http://natal.test/admin_daily#2048');
     await page.waitForFunction(()=>document.getElementById('s2048-edit-seed').value==='original');
-    await page.evaluate(()=>{const request=AdminApi.adminRequest;AdminApi.adminRequest=(url,options={})=>request(url,{...options,timeoutMs:80});});
+    await page.evaluate(()=>{
+      const request=AdminApi.adminRequest;
+      const mutationDeadline=options=>['GET','HEAD'].includes((options.method || 'GET').toUpperCase())?options:{...options,timeoutMs:80};
+      AdminApi.adminRequest=(url,options={})=>request(url,mutationDeadline(options));
+    });
     await page.locator('#s2048-edit-seed').fill('submitted');
     await page.locator('#s2048-save').click();
     await page.locator('#s2048-edit-seed').fill('later typing');
@@ -243,6 +253,7 @@ async def test_croc_prompt_refresh_and_unknown_save_keep_draft_focus_and_held_re
         if(writes.length===1)await new Promise(resolve=>setTimeout(resolve,250));
         return route.fulfill({json:{success:true,puzzle}}).catch(()=>{});
       }
+      if(writes.length)await new Promise(resolve=>setTimeout(resolve,100));
       if(path==='/api/admin/dailycroc')return route.fulfill(failRead?{status:503,json:{error:'unavailable'}}:{json:{puzzles:[puzzle]}});
       return route.fulfill({json:{}});
     });
@@ -253,7 +264,11 @@ async def test_croc_prompt_refresh_and_unknown_save_keep_draft_focus_and_held_re
     failRead=true;await page.locator('[data-croc-action="loadPuzzles"]').first().click();
     await page.waitForTimeout(50);assert.equal(await input.inputValue(),'submitted');
     failRead=false;await input.focus();
-    await page.evaluate(()=>{const request=AdminApi.adminRequest;AdminApi.adminRequest=(url,options={})=>request(url,{...options,timeoutMs:80});});
+    await page.evaluate(()=>{
+      const request=AdminApi.adminRequest;
+      const mutationDeadline=options=>['GET','HEAD'].includes((options.method || 'GET').toUpperCase())?options:{...options,timeoutMs:80};
+      AdminApi.adminRequest=(url,options={})=>request(url,mutationDeadline(options));
+    });
     await page.locator('[data-croc-action="savePrompt"]').click();
     await input.fill('later typing');
     if(!payload.matches){
@@ -295,6 +310,7 @@ async def test_unknown_model_cas_reads_server_without_rebasing_local_choice(game
         writes++;revision=2;await new Promise(resolve=>setTimeout(resolve,250));
         return route.fulfill({json:{settings_revision:2,model:'new',llm_model:'new'}}).catch(()=>{});
       }
+      if(revision===2 && (path.endsWith('/models') || path.endsWith('/stats')))await new Promise(resolve=>setTimeout(resolve,100));
       if(path.endsWith('/models'))return route.fulfill({json:{settings_revision:revision,text_model:'old',text_models:[{id:'old'},{id:'new'},{id:'other'}],text_processes:[],image_models:[],default_image_model:'flux'}});
       if(path.endsWith('/stats'))return route.fulfill({json:{settings_revision:revision,llm_model:'old',effective_models:['old'],llm_models:['old','new','other']}});
       return route.fulfill({json:{puzzles:[]}});
@@ -304,8 +320,9 @@ async def test_unknown_model_cas_reads_server_without_rebasing_local_choice(game
     await page.waitForFunction(game=>document.getElementById(game==='croc'?'croc-text-model':'trivia-model-input').value==='old',payload.game);
     await page.evaluate(()=>{
       const request=AdminApi.adminRequest,fetch=AdminApi.adminFetch;
-      AdminApi.adminRequest=(url,options={})=>request(url,{...options,timeoutMs:50});
-      AdminApi.adminFetch=(url,options={})=>fetch(url,{...options,timeoutMs:50});
+      const mutationDeadline=options=>['GET','HEAD'].includes((options.method || 'GET').toUpperCase())?options:{...options,timeoutMs:50};
+      AdminApi.adminRequest=(url,options={})=>request(url,mutationDeadline(options));
+      AdminApi.adminFetch=(url,options={})=>fetch(url,mutationDeadline(options));
     });
     if(payload.game==='croc')await input.selectOption('new');
     else {await input.fill('new');await page.locator('#trivia-model-save').click();}
@@ -391,10 +408,15 @@ async def test_puzzle_image_model_unknown_result_keeps_choice_until_explicit_rel
       const path=new URL(route.request().url()).pathname;
       if(path.endsWith('/models'))return route.fulfill({json:{settings_revision:1,text_models:[],text_processes:[],image_models:[{id:'flux'},{id:'new'}],default_image_model:'flux'}});
       if(path.endsWith('/model')){writes++;await new Promise(resolve=>setTimeout(resolve,200));return route.fulfill({json:{puzzle}}).catch(()=>{});}
+      if(writes)await new Promise(resolve=>setTimeout(resolve,100));
       return route.fulfill({json:{puzzles:[puzzle]}});
     });
     await page.goto('http://natal.test/admin_daily#croc');
-    await page.evaluate(()=>{const request=AdminApi.adminRequest;AdminApi.adminRequest=(url,options={})=>request(url,{...options,timeoutMs:50});});
+    await page.evaluate(()=>{
+      const request=AdminApi.adminRequest;
+      const mutationDeadline=options=>['GET','HEAD'].includes((options.method || 'GET').toUpperCase())?options:{...options,timeoutMs:50};
+      AdminApi.adminRequest=(url,options={})=>request(url,mutationDeadline(options));
+    });
     const select=page.locator('#croc-model-2026-10-28-easy');
     await select.selectOption('new');
     await page.waitForFunction(()=>document.querySelector('.image-model-status')?.textContent.includes('неизвестен'));
@@ -421,11 +443,16 @@ async def test_unconfirmed_restore_blocks_new_writes_and_reads_revision_without_
       if(route.request().method()==='POST'){
         writes++;revision=2;await new Promise(resolve=>setTimeout(resolve,250));return route.fulfill({json:{revision}}).catch(()=>{});
       }
+      if(writes)await new Promise(resolve=>setTimeout(resolve,100));
       reads++;return route.fulfill({json:{revision,processes:[],prompts:[],catalogs:[],limits:[],history:[{revision:0,created_at:'2026-10-28T00:00:00Z'}],commands:{commands:[]}}});
     });
     await page.goto('http://natal.test/controls#history');
     await page.waitForSelector('#history-list button');
-    await page.evaluate(()=>{const request=AdminApi.adminRequest;AdminApi.adminRequest=(url,options={})=>request(url,{...options,timeoutMs:50});});
+    await page.evaluate(()=>{
+      const request=AdminApi.adminRequest;
+      const mutationDeadline=options=>['GET','HEAD'].includes((options.method || 'GET').toUpperCase())?options:{...options,timeoutMs:50};
+      AdminApi.adminRequest=(url,options={})=>request(url,mutationDeadline(options));
+    });
     await page.locator('#history-list button').click();
     await page.waitForFunction(()=>!document.getElementById('refresh').disabled);
     assert.equal(writes,1);assert.ok(reads>=2,'Read server revision after timeout');
