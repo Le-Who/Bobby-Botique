@@ -156,6 +156,9 @@ jobs:
   test-browser:
     name: Test Browser (Chromium)
     runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --ipc=host
     timeout-minutes: 10
     env:
       GEMAIBOT_REQUIRE_BROWSER_TESTS: "1"
@@ -180,9 +183,6 @@ jobs:
       - name: Install locked browser dependencies
         working-directory: tests/browser
         run: npm ci --ignore-scripts
-      - name: Install Chromium and system dependencies
-        working-directory: tests/browser
-        run: npx --no-install playwright install --with-deps chromium
       - name: Run required browser regressions
         run: >-
           uv run --locked pytest tests/ -m browser -n 0

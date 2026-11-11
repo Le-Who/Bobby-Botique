@@ -74,8 +74,10 @@ GEMAIBOT_REQUIRE_BROWSER_TESTS=1 uv run --locked pytest tests/ -m browser -n 0 -
 In PowerShell, set `$env:GEMAIBOT_REQUIRE_BROWSER_TESTS = "1"` before the pytest
 command. On Windows the browser installer downloads Chromium; system dependency
 installation applies to Linux. Missing Node.js or the package is an optional skip
-in a minimal local checkout. The dedicated CI browser job sets the required flag,
-installs Chromium and fails if the prerequisites or checks are missing.
+in a minimal local checkout. The dedicated CI browser job sets the required flag
+and uses the official Playwright image, pinned by version and digest, with Chromium
+and system dependencies already installed. Its version must match the locked npm
+package. The job fails if the prerequisites or checks are missing.
 
 ## Documentation checks
 

@@ -31,6 +31,7 @@ from app.games.hinting import enqueue_bank_hint_prewarm
 from app.observability.workload_events import observe_workload_call
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.providers.gemini_config import build_generate_content_config
+from app.providers.stream_tasks import drain_provider_tasks
 from app.runtime_settings.cache_identity import cache_identity
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
@@ -1607,8 +1608,10 @@ async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: 
                 except Exception:
                     pass
     finally:
-        for t in pending:
-            t.cancel()
+        for task in (vertex_task, opencode_task):
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        await drain_provider_tasks((vertex_task, opencode_task))
 
     return word_result
 

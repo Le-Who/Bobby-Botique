@@ -39,6 +39,7 @@ from app.games.ai_budget import (
 from app.observability.workload_events import observe_workload_call
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.providers.gemini_config import build_generate_content_config
+from app.providers.stream_tasks import drain_provider_tasks
 from app.runtime_settings.cache_identity import cache_identity
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
@@ -1012,12 +1013,12 @@ async def generate_hints(
                             )
                             continue
                         if hints:
-                            for other in pending:
-                                other.cancel()
                             return hints
             finally:
-                for task in pending:
-                    task.cancel()
+                for task in tasks:
+                    if not task.done() and not task.cancelling():
+                        task.cancel()
+                await drain_provider_tasks(tasks)
 
     except Exception:
         logger.exception("generate_hints: unexpected crash for word=%r", word)

@@ -140,10 +140,18 @@ def test_ci_integration_job_uses_ephemeral_pgvector_database() -> None:
 
 def test_ci_requires_locked_browser_tests_with_chromium() -> None:
     browser_job = _job(_workflow(), "test-browser")
+    job = _parsed_workflow()["jobs"]["test-browser"]
+    playwright_version = json.loads(Path("tests/browser/package.json").read_text(encoding="utf-8"))["devDependencies"][
+        "playwright"
+    ]
 
     assert 'GEMAIBOT_REQUIRE_BROWSER_TESTS: "1"' in browser_job
     assert "npm ci --ignore-scripts" in browser_job
-    assert "npx --no-install playwright install --with-deps chromium" in browser_job
+    image = job["container"]["image"]
+    assert image.startswith(f"mcr.microsoft.com/playwright:v{playwright_version}-noble@sha256:")
+    assert re.fullmatch(r"[0-9a-f]{64}", image.rsplit("sha256:", 1)[1])
+    assert "--ipc=host" in job["container"]["options"]
+    assert not any("playwright install" in step.get("run", "") for step in job["steps"])
     # Discover every marked browser test, including new modules. A fixed list
     # previously omitted the compatibility form from the required Chromium job.
     assert "uv run --locked pytest tests/ -m browser -n 0" in browser_job
