@@ -190,6 +190,7 @@ class TestFastWordValidation:
 class TestPickRandomWord:
     @pytest.fixture(autouse=True)
     def mock_word_gen(self):
+        """Keep word-selection tests independent of background hint generation."""
         reset_budget_state_for_tests()
         reset_hint_runtime_state_for_tests()
         _GENERATED_CACHE.clear()
@@ -204,6 +205,7 @@ class TestPickRandomWord:
                 new_callable=AsyncMock,
                 return_value=["моксЛово", "тестовое"],
             ),
+            patch("app.games.word_bank.enqueue_bank_hint_prewarm", new_callable=AsyncMock),
         ):
             yield
 

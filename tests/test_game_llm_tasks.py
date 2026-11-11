@@ -40,6 +40,7 @@ class TestLLMTasks:
             patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response,
             patch("app.games.judgement_cache.get_cached_generated_words", new_callable=AsyncMock, return_value=None),
             patch("app.games.judgement_cache.cache_generated_words", new_callable=AsyncMock) as cache_mock,
+            patch("app.games.word_bank.enqueue_bank_hint_prewarm", new_callable=AsyncMock),
         ):
             # Must be >= 5 words or validate_words returns None
             mock_get_response.return_value = ('["кот", "собака", "тигр", "медведь", "лиса"]', 10)
