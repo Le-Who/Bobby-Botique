@@ -147,6 +147,21 @@ async def get_prepared_daily_reading(
     return _reading_from_row(rows[0])
 
 
+async def get_prepared_daily_readings(
+    *, reading_date: date, language: str = TAROT_DAILY_LANGUAGE
+) -> list[TarotDailyReading]:
+    """Read the day's prepared variants once for scheduled delivery admission."""
+    rows = await db.db_query(
+        """
+        SELECT reading_date, card_name, orientation, language, body_markdown, model_name
+        FROM public.tarot_daily_readings
+        WHERE reading_date = $1 AND language = $2
+        """,
+        (reading_date, language),
+    )
+    return [_reading_from_row(row) for row in rows]
+
+
 async def upsert_prepared_daily_reading(
     *,
     reading_date: date,

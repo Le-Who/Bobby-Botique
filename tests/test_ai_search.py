@@ -474,6 +474,7 @@ async def test_research_agent_uses_unified_completed_response_delivery(partial):
     chat_state = make_chat_state()
     final_answer = "A" * 4200
     delivery = MagicMock()
+    observer = MagicMock()
     delivery.deliver = AsyncMock()
     if partial:
         delivery.deliver.return_value = PartialDelivery(
@@ -510,9 +511,10 @@ async def test_research_agent_uses_unified_completed_response_delivery(partial):
 
         from app.handlers.ai_search import _handle_research_agent
 
-        await _handle_research_agent(placeholder, 123, "Query", chat_state)
+        await _handle_research_agent(placeholder, 123, "Query", chat_state, delivery_observer=observer)
 
     delivery.deliver.assert_awaited_once()
+    observer.assert_called_once_with(delivery.deliver.return_value)
     assert consume_operation_failure() is partial
     completed = delivery.deliver.await_args.args[1]
     assert completed == CompletedResponse(final_answer)

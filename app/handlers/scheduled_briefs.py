@@ -29,8 +29,10 @@ from app import database as db
 from app.i18n import t
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.providers.gemini_config import build_generate_content_config
+from app.repos import scheduled_deliveries as scheduled
 from app.runtime_settings.gemini_execution import run_gemini_override
 from app.runtime_settings.lifecycle import runtime_settings_scope
+from app.scheduled_delivery import run_scheduled_delivery
 from app.utils.json_compat import json
 from app.utils.ux_improvements import tg_time_tag, wrap_in_expandable_blockquote
 
@@ -119,7 +121,8 @@ async def upsert_subscription(
             ON CONFLICT (user_id, subscription_type) DO UPDATE SET
                 is_active = EXCLUDED.is_active,
                 timezone = EXCLUDED.timezone,
-                preferred_hour = EXCLUDED.preferred_hour
+                preferred_hour = EXCLUDED.preferred_hour,
+                delivery_revision = brief_subscriptions.delivery_revision + 1
             """,
             (user_id, sub_type, is_active, timezone, preferred_hour),
         )
@@ -133,7 +136,7 @@ async def deactivate_subscription(user_id: int, sub_type: str = "morning_brief")
     """Deactivate a subscription."""
     try:
         await db.db_query(
-            "UPDATE brief_subscriptions SET is_active = FALSE WHERE user_id = $1 AND subscription_type = $2",
+            "UPDATE brief_subscriptions SET is_active = FALSE, delivery_revision = delivery_revision + 1 WHERE user_id = $1 AND subscription_type = $2",
             (user_id, sub_type),
         )
         return True
@@ -147,17 +150,28 @@ async def get_due_subscriptions(current_hour_utc: int) -> list[dict[str, Any]]:
     try:
         result = await db.db_query(
             """
-            SELECT bs.user_id, bs.subscription_type, bs.timezone, bs.preferred_hour, bs.last_sent_at
+            SELECT bs.id, bs.delivery_revision, bs.user_id, bs.subscription_type, bs.timezone, bs.preferred_hour, bs.last_sent_at
             FROM brief_subscriptions bs
             WHERE bs.is_active = TRUE
               AND bs.preferred_hour = $1
-              AND (bs.last_sent_at IS NULL OR bs.last_sent_at < CURRENT_DATE)
+              AND (bs.last_sent_at IS NULL OR (bs.last_sent_at AT TIME ZONE 'UTC')::date < (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date)
+              AND NOT EXISTS (SELECT 1 FROM public.scheduled_deliveries d
+                  WHERE d.kind='brief' AND d.source_id=bs.id
+                    AND d.slot_date=(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date
+                    AND ((d.source_revision=bs.delivery_revision
+                          AND NOT (d.state='failed' AND d.retryable AND d.retry_at<=clock_timestamp()))
+                         OR d.state IN ('sent','unknown_delivery')
+                         OR EXISTS (SELECT 1 FROM public.scheduled_delivery_attempts a
+                             WHERE a.delivery_id=d.delivery_id
+                               AND (a.outcome IS NULL OR a.outcome IN ('sent','unknown_delivery')))))
             """,
             (current_hour_utc,),
         )
         return (
             [
                 {
+                    "id": row["id"],
+                    "delivery_revision": row["delivery_revision"],
                     "user_id": row["user_id"],
                     "subscription_type": row["subscription_type"],
                     "timezone": row["timezone"],
@@ -172,17 +186,6 @@ async def get_due_subscriptions(current_hour_utc: int) -> list[dict[str, Any]]:
     except Exception as e:
         logger.error("Error getting due subscriptions: %s", e, exc_info=True)
         return []
-
-
-async def mark_sent(user_id: int, sub_type: str = "morning_brief") -> None:
-    """Update last_sent_at after successful delivery."""
-    try:
-        await db.db_query(
-            "UPDATE brief_subscriptions SET last_sent_at = $1 WHERE user_id = $2 AND subscription_type = $3",
-            (datetime.now(tz=UTC), user_id, sub_type),
-        )
-    except Exception as e:
-        logger.error("Error marking subscription as sent: %s", e, exc_info=True)
 
 
 # ── Brief generation pipeline ───────────────────────────────────────────
@@ -479,77 +482,65 @@ async def _generate_brief_summary(
 
 
 @runtime_settings_scope()
-async def generate_and_send_brief(user_id: int, bot) -> bool:
-    """Full pipeline: topics → search → per-topic LLM summaries → HTML digest.
-
-    The digest uses Telegram's native <blockquote expandable> tags so each
-    topic section is collapsed by default. A <tg-time> header shows the
-    delivery time localized to the user's Telegram client timezone.
-    """
+async def generate_and_send_brief(
+    user_id: int, bot, *, subscription: dict | None = None, retry_claim: dict | None = None
+) -> bool:
+    """Generate for one exact active subscription, account generation and UTC slot."""
     try:
-        topics, expected_epoch = await _get_user_topics_snapshot(user_id)
-        if not topics:
-            logger.info("No LTM topics for user %s, skipping brief", user_id)
-            return False
-
-        articles = await _search_for_topics(topics, user_id=user_id, expected_epoch=expected_epoch)
-        sections: dict[str, str] = await _generate_brief_summary(
-            topics,
-            articles,
-            user_id=user_id,
-            expected_epoch=expected_epoch,
-        )
-
-        if not sections:
-            logger.info("Empty brief generated for user %s, skipping", user_id)
-            return False
-
-        # ── Build HTML digest with expandable blockquotes ─────────────────
-        import html as _html
-
-        now_ts = int(time.time())
-        time_tag = tg_time_tag(now_ts, fmt="f")  # "March 20, 2026 07:00"
-        lines: list[str] = [
-            f"<b>📬 Утренний брифинг</b> · {time_tag}\n",
-        ]
-
-        for headline, body in sections.items():
-            safe_headline = _html.escape(headline)
-            safe_body = _html.escape(body) if body else ""
-            # Each topic as a collapsible blockquote: headline visible, body collapsed
-            block = wrap_in_expandable_blockquote(safe_body, label=safe_headline)
-            lines.append(block)
-            lines.append("")  # visual spacing
-
-        html_message = "\n".join(lines).strip()
-
-        if not await _is_ltm_snapshot_current(user_id, expected_epoch):
-            logger.info("Skipped stale/revoked brief delivery for user %s", user_id)
-            return False
-
-        from app.repos.memory_consent import private_data_lease
-
-        async with private_data_lease(
-            user_id,
-            expected_epoch,
-            purpose="ltm:brief_delivery",
-            require_ltm=True,
-        ) as lease_acquired:
-            if not lease_acquired:
-                logger.info("Skipped stale/revoked brief delivery for user %s", user_id)
-                return False
-            await bot.send_message(
-                chat_id=user_id,
-                text=html_message,
-                parse_mode="HTML",
+        if retry_claim is not None:
+            claim = await scheduled.claim_brief_retry(retry_claim)
+        else:
+            claim = await scheduled.claim_brief(
+                user_id,
+                subscription["subscription_type"] if subscription is not None else "morning_brief",
+                subscription=subscription,
             )
-            # Bind scheduler state to the same generation as the delivered
-            # private snapshot; a delete/recreate cannot be marked by stale work.
-            await mark_sent(user_id)
+        if claim is None:
+            return False
 
-        logger.info("Brief sent to user %s (%d sections)", user_id, len(sections))
-        return True
+        async def generate(owner):
+            await owner.checkpoint()
+            topics, expected_epoch = await _get_user_topics_snapshot(user_id)
+            if not topics or expected_epoch != claim["privacy_epoch"]:
+                return
+            await owner.checkpoint()
+            articles = await _search_for_topics(topics, user_id=user_id, expected_epoch=expected_epoch)
+            await owner.checkpoint()
+            sections: dict[str, str] = await _generate_brief_summary(
+                topics,
+                articles,
+                user_id=user_id,
+                expected_epoch=expected_epoch,
+            )
+            if not sections:
+                return
 
+            # ── Build HTML digest with expandable blockquotes ─────────────────
+            import html as _html
+
+            now_ts = int(time.time())
+            time_tag = tg_time_tag(now_ts, fmt="f")  # "March 20, 2026 07:00"
+            lines: list[str] = [
+                f"<b>📬 Утренний брифинг</b> · {time_tag}\n",
+            ]
+
+            for headline, body in sections.items():
+                safe_headline = _html.escape(headline)
+                safe_body = _html.escape(body) if body else ""
+                # Each topic as a collapsible blockquote: headline visible, body collapsed
+                block = wrap_in_expandable_blockquote(safe_body, label=safe_headline)
+                lines.append(block)
+                lines.append("")  # visual spacing
+
+            html_message = "\n".join(lines).strip()
+
+            if not await _is_ltm_snapshot_current(user_id, expected_epoch):
+                logger.info("Skipped stale/revoked brief delivery for user %s", user_id)
+                return
+
+            await owner.send_message(chat_id=user_id, text=html_message, parse_mode="HTML")
+
+        return await run_scheduled_delivery(claim, bot, generate)
     except Exception as e:
         logger.error("Failed to send brief to user %s: %s", user_id, e, exc_info=True)
         return False
@@ -624,8 +615,10 @@ async def check_and_send_briefs(context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     current_hour = datetime.now(tz=UTC).hour
 
+    await scheduled.recover_abandoned()
     due_subs = await get_due_subscriptions(current_hour)
-    if not due_subs:
+    due_retries = await scheduled.get_due_brief_retries()
+    if not due_subs and not due_retries:
         return
 
     logger.info("Found %d due subscriptions for hour %d UTC", len(due_subs), current_hour)
@@ -633,11 +626,17 @@ async def check_and_send_briefs(context: ContextTypes.DEFAULT_TYPE) -> None:
     # Concurrency cap: 10 simultaneous LLM+search chains prevent provider overload.
     sem = asyncio.Semaphore(10)
 
-    async def _send_one(sub: dict) -> None:
+    async def _send_one(sub: dict, *, retry=False) -> None:
         async with sem:
             try:
-                await generate_and_send_brief(sub["user_id"], context.bot)
+                if retry:
+                    await generate_and_send_brief(sub["user_id"], context.bot, retry_claim=sub)
+                else:
+                    await generate_and_send_brief(sub["user_id"], context.bot, subscription=sub)
             except Exception as e:
                 logger.error("Failed to process brief for user %s: %s", sub["user_id"], e)
 
-    await asyncio.gather(*[_send_one(sub) for sub in due_subs])
+    await asyncio.gather(
+        *[_send_one(sub) for sub in due_subs],
+        *[_send_one(retry, retry=True) for retry in due_retries],
+    )

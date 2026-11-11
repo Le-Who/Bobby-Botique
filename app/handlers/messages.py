@@ -11,7 +11,7 @@ Key architectural decisions:
       so filters work safely across message/edited_message/channel_post update types.
     - ``handle_request``        — new messages only (filters.UpdateType.MESSAGE)
     - ``handle_edited_request`` — edited messages (filters.UpdateType.EDITED_MESSAGE)
-      Cancels any in-flight AI task and edits the original bot reply in-place (no new message).
+      Supersedes the same source request and reuses its owned bot reply in-place.
 """
 
 import asyncio
@@ -206,6 +206,37 @@ def _release_admission(user_id: int, owner: asyncio.Task) -> None:
         state.clear_active_task(user_id)
 
 
+def _reserve_admission(user_id: int, message, chat_id: int) -> asyncio.Task:
+    from app.handlers.retry_requests import remember_message_request
+
+    owner = asyncio.current_task()
+    assert owner is not None
+    state.get_user_state(user_id).is_processing = True
+    state.register_active_task(user_id, owner)
+    remember_message_request(user_id, getattr(message, "message_id", None), chat_id, owner)
+    return owner
+
+
+async def _retire_admitted_interaction(user_id: int, owner: asyncio.Task, *, replace_preview: bool = False) -> None:
+    interaction = state.get_user_state(user_id).interaction
+    if interaction is None or (interaction.task is None and not replace_preview):
+        return
+    try:
+        await state.cancel_interaction(user_id)
+    except BaseException:
+        _release_admission(user_id, owner)
+        raise
+
+
+def _bind_request_response(user_id: int, message_id: int, chat_id: int) -> None:
+    from app.handlers.retry_requests import message_request
+
+    state.set_last_bot_message(user_id, message_id, chat_id)
+    source = message_request(user_id)
+    if source is not None and source.owner is asyncio.current_task():
+        source.response_ref = (message_id, chat_id)
+
+
 def _request_cleanup(user_id: int, placeholder_message, done_event: asyncio.Event) -> Callable[[asyncio.Task], None]:
     """Release worker resources even when cancellation precedes its first step."""
     finished = False
@@ -232,7 +263,7 @@ async def _submit_request_worker(
     done_event: asyncio.Event,
     lang: str = "ru",
     retry_text: bool = False,
-) -> None:
+) -> bool:
     """Explicitly reject mandatory work instead of accepting a no-op task."""
     from app.observability.ingress import current_update_admitted
     from app.observability.request_metrics import RequestObservation
@@ -274,7 +305,10 @@ async def _submit_request_worker(
             )
         finally:
             finish_request(owner)
-        return
+        return False
+    from app.handlers.retry_requests import transfer_message_request
+
+    transfer_message_request(user_id, asyncio.current_task(), task)
     state.register_active_task(user_id, task)
 
     def completed(owner: asyncio.Task) -> None:
@@ -285,6 +319,7 @@ async def _submit_request_worker(
         finish_request(owner)
 
     task.add_done_callback(completed)
+    return True
 
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -463,9 +498,19 @@ async def _handle_request(
             )
             return
 
+        from app.handlers.cb_voice import commit_voice_edit, prepare_voice_edit
+
+        voice_edit_selection = None
+        if effective_msg.text and context.user_data and context.user_data.get("voice_edit_pending"):
+            voice_edit_selection = await prepare_voice_edit(context.user_data, user_id, chat_id)
+
+        def finish_voice_edit():
+            if commit_voice_edit(context.user_data, voice_edit_selection):
+                logging.info("Voice edit: user %s sent corrected text", user_id)
+
         from app.handlers.msg_speech import try_handle_speech_collection
 
-        if await try_handle_speech_collection(update, context, speech_reservation):
+        if await try_handle_speech_collection(update, context, speech_reservation, on_admitted=finish_voice_edit):
             return
 
         # Album accumulation schedules provider work, so it requires the same
@@ -503,18 +548,19 @@ async def _handle_request(
             if user_state.is_processing or state.get_user_lock(user_id).locked():
                 await _send_busy_ephemeral(update)
                 return
-            user_state.is_processing = True
+            admission_owner = _reserve_admission(user_id, effective_msg, chat_id)
 
             try:
+                await _retire_admitted_interaction(user_id, admission_owner)
                 placeholder_message = await effective_msg.reply_text(t("voice.processing", "ru"))
             except Exception, asyncio.CancelledError:
                 # No worker owns cleanup until the placeholder has been sent.
-                user_state.is_processing = False
+                _release_admission(user_id, admission_owner)
                 raise
 
             done_event = asyncio.Event()
             register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
-            state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+            _bind_request_response(user_id, placeholder_message.message_id, chat_id)
             finish_request = _request_cleanup(user_id, placeholder_message, done_event)
 
             async def voice_task_wrapper() -> None:
@@ -584,39 +630,33 @@ async def _handle_request(
 
         # ── 5. State-machine dispatchers (role/rename flows) ─────────────────
 
-        # ── 5a. Voice edit interception ──────────────────────────────────────
-        # If the user clicked "Edit" on a voice transcript, capture corrected text
-        if context.user_data and context.user_data.get("voice_edit_pending"):
-            pending = context.user_data.get("voice_pending")
-            if pending and message_text:
-                context.user_data.pop("voice_edit_pending", None)
-                context.user_data.pop("voice_pending", None)
-                # Route corrected text through AI chat as a normal message
-                corrected_text = message_text
-                logging.info("Voice edit: user %s sent corrected text", user_id)
-                # Fall through to normal text processing with the corrected text
-                message_text = corrected_text
-                # Continue to normal text handling below
         # ── 5b. Draw prompt input interception ──────────────────────────────
         # If the user previously pressed "✏️ Изменить промпт", capture text here.
         from app.handlers.cmd_image import handle_draw_prompt_input
 
         if await handle_draw_prompt_input(update, context):
+            finish_voice_edit()
             return
 
         if await handle_role_rename(update, context, user_id):
+            finish_voice_edit()
             return
         if await handle_edit_prompt(update, context, user_id):
+            finish_voice_edit()
             return
         if await handle_conversation_rename(update, context, user_id):
+            finish_voice_edit()
             return
         if await handle_manual_role_input(update, context, user_id):
+            finish_voice_edit()
             return
         if await handle_custom_role_generation(update, context, user_id, chat_id, message_text):
+            finish_voice_edit()
             return
 
         # ── 6. Document mode ─────────────────────────────────────────────────
         if await handle_document_mode_interaction(update, context, user_id):
+            finish_voice_edit()
             return
 
         # ── 7. Save last user input for retry button ─────────────────────────
@@ -676,12 +716,10 @@ async def _handle_request(
                 if user_state.is_processing or state.get_user_lock(user_id).locked():
                     await _send_busy_ephemeral(update)
                     return
-                speech_owner = asyncio.current_task()
-                assert speech_owner is not None
-                user_state.is_processing = True
-                state.register_active_task(user_id, speech_owner)
+                speech_owner = _reserve_admission(user_id, effective_msg, chat_id)
                 try:
-                    await handle_speech_request(update, context, speech_request)
+                    await _retire_admitted_interaction(user_id, speech_owner, replace_preview=True)
+                    await handle_speech_request(update, context, speech_request, on_admitted=finish_voice_edit)
                 finally:
                     _release_admission(user_id, speech_owner)
                 return
@@ -697,6 +735,7 @@ async def _handle_request(
 
             if is_natal_chart_request(message_text, bot_username=context.bot.username):
                 await natal_command(update, context)
+                finish_voice_edit()
                 return
 
         from app.voice_intent import detect_tts_intent
@@ -722,16 +761,17 @@ async def _handle_request(
             if user_state.is_processing or state.get_user_lock(user_id).locked():
                 await _send_busy_ephemeral(update)
                 return
-            user_state.is_processing = True
+            admission_owner = _reserve_admission(user_id, effective_msg, chat_id)
 
             try:
+                await _retire_admitted_interaction(user_id, admission_owner, replace_preview=True)
                 draw_placeholder = await effective_msg.reply_text("🎨 Рисую... это займёт несколько секунд.")
             except Exception, asyncio.CancelledError:
-                user_state.is_processing = False
+                _release_admission(user_id, admission_owner)
                 raise
 
             done_event = asyncio.Event()
-            state.set_last_bot_message(user_id, draw_placeholder.message_id, chat_id)
+            _bind_request_response(user_id, draw_placeholder.message_id, chat_id)
             finish_request = _request_cleanup(user_id, draw_placeholder, done_event)
 
             async def _draw_task_wrapper(
@@ -774,7 +814,7 @@ async def _handle_request(
                     assert owner is not None
                     finish_request(owner)
 
-            await _submit_request_worker(
+            accepted = await _submit_request_worker(
                 user_id,
                 _draw_task_wrapper(),
                 finish_request,
@@ -782,6 +822,8 @@ async def _handle_request(
                 done_event=done_event,
                 lang=detect_language(message_text),
             )
+            if accepted:
+                finish_voice_edit()
             return
 
         # ── 8. Create placeholder & heartbeat, then process AI request ───────
@@ -811,26 +853,35 @@ async def _handle_request(
             else:
                 await _send_busy_ephemeral(update)
                 return
-        user_state.is_processing = True
 
         # ── Intent Direct Routing (Plan §4) ──────────────────────────────
         # For text-only messages, try resolving via lightweight APIs
         # (weather, currency) before consuming an LLM call.
-        admission_owner = asyncio.current_task()
-        assert admission_owner is not None
-        state.register_active_task(user_id, admission_owner)
+        admission_owner = _reserve_admission(user_id, effective_msg, chat_id)
+        await _retire_admitted_interaction(user_id, admission_owner)
+
         if not is_photo and message_text:
+            intent_result = None
             try:
                 from app.intent_router import try_direct_intent
 
                 intent_task = asyncio.create_task(try_direct_intent(message_text))
                 intent_result = await asyncio.shield(intent_task)
+            except asyncio.CancelledError as cancellation:
+                try:
+                    await _cancel_and_drain(intent_task, cancellation=cancellation)
+                finally:
+                    _release_admission(user_id, admission_owner)
+            except Exception as e:
+                logging.debug("Intent routing failed (falling back to LLM): %s", e)
+            try:
                 if intent_result and intent_result.handled:
-                    user_state.is_processing = False
+                    finish_voice_edit()
                     direct_reply = await effective_msg.reply_text(
                         intent_result.text,
                         parse_mode="Markdown",
                     )
+                    _bind_request_response(user_id, direct_reply.message_id, chat_id)
                     if reply_with_voice:
                         try:
                             from app.repos.chats import get_user_chat
@@ -856,7 +907,6 @@ async def _handle_request(
                     logging.info("Intent direct routing handled for user %s", user_id)
                     elapsed = api_logger.log_response("telegram", start_time, method="handle_message")
                     await metrics_collector.record_request("handle_message", elapsed, success=True, user_id=user_id)
-                    _release_admission(user_id, admission_owner)
                     return
                 elif intent_result and not intent_result.handled and intent_result.context_data:
                     message_text = (
@@ -865,13 +915,9 @@ async def _handle_request(
                         f"Используй эти актуальные данные для формирования полноценного ответа."
                     )
                     logging.info("Context enriched with live data for user %s", user_id)
-            except asyncio.CancelledError as cancellation:
-                try:
-                    await _cancel_and_drain(intent_task, cancellation=cancellation)
-                finally:
+            finally:
+                if intent_result and intent_result.handled:
                     _release_admission(user_id, admission_owner)
-            except Exception as e:
-                logging.debug("Intent routing failed (falling back to LLM): %s", e)
 
         try:
             if is_photo:
@@ -885,7 +931,7 @@ async def _handle_request(
             raise
 
         # Track this placeholder so edited_message handler can reuse it
-        state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+        _bind_request_response(user_id, placeholder_message.message_id, chat_id)
 
         done_event = asyncio.Event()
         register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
@@ -921,7 +967,7 @@ async def _handle_request(
                     stop_heartbeat(placeholder_message.message_id)
 
                     # Keep last-bot-message current after agent finishes editing in-place
-                    state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+                    _bind_request_response(user_id, placeholder_message.message_id, chat_id)
 
                     logging.info("Completed task processing for user %s", user_id)
 
@@ -965,7 +1011,7 @@ async def _handle_request(
                     assert owner is not None
                     finish_request(owner)
 
-        await _submit_request_worker(
+        accepted = await _submit_request_worker(
             user_id,
             task_wrapper(),
             finish_request,
@@ -974,15 +1020,17 @@ async def _handle_request(
             lang=detect_language(message_text),
             retry_text=not is_photo,
         )
+        if accepted:
+            finish_voice_edit()
 
 
 async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle edited messages (UpdateType.EDITED_MESSAGE).
 
     UX-first in-place edit flow:
-    1. Cancel the inflight AI task if one is running (user corrected before response arrived).
-    2. Find the bot's previous placeholder / response message.
-    3. Edit that message in-place to "думаю заново..." — no new message, chat stays clean.
+    1. Check that the edit belongs to the latest admitted source message.
+    2. Cancel its inflight AI task if one is running.
+    3. Reuse that request's placeholder / response when available.
     4. Kick off a fresh AI request with the corrected text.
 
     Falls back to a fresh reply if the previous bot message is unavailable.
@@ -1019,9 +1067,25 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         },
     )
 
+    from app.handlers.retry_requests import message_request, remember_message_request
+
+    source = message_request(user_id)
+    edited_message_id = getattr(edited_msg, "message_id", None)
     previous_owner = state.get_active_task(user_id)
+    if isinstance(edited_message_id, int):
+        if source is not None:
+            if source.source_ref != (edited_message_id, chat_id):
+                return
+            if previous_owner is not None and previous_owner is not source.owner:
+                return
+        elif previous_owner is not None or state.get_user_lock(user_id).locked():
+            return
     admission_owner = asyncio.current_task()
     assert admission_owner is not None
+    if source is not None:
+        source.owner = admission_owner
+    else:
+        remember_message_request(user_id, edited_message_id, chat_id, admission_owner)
     state.register_active_task(user_id, admission_owner)
     state.get_user_state(user_id).is_processing = True
     try:
@@ -1030,6 +1094,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         # this admission owner in turn before reusing the same placeholder.
         if previous_owner is not None and previous_owner is not admission_owner:
             await _cancel_and_drain(previous_owner)
+        await _retire_admitted_interaction(user_id, admission_owner)
 
         from app.handlers.msg_speech import handle_speech_request, speech_request_for_message
 
@@ -1040,6 +1105,10 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
 
         # ── Find or create the placeholder ───────────────────────────────────
         last = state.get_last_bot_message(user_id)
+        if isinstance(edited_message_id, int):
+            source = message_request(user_id)
+            if source is None or source.response_ref != last:
+                last = None
         placeholder_message = None
 
         if last:
@@ -1058,7 +1127,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         if placeholder_message is None:
             placeholder_message = await edited_msg.reply_text(t("msg.rethinking"))
 
-        state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+        _bind_request_response(user_id, placeholder_message.message_id, chat_id)
         state.set_last_sent_message(user_id, new_text)
 
         done_event = asyncio.Event()
@@ -1075,7 +1144,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                     await process_long_request(placeholder_message, update, context, text_override=new_text)
 
                     stop_heartbeat(placeholder_message.message_id)
-                    state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+                    _bind_request_response(user_id, placeholder_message.message_id, chat_id)
                     logging.info("edit: completed for user %s", user_id)
 
                     elapsed = api_logger.log_response("telegram", start_time, method="handle_edited_message")

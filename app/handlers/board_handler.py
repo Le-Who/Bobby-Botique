@@ -23,6 +23,7 @@ import asyncio
 import html as _html
 import logging
 import time
+import weakref
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -46,6 +47,17 @@ _BOARD_TTL_HOURS = 24  # boards older than this are considered expired
 
 # Per-board debounce tracking: {board_id: next_allowed_float}
 _board_next_synthesis: dict[int, float] = {}
+_board_publication_locks: weakref.WeakValueDictionary[int, asyncio.Lock] = weakref.WeakValueDictionary()
+
+
+def _board_publication_lock(board_id: int) -> asyncio.Lock:
+    """Serialize local Telegram publishers; the caller retains the live lock."""
+    lock = _board_publication_locks.get(board_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _board_publication_locks[board_id] = lock
+    return lock
+
 
 # ── Keyboard factories ────────────────────────────────────────────────────────
 
@@ -257,30 +269,32 @@ async def _maybe_synthesize(
 
     from app.repos.boards_repo import update_summary
 
-    await update_summary(board_id, summary)
+    async with _board_publication_lock(board_id):
+        if not await update_summary(board_id, summary, expected_entry_count=len(updated_entries)):
+            return
 
-    card_text, keyboard = _render_board_card(
-        topic=topic,
-        summary=summary,
-        entry_count=len(updated_entries),
-        board_id=board_id,
-    )
+        card_text, keyboard = _render_board_card(
+            topic=topic,
+            summary=summary,
+            entry_count=len(updated_entries),
+            board_id=board_id,
+        )
 
-    try:
-        await bot.edit_message_text(
-            text=card_text,
-            inline_message_id=inline_message_id,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
-        logger.info(
-            "Board %s synthesized: %d entries, inline_msg_id=%s",
-            board_id,
-            len(updated_entries),
-            inline_message_id,
-        )
-    except Exception as err:
-        logger.error("Board %s: edit_message_text failed: %s", board_id, err)
+        try:
+            await bot.edit_message_text(
+                text=card_text,
+                inline_message_id=inline_message_id,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+            logger.info(
+                "Board %s synthesized: %d entries, inline_msg_id=%s",
+                board_id,
+                len(updated_entries),
+                inline_message_id,
+            )
+        except Exception as err:
+            logger.error("Board %s: edit_message_text failed: %s", board_id, err)
 
 
 async def _run_synthesis(topic: str, entries: list[dict]) -> str:
@@ -406,41 +420,42 @@ async def handle_board_close_callback(
 
     from app.repos.boards_repo import close_board, get_board_by_inline_msg
 
-    board = await get_board_by_inline_msg(inline_message_id)
-    if not board or board.get("id") != board_id:
-        await query.answer("ℹ️ Доска уже закрыта или не найдена.", show_alert=True)
-        return
+    async with _board_publication_lock(board_id):
+        board = await get_board_by_inline_msg(inline_message_id)
+        if not board or board.get("id") != board_id:
+            await query.answer("ℹ️ Доска уже закрыта или не найдена.", show_alert=True)
+            return
 
-    # Only the creator can close
-    requester_id = query.from_user.id if query.from_user else None
-    creator_id = board.get("creator_id")
-    if requester_id is None or creator_id is None or requester_id != creator_id:
-        await query.answer("🔒 Только создатель доски может её закрыть.", show_alert=True)
-        return
+        # Only the creator can close
+        requester_id = query.from_user.id if query.from_user else None
+        creator_id = board.get("creator_id")
+        if requester_id is None or creator_id is None or requester_id != creator_id:
+            await query.answer("🔒 Только создатель доски может её закрыть.", show_alert=True)
+            return
 
-    if not await close_board(board_id):
-        await query.answer("⚠️ Не удалось закрыть доску. Попробуйте позже.", show_alert=True)
-        return
+        if not await close_board(board_id):
+            await query.answer("⚠️ Не удалось закрыть доску. Попробуйте позже.", show_alert=True)
+            return
 
-    topic = board.get("topic", "")
-    summary = board.get("last_summary", "")
-    entry_count = len(board.get("entries", []))
+        topic = board.get("topic", "")
+        summary = board.get("last_summary", "")
+        entry_count = len(board.get("entries", []))
 
-    closed_text = (
-        f"📋 <b>{_html.escape(topic)}</b> <i>(закрыта)</i>\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{summary or '<i>Нет данных</i>'}\n\n"
-        f"<i>Итого: {entry_count} идей • Доска закрыта</i>"
-    )
-    if len(closed_text) > 4000:
-        closed_text = closed_text[:3997] + "…"
-
-    try:
-        await context.bot.edit_message_text(
-            text=closed_text,
-            inline_message_id=inline_message_id,
-            parse_mode="HTML",
-            reply_markup=_closed_keyboard(),
+        closed_text = (
+            f"📋 <b>{_html.escape(topic)}</b> <i>(закрыта)</i>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{summary or '<i>Нет данных</i>'}\n\n"
+            f"<i>Итого: {entry_count} идей • Доска закрыта</i>"
         )
-    except Exception as err:
-        logger.error("Board close: edit failed for inline_msg_id=%s: %s", inline_message_id, err)
+        if len(closed_text) > 4000:
+            closed_text = closed_text[:3997] + "…"
+
+        try:
+            await context.bot.edit_message_text(
+                text=closed_text,
+                inline_message_id=inline_message_id,
+                parse_mode="HTML",
+                reply_markup=_closed_keyboard(),
+            )
+        except Exception as err:
+            logger.error("Board close: edit failed for inline_msg_id=%s: %s", inline_message_id, err)

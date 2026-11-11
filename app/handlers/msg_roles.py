@@ -35,178 +35,211 @@ register_controlled_text(
 )
 
 
+ROLE_EDIT_KEYS = (
+    "edit_prompt_role_id",
+    "edit_prompt_role_key",
+    "edit_prompt_ai_role_id",
+    "edit_prompt_ai_role_key",
+    "edit_prompt_ai_current",
+    "edit_prompt_ai_preview",
+    "edit_prompt_ai_save_role_id",
+    "edit_prompt_ai_save_role_key",
+    "role_edit_token",
+)
+
+
+def clear_role_edit_state(user_data) -> None:
+    if user_data is not None:
+        for key in ROLE_EDIT_KEYS:
+            user_data.pop(key, None)
+
+
 async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    """Handle text input for role prompt editing (manual or AI-enhanced).
+    """Consume one edit input and keep every result tied to that role/prompt."""
+    from app.handlers.interaction_work import interaction_current, private_interaction, reject_busy_interaction
+    from app.state import begin_interaction, get_user_state, run_interaction
 
-    Returns True if the message was consumed by the edit prompt flow.
-    """
-    if not update.message or not update.message.text:
+    data = context.user_data
+    message_text = (update.message.text or "").strip() if update.message else ""
+    if not data or not message_text:
         return False
-
-    message_text = update.message.text.strip()
-    if not message_text:
+    ai = bool(data.get("edit_prompt_ai_role_id"))
+    role_raw = data.get("edit_prompt_ai_role_id" if ai else "edit_prompt_role_id")
+    if not role_raw:
         return False
+    if await reject_busy_interaction(user_id, update.message.reply_text):
+        return True
+    state = get_user_state(user_id)
+    owner = state.interaction
+    token = data.get("role_edit_token")
+    if token and (owner is None or owner.kind != "role_edit" or owner.token != token):
+        clear_role_edit_state(data)
+        return False
+    if owner is not None and owner.task is not None:
+        await update.message.reply_text("⏳ Дождитесь завершения текущего запроса или отмените его.")
+        return True
+    if owner is None or owner.kind != "role_edit":
+        owner = begin_interaction(user_id, "role_edit")
+        data["role_edit_token"] = owner.token
+    role_id = int(role_raw)
+    role_key = data.get("edit_prompt_ai_role_key" if ai else "edit_prompt_role_key", f"user_role:{role_id}")
+    current_prompt = data.get("edit_prompt_ai_current", "")
 
-    # ── Mode 1: Manual prompt replacement ────────────────────────────────
-    edit_role_id = context.user_data.get("edit_prompt_role_id") if context.user_data else None
-    if edit_role_id:
+    async def edit() -> None:
+        progress = None
         try:
-            role_id = int(edit_role_id)
-            role_key = context.user_data.get("edit_prompt_role_key", f"user_role:{role_id}")
-
             from app.repos.roles import get_custom_role_prompt, update_custom_role_prompt
 
-            old_prompt = await get_custom_role_prompt(role_id, user_id)
-            success = await update_custom_role_prompt(role_id, user_id, message_text)
-
-            # Clean up state
-            context.user_data.pop("edit_prompt_role_id", None)
-            context.user_data.pop("edit_prompt_role_key", None)
-
-            if not success:
-                await update.message.reply_text(t("role.prompt_update_failed"))
-                return True
-
-            # If this role is currently active, update system_prompt
             chat_state = await get_user_chat(user_id)
-            if old_prompt and chat_state.system_prompt == old_prompt:
-                chat_state.system_prompt = message_text
-                from app.repos.chats import update_user_chat
+            async with private_interaction(owner, chat_state) as allowed:
+                if not allowed:
+                    return
+                if not ai:
+                    old_prompt = await get_custom_role_prompt(role_id, user_id)
+                    if not await interaction_current(owner):
+                        return
+                    success = await update_custom_role_prompt(role_id, user_id, message_text)
+                    if not await interaction_current(owner):
+                        return
+                    if not success:
+                        await update.message.reply_text(t("role.prompt_update_failed"))
+                        return
+                    if old_prompt and chat_state.system_prompt == old_prompt:
+                        from app.repos.chats import update_user_chat
 
-                await update_user_chat(user_id, chat_state)
+                        chat_state.system_prompt = message_text
+                        applied = await update_user_chat(user_id, chat_state, expected_epoch=owner.epoch)
+                        if not await interaction_current(owner):
+                            return
+                        if applied is False:
+                            await update.message.reply_text(
+                                "Промпт роли обновлён. Не удалось применить его к текущему диалогу: запрос устарел. Выберите роль заново."
+                            )
+                            return
+                    if not await interaction_current(owner):
+                        return
+                    await update.message.reply_text(t("role.prompt_updated"))
+                    text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+                        user_id, chat_state, view_mode="role_details", role_key=role_key
+                    )
+                    if await interaction_current(owner):
+                        await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+                        clear_role_edit_state(data)
+                    return
+                from app.config import settings
+                from app.handlers.ai_core import _get_ai_response, _resolve_ai_request
+                from app.process_policies import execute_text_process, resolve_process
 
-            await update.message.reply_text(t("role.prompt_updated"))
-
-            # Show updated role details
-            text, parse_mode, reply_markup = await menus.get_roles_menu_content(
-                user_id, chat_state, view_mode="role_details", role_key=role_key
-            )
-            await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-            return True
-
-        except Exception as e:
-            logging.error("Error updating role prompt: %s", e, exc_info=True)
-            await update.message.reply_text(t("role.prompt_update_error"))
-            context.user_data.pop("edit_prompt_role_id", None)
-            context.user_data.pop("edit_prompt_role_key", None)
-            return True
-
-    # ── Mode 2: AI-enhanced prompt editing ───────────────────────────────
-    ai_role_id = context.user_data.get("edit_prompt_ai_role_id") if context.user_data else None
-    if ai_role_id:
-        try:
-            role_id = int(ai_role_id)
-            role_key = context.user_data.get("edit_prompt_ai_role_key", f"user_role:{role_id}")
-            current_prompt = context.user_data.get("edit_prompt_ai_current", "")
-
-            # Clear the "awaiting" state so we don't loop
-            context.user_data.pop("edit_prompt_ai_role_id", None)
-            context.user_data.pop("edit_prompt_ai_role_key", None)
-
-            progress_msg = await update.message.reply_text(t("role.ai_enhancing"))
-
-            # Build the enhancement prompt — minimal, no safety injection
-            enhance_instruction = render_prompt_text(
-                get_prompt_text("roles.edit"), current_prompt=current_prompt, message_text=message_text
-            )
-
-            # Use the same AI pipeline as role generation
-            from app.config import settings
-            from app.handlers.ai_core import _get_ai_response, _resolve_ai_request
-
-            chat_state = await get_user_chat(user_id)
-            model_for_edit = chat_state.model or settings.DEFAULT_MODEL
-            from app.process_policies import execute_text_process, resolve_process
-
-            policy = await resolve_process("roles.edit", (model_for_edit,))
-            key_data, model_used, _ = (
-                (None, model_for_edit, None) if policy.explicit else await _resolve_ai_request(model_for_edit)
-            )
-
-            if not key_data and not policy.explicit:
-                await progress_msg.edit_text(t("error.no_api_keys"))
-                return True
-
-            history = [{"role": "user", "parts": [enhance_instruction]}]
-            if policy.explicit:
-                response_text, _ = await execute_text_process(
-                    "roles.edit",
-                    (model_for_edit,),
-                    history,
-                    user_id=user_id,
-                    chat_id=user_id,
+                model_for_edit = chat_state.model or settings.DEFAULT_MODEL
+                policy = await resolve_process("roles.edit", (model_for_edit,))
+                key_data, model_used, _ = (
+                    (None, model_for_edit, None) if policy.explicit else await _resolve_ai_request(model_for_edit)
                 )
-            else:
-                assert key_data is not None
-                response_text, _ = await _get_ai_response(
-                    key_data["api_key"],
-                    history,
-                    model_used,
-                    user_id=user_id,
-                    chat_id=user_id,
+                if not await interaction_current(owner):
+                    return
+                progress = await update.message.reply_text(t("role.ai_enhancing"))
+                if not await interaction_current(owner):
+                    return
+                if not key_data and not policy.explicit:
+                    await progress.edit_text(t("error.no_api_keys"))
+                    return
+                instruction = render_prompt_text(
+                    get_prompt_text("roles.edit"), current_prompt=current_prompt, message_text=message_text
                 )
+                history = [{"role": "user", "parts": [instruction]}]
+                if policy.explicit:
+                    response_text, _ = await execute_text_process(
+                        "roles.edit", (model_for_edit,), history, user_id=user_id, chat_id=user_id
+                    )
+                else:
+                    assert key_data is not None
+                    response_text, _ = await _get_ai_response(
+                        key_data["api_key"], history, model_used, user_id=user_id, chat_id=user_id
+                    )
+                if not await interaction_current(owner):
+                    return
+                if not response_text or not response_text.strip() or is_error_message(response_text):
+                    await progress.edit_text(t("role.ai_no_result"))
+                    return
+                enhanced_prompt = response_text.strip()
+                kb = InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton(t("role.btn_save"), callback_data=f"role_edit_ai_save:{owner.token}")],
+                        [
+                            InlineKeyboardButton(
+                                t("role.btn_edit"), callback_data=f"role_edit_ai_tweak:{role_key}:{owner.token}"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                t("role.btn_cancel"), callback_data=f"role_edit_cancel:{role_key}:{owner.token}"
+                            )
+                        ],
+                    ]
+                )
+                text, parse_mode = TelegramFormatter.format_text(t("role.ai_enhanced_preview", prompt=enhanced_prompt))
+                await progress.edit_text(text, parse_mode=parse_mode, reply_markup=kb)
+                if not await interaction_current(owner):
+                    return
+                data.pop("edit_prompt_ai_role_id", None)
+                data.pop("edit_prompt_ai_role_key", None)
+                data.update(
+                    edit_prompt_ai_preview=enhanced_prompt,
+                    edit_prompt_ai_save_role_id=role_id,
+                    edit_prompt_ai_save_role_key=role_key,
+                    edit_prompt_ai_current=current_prompt,
+                )
+                owner.phase = "preview"
+        except Exception as exc:
+            logging.error("Error updating role prompt: %s", exc, exc_info=True)
+            if await interaction_current(owner):
+                await update.message.reply_text(t("role.ai_enhance_error" if ai else "role.prompt_update_error"))
+        finally:
+            if progress is not None and not owner.current():
+                try:
+                    await progress.delete()
+                except Exception:
+                    pass
 
-            if not response_text or not response_text.strip() or is_error_message(response_text):
-                await progress_msg.edit_text(t("role.ai_no_result"))
-                return True
+    await run_interaction(owner, edit)
+    return True
 
-            enhanced_prompt = response_text.strip()
 
-            # Store preview for save callback
-            if context.user_data is not None:
-                context.user_data["edit_prompt_ai_preview"] = enhanced_prompt
-                context.user_data["edit_prompt_ai_save_role_id"] = role_id
-                context.user_data["edit_prompt_ai_save_role_key"] = role_key
-                # Keep current prompt for active-role check on save
-                context.user_data["edit_prompt_ai_current"] = current_prompt
-
-            preview_text = t("role.ai_enhanced_preview", prompt=enhanced_prompt)
-            kb = InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton(t("role.btn_save"), callback_data="role_edit_ai_save")],
-                    [InlineKeyboardButton(t("role.btn_edit"), callback_data=f"role_edit_ai_tweak:{role_key}")],
-                    [InlineKeyboardButton(t("role.btn_cancel"), callback_data=f"role_edit_cancel:{role_key}")],
-                ]
-            )
-            fmt_text, fmt_pm = TelegramFormatter.format_text(preview_text)
-            await progress_msg.edit_text(fmt_text, parse_mode=fmt_pm, reply_markup=kb)
-            return True
-
-        except Exception as e:
-            logging.error("Error in AI prompt enhancement: %s", e, exc_info=True)
-            await update.message.reply_text(t("role.ai_enhance_error"))
-            # Clean up
-            if context.user_data is not None:
-                context.user_data.pop("edit_prompt_ai_role_id", None)
-                context.user_data.pop("edit_prompt_ai_role_key", None)
-                context.user_data.pop("edit_prompt_ai_current", None)
-            return True
-
-    return False
+def _text_input_current(user_data, owner) -> bool:
+    return user_data.get("_text_input_owner") is owner and (owner is None or owner.current())
 
 
 async def handle_conversation_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     """Handle text input for conversation rename. Returns True if consumed."""
     rename_conv_id = context.user_data.get("rename_conv_id")
     if rename_conv_id and update.message and update.message.text:
+        owner = context.user_data.get("_text_input_owner")
         try:
             new_title = update.message.text.strip()
             if 1 <= len(new_title) <= 100:
-                await rename_conversation(user_id, rename_conv_id, new_title)
+                renamed = await rename_conversation(user_id, rename_conv_id, new_title)
+                if not _text_input_current(context.user_data, owner):
+                    return True
+                if not renamed:
+                    await update.message.reply_text(t("role.rename_error"))
+                    return True
                 context.user_data.pop("rename_conv_id", None)
                 await role_conv_metrics.record_conversation_renamed()
 
                 text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
+                if not _text_input_current(context.user_data, owner):
+                    return True
                 await update.message.reply_text(t("role.renamed", title=new_title))
-                await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+                if _text_input_current(context.user_data, owner):
+                    await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
                 return True
             else:
                 await update.message.reply_text(t("role.name_length_error"))
                 return True
         except Exception as e:
             logging.error("Error renaming conversation: %s", e, exc_info=True)
-            await update.message.reply_text(t("role.rename_error"))
-            context.user_data.pop("rename_conv_id", None)
+            if _text_input_current(context.user_data, owner):
+                await update.message.reply_text(t("role.rename_error"))
             return True
     return False
 
@@ -231,13 +264,34 @@ async def handle_manual_role_input(
     if not message_text:
         return False
 
+    from app.state import begin_interaction, get_user_state
+
+    owner = get_user_state(user_id).interaction
+    from app.handlers.interaction_work import reject_busy_interaction
+
+    if (
+        (owner is not None and owner.kind == "manual_role")
+        or is_awaiting_manual_role_title(user_id)
+        or is_awaiting_manual_role_prompt(user_id)
+    ) and await reject_busy_interaction(user_id, update.message.reply_text):
+        return True
+    if owner is None and (is_awaiting_manual_role_title(user_id) or is_awaiting_manual_role_prompt(user_id)):
+        owner = begin_interaction(user_id, "manual_role")
+    if owner is None or owner.kind != "manual_role":
+        return False
+    if owner.task is not None:
+        await update.message.reply_text("⏳ Дождитесь завершения текущего действия или отмените его.")
+        return True
+
     # Step 1: User sends title
     if is_awaiting_manual_role_title(user_id):
         if len(message_text) > 100:
             await update.message.reply_text(t("role.title_too_long"))
             return True
         set_manual_role_title(user_id, message_text)
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(t("role.btn_cancel"), callback_data="role_manual_cancel")]])
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(t("role.btn_cancel"), callback_data=f"role_manual_cancel:{owner.token}")]]
+        )
         title_text = t("role.title_set", title=message_text)
         fmt_text, fmt_pm = TelegramFormatter.format_text(title_text)
         await update.message.reply_text(
@@ -258,8 +312,8 @@ async def handle_manual_role_input(
         prompt_preview = message_text[:preview_len] + "..." if len(message_text) > preview_len else message_text
         kb = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton(t("role.btn_save_apply"), callback_data="role_manual_save")],
-                [InlineKeyboardButton(t("role.btn_cancel"), callback_data="role_manual_cancel")],
+                [InlineKeyboardButton(t("role.btn_save_apply"), callback_data=f"role_manual_save:{owner.token}")],
+                [InlineKeyboardButton(t("role.btn_cancel"), callback_data=f"role_manual_cancel:{owner.token}")],
             ]
         )
         preview_text = t("role.preview_title", title=title, prompt=prompt_preview)
@@ -274,6 +328,142 @@ async def handle_manual_role_input(
     return False
 
 
+async def generate_custom_role(
+    user_id: int,
+    chat_id: int,
+    message_text: str,
+    reply_text,
+    *,
+    get_chat=get_user_chat,
+) -> None:
+    """Generate and publish one owned preview; retry uses the same boundary."""
+    from app.config import settings
+    from app.handlers.ai_core import _get_ai_response, _resolve_ai_request
+    from app.handlers.interaction_work import interaction_current, private_interaction, reject_busy_interaction
+    from app.process_policies import execute_text_process, resolve_process
+    from app.state import begin_interaction, get_user_state, run_interaction
+
+    state = get_user_state(user_id)
+    if await reject_busy_interaction(user_id, reply_text):
+        return
+    owner = state.interaction
+    if owner is not None and owner.task is not None:
+        await reply_text("⏳ Дождитесь завершения текущего запроса или отмените его.")
+        return
+    if owner is None or owner.kind != "role" or owner.phase == "preview":
+        owner = begin_interaction(user_id, "role")
+    state.generating_custom_role = True
+
+    async def generate() -> None:
+        progress_msg = None
+        try:
+            chat_state = await get_chat(user_id)
+            async with private_interaction(owner, chat_state) as allowed:
+                if not allowed:
+                    if owner.current():
+                        await reply_text("Запрос устарел. Начните создание роли заново.")
+                    return
+                model_for_role = chat_state.model or settings.DEFAULT_MODEL
+                policy = await resolve_process("roles.generate", (model_for_role,))
+                key_data, model_used, _ = (
+                    (None, model_for_role, None) if policy.explicit else await _resolve_ai_request(model_for_role)
+                )
+                if not await interaction_current(owner):
+                    return
+                if not key_data and not policy.explicit:
+                    await reply_text(t("role.no_api_keys"))
+                    clear_custom_role_state(user_id)
+                    return
+                progress_msg = await reply_text(t("role.generating"))
+                if not await interaction_current(owner):
+                    return
+                history = [{"role": "user", "parts": [message_text]}]
+                if policy.explicit:
+                    response_text, _ = await execute_text_process(
+                        "roles.generate",
+                        (model_for_role,),
+                        history,
+                        system_instruction=get_registry().get("prompt_engineer").text,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                    )
+                else:
+                    assert key_data is not None
+                    response_text, _ = await _get_ai_response(
+                        key_data["api_key"],
+                        history,
+                        model_used,
+                        system_instruction=get_registry().get("prompt_engineer").text,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                    )
+                if not await interaction_current(owner):
+                    return
+                role_obj = extract_json_object(response_text)
+                if not role_obj:
+                    await progress_msg.edit_text(
+                        t("role.generation_failed"),
+                        reply_markup=InlineKeyboardMarkup(
+                            [
+                                [InlineKeyboardButton(t("role.btn_retry"), callback_data="role_create")],
+                                [
+                                    InlineKeyboardButton(
+                                        t("btn.cancel"), callback_data=f"role_create_cancel:{owner.token}"
+                                    )
+                                ],
+                            ]
+                        ),
+                    )
+                    return
+                # The token is part of the saved JSON payload, so a restart cannot
+                # make a generic button refer to a newer owned preview.
+                role_obj["_interaction_token"] = owner.token
+                role_obj["_memory_epoch"] = owner.epoch
+                title = role_obj.get("title", t("role.custom_default_title"))
+                preview = t(
+                    "role.new_preview",
+                    title=title,
+                    purpose=role_obj.get("purpose", ""),
+                    style=", ".join(role_obj.get("style", [])[:3]),
+                )
+                kb_rows = [
+                    [InlineKeyboardButton(t("role.btn_apply"), callback_data=f"role_custom_apply:{owner.token}")],
+                    [InlineKeyboardButton(t("role.btn_save"), callback_data=f"role_custom_save:{owner.token}")],
+                    [
+                        InlineKeyboardButton(
+                            t("role.btn_retry_custom"), callback_data=f"role_custom_retry:{owner.token}"
+                        )
+                    ],
+                    [InlineKeyboardButton(t("btn.cancel"), callback_data=f"role_create_cancel:{owner.token}")],
+                ]
+                formatted_text, parse_mode = TelegramFormatter.format_text(preview)
+                await progress_msg.edit_text(
+                    formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb_rows)
+                )
+                if not await interaction_current(owner):
+                    return
+                set_last_custom_role_prompt(user_id, message_text)
+                set_generated_role(user_id, role_obj)
+                owner.phase = "preview"
+        except Exception as exc:
+            logging.error("Error generating custom role: %s", exc, exc_info=True)
+            if await interaction_current(owner):
+                if progress_msg is not None:
+                    await progress_msg.edit_text(t("role.generation_error"))
+                else:
+                    await reply_text(t("role.generation_error"))
+        finally:
+            if owner.current():
+                set_generating_custom_role(user_id, False)
+            elif progress_msg is not None:
+                try:
+                    await progress_msg.delete()
+                except Exception:
+                    pass
+
+    await run_interaction(owner, generate)
+
+
 async def handle_custom_role_generation(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -281,159 +471,32 @@ async def handle_custom_role_generation(
     chat_id: int,
     message_text: str,
 ) -> bool:
-    """Handle AI-powered custom role generation. Returns True if consumed."""
-    if is_awaiting_custom_role_input(user_id):
-        logging.info(
-            "Custom role description received",
-            extra={
-                "_event_name": "role.description_received",
-                **content_fields("role_description", message_text, subsystem="roles"),
-            },
-        )
+    """Consume custom-role input before the dispatcher admits ordinary chat."""
+    from app.state import get_user_state
 
-        chat_state = await get_user_chat(user_id)
-        from app.config import settings
-        from app.handlers import agent
-
-        model_for_role = chat_state.model or settings.DEFAULT_MODEL
-        from app.process_policies import execute_text_process, resolve_process
-
-        policy = await resolve_process("roles.generate", (model_for_role,))
-        key_data, model_used, _ = (
-            (None, model_for_role, None) if policy.explicit else await agent._resolve_ai_request(model_for_role)
-        )
-
-        if not key_data and not policy.explicit:
-            kb = InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton(t("role.btn_roles_menu"), callback_data="open_roles")],
-                    [InlineKeyboardButton(t("menu.back_to_menu"), callback_data="start_menu")],
-                ]
-            )
-            await update.message.reply_text(
-                t("role.no_api_keys"),
-                reply_markup=kb,
-            )
-            clear_custom_role_state(user_id)
-            return True
-
-        progress_msg = await update.message.reply_text(t("role.generating"))
-        set_generating_custom_role(user_id, True)
-
-        history = [{"role": "user", "parts": [message_text]}]
-
-        try:
-            if policy.explicit:
-                response_text, _ = await execute_text_process(
-                    "roles.generate",
-                    (model_for_role,),
-                    history,
-                    system_instruction=get_registry().get("prompt_engineer").text,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                )
-            else:
-                assert key_data is not None
-                response_text, _ = await agent._get_ai_response(
-                    key_data["api_key"],
-                    history,
-                    model_used,
-                    system_instruction=get_registry().get("prompt_engineer").text,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                )
-
-            logging.info(
-                "Role generation response received",
-                extra={
-                    "_event_name": "role.generation_response_received",
-                    **content_fields("provider_response", response_text, subsystem="roles"),
-                },
-            )
-
-            role_obj = extract_json_object(response_text)
-
-            if not role_obj:
-                error_kb = InlineKeyboardMarkup(
-                    [
-                        [InlineKeyboardButton(t("role.btn_retry"), callback_data="role_create")],
-                        [InlineKeyboardButton(t("btn.cancel"), callback_data="role_create_cancel")],
-                    ]
-                )
-                if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
-                    await progress_msg.edit_text(
-                        t("role.server_overloaded"),
-                        reply_markup=error_kb,
-                    )
-                else:
-                    logging.error(
-                        "Failed to parse role JSON",
-                        extra={
-                            "_event_name": "role.response_parse_failed",
-                            "response_type": type(response_text).__name__,
-                            **content_fields("provider_response", response_text, subsystem="roles"),
-                        },
-                    )
-                    await progress_msg.edit_text(
-                        t("role.generation_failed"),
-                        reply_markup=error_kb,
-                    )
-                set_generating_custom_role(user_id, False)
-                return True
-
-            set_last_custom_role_prompt(user_id, message_text)
-            set_generated_role(user_id, role_obj)
-
-            title = role_obj.get("title", t("role.custom_default_title"))
-            purpose = role_obj.get("purpose", "")
-            style = ", ".join(role_obj.get("style", [])[:3])
-
-            preview = t("role.new_preview", title=title, purpose=purpose, style=style)
-
-            kb_rows = [
-                [InlineKeyboardButton(t("role.btn_apply"), callback_data="role_custom_apply")],
-                [InlineKeyboardButton(t("role.btn_save"), callback_data="role_custom_save")],
-                [InlineKeyboardButton(t("role.btn_retry_custom"), callback_data="role_custom_retry")],
-                [InlineKeyboardButton(t("btn.cancel"), callback_data="role_clear")],
-            ]
-
-            formatted_text, parse_mode = TelegramFormatter.format_text(preview)
-            await progress_msg.edit_text(
-                formatted_text,
-                parse_mode=parse_mode,
-                reply_markup=InlineKeyboardMarkup(kb_rows),
-            )
-
-        except Exception as e:
-            logging.error("Error generating custom role: %s", e, exc_info=True)
-            error_kb = InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton(t("role.btn_retry"), callback_data="role_create")],
-                    [InlineKeyboardButton(t("btn.cancel"), callback_data="role_create_cancel")],
-                ]
-            )
-            await progress_msg.edit_text(
-                t("role.generation_error"),
-                reply_markup=error_kb,
-            )
-        finally:
-            set_generating_custom_role(user_id, False)
-
-        return True
-    return False
+    if not is_awaiting_custom_role_input(user_id) and not get_user_state(user_id).generating_custom_role:
+        return False
+    await generate_custom_role(user_id, chat_id, message_text, update.message.reply_text, get_chat=get_user_chat)
+    return True
 
 
 async def handle_role_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     """Handle text input for role renaming. Returns True if consumed."""
     rename_role_raw = context.user_data.get("rename_role_id") if context.user_data else None
     if rename_role_raw and update.message and update.message.text:
+        owner = context.user_data.get("_text_input_owner")
         try:
             new_title = update.message.text.strip()
             role_id = int(rename_role_raw)
             if 1 <= len(new_title) <= 100:
                 from app.repos.roles import rename_custom_role
 
-                await rename_custom_role(role_id, user_id, new_title)
+                renamed = await rename_custom_role(role_id, user_id, new_title)
+                if not _text_input_current(context.user_data, owner):
+                    return True
+                if not renamed:
+                    await update.message.reply_text(t("role.role_rename_error"))
+                    return True
                 context.user_data.pop("rename_role_id", None)
                 await update.message.reply_text(t("role.role_renamed", title=new_title))
                 chat_state = await get_user_chat(user_id)
@@ -443,14 +506,15 @@ async def handle_role_rename(update: Update, context: ContextTypes.DEFAULT_TYPE,
                     view_mode="role_details",
                     role_key=f"user_role:{role_id}",
                 )
-                await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+                if _text_input_current(context.user_data, owner):
+                    await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
                 return True
             else:
                 await update.message.reply_text(t("role.name_length_error"))
                 return True
         except Exception as e:
             logging.error("Error renaming role: %s", e, exc_info=True)
-            await update.message.reply_text(t("role.role_rename_error"))
-            context.user_data.pop("rename_role_id", None)
+            if _text_input_current(context.user_data, owner):
+                await update.message.reply_text(t("role.role_rename_error"))
             return True
     return False

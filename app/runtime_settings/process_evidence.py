@@ -72,7 +72,7 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
         "ProviderRouter: завершённый текст",
         "Создание пользовательской инструкции роли, включая повтор создания.",
         "Сохранённая инструкция роли не меняется до нового создания или редактирования.",
-        ("app/handlers/msg_roles.py", "handle_custom_role_generation"),
+        ("app/handlers/msg_roles.py", "generate_custom_role"),
         ("app/handlers/cb_roles.py", "role_custom_retry_callback"),
     ),
     "roles.edit": _row(

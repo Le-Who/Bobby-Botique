@@ -208,6 +208,9 @@ async def test_failed_debounced_save_retries_latest_fields(state_store, monkeypa
 )
 async def test_cold_state_entry_preserves_unrelated_durable_fields(state_store, monkeypatch, entry):
     from app.handlers import cb_documents, cb_roles, commands
+    from tests.interaction_fakes import install_private_interaction_fakes
+
+    install_private_interaction_fakes(monkeypatch)
 
     saved_rows = []
 
@@ -232,7 +235,9 @@ async def test_cold_state_entry_preserves_unrelated_durable_fields(state_store, 
     monkeypatch.setattr(state, "_schedule_persist", lambda user_state: None)
     user = SimpleNamespace(id=42)
     message = SimpleNamespace(reply_text=AsyncMock())
-    callback = SimpleNamespace(from_user=user, data=entry, answer=AsyncMock(), edit_message_text=AsyncMock())
+    callback = SimpleNamespace(
+        from_user=user, data=entry, answer=AsyncMock(), edit_message_text=AsyncMock(), message=message
+    )
     update = SimpleNamespace(effective_user=user, message=message, callback_query=callback)
     context = SimpleNamespace(user_data={}, args=[])
     monkeypatch.setattr("app.handlers.menus.get_documents_menu_content", AsyncMock(return_value=("docs", None, None)))
@@ -258,4 +263,9 @@ async def test_cold_state_entry_preserves_unrelated_durable_fields(state_store, 
     assert loaded._loaded_from_db, "state mutation ran before restoring unrelated saved fields"
     await state._persist(loaded)
     assert len(saved_rows) == 1
-    assert saved_rows[0][12:15] == ({"role": ["saved note"]}, True, {"phase": "active"})
+    expected_tarot = (
+        (False, None)
+        if entry in {"role_create_callback", "role_create_manual_callback"}
+        else (True, {"phase": "active"})
+    )
+    assert saved_rows[0][12:15] == ({"role": ["saved note"]}, *expected_tarot)

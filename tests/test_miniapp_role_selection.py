@@ -40,6 +40,7 @@ async def test_empty_prompt_explicitly_restores_default_role(monkeypatch):
 
     async def update(user_id, state):
         saved.append((user_id, state.system_prompt))
+        return True
 
     monkeypatch.setattr(web_miniapp, "_validate_init_data", lambda *args: {"user": {"id": 777}})
     monkeypatch.setattr("app.repos.users.is_authorized", AsyncMock(return_value=True))

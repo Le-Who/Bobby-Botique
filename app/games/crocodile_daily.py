@@ -929,6 +929,9 @@ async def process_daily_guess(
         topic_id=_daily_topic_id(puzzle),
         sense_context=puzzle.topic,
     )
+    from app.games.crocodile_runtime import ensure_game_mutation_owned
+
+    ensure_game_mutation_owned()
 
     if status_str == "judge_unavailable":
         return {
@@ -952,6 +955,7 @@ async def process_daily_guess(
         difficulty=puzzle.difficulty,
         attempt=attempt,
         max_attempts=repo.DAILY_MAX_ATTEMPTS,
+        expected_attempts=result.attempts,
     )
 
     event: dict[str, Any] = {

@@ -6,7 +6,9 @@ Routes messages to Gemini using Tarot session context.
 import logging
 import re
 import time
+from copy import deepcopy
 from types import SimpleNamespace
+from uuid import uuid4
 
 from telegram import (
     InlineKeyboardButton,
@@ -81,29 +83,52 @@ is_tarot_end_session_filter = IsTarotEndSession()
 
 
 async def _finish_tarot_session(update: Update, user_id: int) -> None:
+    from app.state import cancel_interaction
+
+    await ensure_state_loaded(user_id)
     clear_tarot_session(user_id)
+    await cancel_interaction(user_id)
     await update.message.reply_text(
         "Сеанс Таро завершен. Возвращаюсь в обычный режим.", reply_markup=ReplyKeyboardRemove()
     )
 
 
-async def leave_tarot_for_chat(user_id: int, message: Message) -> None:
+async def leave_tarot_for_chat(user_id: int, message: Message, *, input_intent: object | None = None) -> None:
     """End a persisted Tarot session when an ordinary-chat action succeeds."""
     await ensure_state_loaded(user_id)
+    from app.state import get_user_state
+
+    if input_intent is not None and get_user_state(user_id).text_input_intent is not input_intent:
+        return
     if not is_in_tarot_mode(user_id) and get_tarot_session(user_id) is None:
         return
+    from app.state import cancel_interaction
+
     clear_tarot_session(user_id)
+    await cancel_interaction(user_id, input_intent=input_intent)
+    if input_intent is not None and get_user_state(user_id).text_input_intent is not input_intent:
+        return
     await message.reply_text("Сеанс Таро завершен. Возвращаюсь в обычный режим.", reply_markup=ReplyKeyboardRemove())
 
 
 async def _send_idle_route_choice(update: Update, user_id: int, session: dict, text: str) -> None:
+    session = deepcopy(session)
     session["pending_idle_text"] = text
+    session["pending_idle_token"] = uuid4().hex[:16]
     set_tarot_session(user_id, session)
 
     keyboard = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("Продолжить сеанс Таро", callback_data="tarot_idle:continue")],
-            [InlineKeyboardButton("Отправить как обычный запрос", callback_data="tarot_idle:llm")],
+            [
+                InlineKeyboardButton(
+                    "Продолжить сеанс Таро", callback_data=f"tarot_idle:continue:{session['pending_idle_token']}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "Отправить как обычный запрос", callback_data=f"tarot_idle:llm:{session['pending_idle_token']}"
+                )
+            ],
         ]
     )
     prompt = (
@@ -124,155 +149,192 @@ async def handle_tarot_end_session_message(update: Update, context: ContextTypes
 @authorized_only
 @safe_handler("Произошла ошибка при обработке таро-запроса")
 async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.handlers.interaction_work import interaction_current, private_interaction, reject_busy_interaction
+    from app.state import begin_interaction, cancel_interaction, get_user_state, run_interaction
+
     user_id = update.effective_user.id
+    await ensure_state_loaded(user_id)
     text = update.message.text
     chat_id = update.effective_chat.id
-
     if is_tarot_end_session_text(text):
         await _finish_tarot_session(update, user_id)
         return
 
-    session = get_tarot_session(user_id)
-    if session is None:
+    state = get_user_state(user_id)
+    source_session = get_tarot_session(user_id)
+    if source_session is None:
         clear_tarot_session(user_id)
         await update.message.reply_text(
             "Сессия не найдена. Начните заново с /tarot", reply_markup=ReplyKeyboardRemove()
         )
         return
 
-    if _is_tarot_session_idle(session):
-        await _send_idle_route_choice(update, user_id, session, text)
+    # Reset is an interrupt, including while a provider is running. Never mutate
+    # the old turn's dictionary or history while it still owns a local snapshot.
+    if text == "🔄 Новый расклад":
+        session = deepcopy(source_session)
+        session.update(
+            spread_type=SpreadType.CLASSIC.value,
+            drawn_cards=[],
+            history=[],
+            waiting_for_question=True,
+            last_activity_at=time.time(),
+        )
+        session.pop("pending_idle_text", None)
+        session.pop("pending_idle_token", None)
+        set_tarot_session(user_id, session)
+        await cancel_interaction(user_id)
+        await update.message.reply_text(
+            "🔄 Расклад сброшен. Пожалуйста, задайте ваш новый вопрос, и я вытяну карты.",
+            reply_markup=ReplyKeyboardMarkup([[TAROT_END_SESSION_TEXT]], resize_keyboard=True),
+        )
         return
 
+    if await reject_busy_interaction(user_id, update.message.reply_text):
+        return
+
+    if state.interaction is not None and state.interaction.task is not None:
+        await update.message.reply_text("⏳ Дождитесь ответа таролога или завершите текущий сеанс.")
+        return
+    if _is_tarot_session_idle(source_session):
+        await _send_idle_route_choice(update, user_id, source_session, text)
+        return
+
+    owner = begin_interaction(user_id, "tarot")
+    session = deepcopy(source_session)
     session["last_activity_at"] = time.time()
     session.pop("pending_idle_text", None)
+    session.pop("pending_idle_token", None)
+    history = session.setdefault("history", [])
 
-    history = session.get("history", [])
-
-    keyboard_full = [["🃏 Достать 1 карту", "🔄 Новый расклад"], [TAROT_END_SESSION_TEXT]]
-    keyboard_wait = [[TAROT_END_SESSION_TEXT]]
-
-    if text == "🔄 Новый расклад":
-        session["spread_type"] = SpreadType.CLASSIC.value
-        session["drawn_cards"] = []
-        session["history"] = []
-        session["waiting_for_question"] = True
-        set_tarot_session(user_id, session)
-
-        reply_markup = ReplyKeyboardMarkup(keyboard_wait, resize_keyboard=True)
-        await update.message.reply_text(
-            "🔄 Расклад сброшен. Пожалуйста, задайте ваш новый вопрос, и я вытяну карты.", reply_markup=reply_markup
-        )
-        return
-
-    if text == "🃏 Достать 1 карту" and not session.get("waiting_for_question"):
-        cards = draw_cards(1)
-        new_card = cards[0]
-        session["drawn_cards"].append(new_card)
-
-        system_update = f"Вы вытянули дополнительную уточняющую карту: {new_card['name']} ({new_card['orientation']}). Значение: {', '.join(new_card.get('meanings', [])[:3])}"
-        history.append(
-            {
-                "role": "user",
-                "parts": [f"[SYSTEM: {system_update}]. Прокомментируй её появление и свяжи с предыдущими."],
-            }
-        )
-        set_tarot_session(user_id, session)
-
-        status_text = "⏳ **Таролог вглядывается в новую карту... Пожалуйста, подождите.**"
-        f_text, p_mode = TelegramFormatter.format_text(status_text)
-        status_msg = await update.message.reply_text(f_text, parse_mode=p_mode)
-    else:
-        is_first_question = session.get("waiting_for_question", False)
-        question_context = session.get("question_context") if is_first_question else None
-        if question_context:
-            shortcut = text in {TAROT_COMPATIBILITY_QUESTION_TEXT, t("compat.draw_button", "en")}
-            question = question_context if shortcut else f"{question_context}\n\n{text}"
-        else:
-            question = text
-        history.append({"role": "user", "parts": [question]})
-
-        if is_first_question:
-            cards = draw_cards(3)
-            session["drawn_cards"] = cards
-            session["waiting_for_question"] = False
-
-            card_names = ", ".join([c["name"] for c in cards])
-            status_text = (
-                f"⏳ **Таролог вглядывается в карты... Пожалуйста, подождите.**\n\n🔮 *Вытянутые карты:*\n{card_names}"
-            )
-
-            formatted_text, parse_mode = TelegramFormatter.format_text(status_text)
-            status_msg = await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        else:
-            status_text = "⏳ **Таролог обдумывает ваш вопрос... Пожалуйста, подождите.**"
-            f_text, p_mode = TelegramFormatter.format_text(status_text)
-            status_msg = await update.message.reply_text(f_text, parse_mode=p_mode)
-
-        set_tarot_session(user_id, session)
-
-    try:
-        tarot_ctx = ""
-        for idx, card in enumerate(session["drawn_cards"]):
-            tarot_ctx += (
-                f"Карта {idx + 1}: {card['name']} ({card['orientation']}) - {', '.join(card.get('meanings', [])[:3])}\n"
-            )
-
-        sys_prompt = _build_tarot_system_prompt(SpreadType.CLASSIC, tarot_ctx, "")
-        sys_prompt += "\nВедите диалог как таролог, отвечая на вопросы пользователя по этому раскладу."
-
-        router = get_provider_router()
-        from app.process_policies import execute_text_process
-
-        response_text, _ = await execute_text_process(
-            "tarot.chat",
-            ("gemini-3.1-flash-lite",),
-            router=router,
-            history=history,
-            system_instruction=sys_prompt,
-            user_id=user_id,
-            chat_id=chat_id,
-        )
-
-        formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
+    async def turn() -> None:
+        status_msg = None
         try:
-            await status_msg.delete()
-        except Exception:
-            pass
-        reply_markup = ReplyKeyboardMarkup(keyboard_full, resize_keyboard=True)
-        chunks = split_text_safe(formatted_text)
-        for index, chunk in enumerate(chunks):
-            await update.message.reply_text(
-                chunk,
-                parse_mode=parse_mode,
-                reply_markup=reply_markup if index == len(chunks) - 1 else None,
-            )
-        history.append({"role": "model", "parts": [response_text]})
-        set_tarot_session(user_id, session)
-    except Exception as e:
-        logging.error("Tarot processing error: %s", e)
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
-        await update.message.reply_text("Извините, карты затуманены. Попробуйте снова.")
+            async with private_interaction(owner) as allowed:
+                if not allowed:
+                    if owner.current():
+                        await update.message.reply_text("Запрос устарел. Начните новый сеанс с /tarot.")
+                    return
+                if text == "🃏 Достать 1 карту" and not session.get("waiting_for_question"):
+                    new_card = draw_cards(1)[0]
+                    session.setdefault("drawn_cards", []).append(new_card)
+                    system_update = f"Вы вытянули дополнительную уточняющую карту: {new_card['name']} ({new_card['orientation']}). Значение: {', '.join(new_card.get('meanings', [])[:3])}"
+                    history.append(
+                        {
+                            "role": "user",
+                            "parts": [f"[SYSTEM: {system_update}]. Прокомментируй её появление и свяжи с предыдущими."],
+                        }
+                    )
+                    status_text = "⏳ **Таролог вглядывается в новую карту... Пожалуйста, подождите.**"
+                else:
+                    first = session.get("waiting_for_question", False)
+                    question_context = session.get("question_context") if first else None
+                    shortcut = text in {TAROT_COMPATIBILITY_QUESTION_TEXT, t("compat.draw_button", "en")}
+                    question = (
+                        question_context
+                        if question_context and shortcut
+                        else f"{question_context}\n\n{text}"
+                        if question_context
+                        else text
+                    )
+                    history.append({"role": "user", "parts": [question]})
+                    if first:
+                        session["drawn_cards"] = draw_cards(3)
+                        session["waiting_for_question"] = False
+                        card_names = ", ".join(card["name"] for card in session["drawn_cards"])
+                        status_text = f"⏳ **Таролог вглядывается в карты... Пожалуйста, подождите.**\n\n🔮 *Вытянутые карты:*\n{card_names}"
+                    else:
+                        status_text = "⏳ **Таролог обдумывает ваш вопрос... Пожалуйста, подождите.**"
+                if not await interaction_current(owner):
+                    return
+                formatted, parse_mode = TelegramFormatter.format_text(status_text)
+                status_msg = await update.message.reply_text(formatted, parse_mode=parse_mode)
+                if not await interaction_current(owner):
+                    return
+                tarot_ctx = "".join(
+                    f"Карта {idx + 1}: {card['name']} ({card['orientation']}) - {', '.join(card.get('meanings', [])[:3])}\n"
+                    for idx, card in enumerate(session.get("drawn_cards", []))
+                )
+                sys_prompt = _build_tarot_system_prompt(SpreadType.CLASSIC, tarot_ctx, "")
+                sys_prompt += "\nВедите диалог как таролог, отвечая на вопросы пользователя по этому раскладу."
+                from app.process_policies import execute_text_process
+
+                response_text, _ = await execute_text_process(
+                    "tarot.chat",
+                    ("gemini-3.1-flash-lite",),
+                    router=get_provider_router(),
+                    history=history,
+                    system_instruction=sys_prompt,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                )
+                if not await interaction_current(owner):
+                    return
+                formatted, parse_mode = TelegramFormatter.format_text(response_text)
+                reply_markup = ReplyKeyboardMarkup(
+                    [["🃏 Достать 1 карту", "🔄 Новый расклад"], [TAROT_END_SESSION_TEXT]],
+                    resize_keyboard=True,
+                )
+                chunks = split_text_safe(formatted)
+                for index, chunk in enumerate(chunks):
+                    if not await interaction_current(owner):
+                        return
+                    await update.message.reply_text(
+                        chunk, parse_mode=parse_mode, reply_markup=reply_markup if index == len(chunks) - 1 else None
+                    )
+                if not await interaction_current(owner):
+                    return
+                history.append({"role": "model", "parts": [response_text]})
+                # Publish directly to the captured canonical generation. The public
+                # setter is intentionally a replacement/interrupt boundary.
+                if state.tarot_session is source_session:
+                    state.tarot_session = session
+                    from app.state import _schedule_persist
+
+                    _schedule_persist(state)
+        except Exception as exc:
+            logging.error("Tarot processing error: %s", exc)
+            if await interaction_current(owner):
+                await update.message.reply_text("Извините, карты затуманены. Попробуйте снова.")
+        finally:
+            if status_msg is not None:
+                try:
+                    await status_msg.delete()
+                except Exception:
+                    pass
+
+    await run_interaction(owner, turn)
 
 
 @authorized_only
 @safe_handler("Произошла ошибка при выборе режима обработки")
 async def handle_tarot_idle_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.handlers.interaction_work import reject_busy_interaction
+
     query = update.callback_query
     user_id = update.effective_user.id
+    await ensure_state_loaded(user_id)
+    if await reject_busy_interaction(user_id, query.answer):
+        return
     session = get_tarot_session(user_id)
     pending_text = (session or {}).get("pending_idle_text")
 
     await query.answer()
 
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    token = parts[2] if len(parts) > 2 else None
+    if session is not get_tarot_session(user_id) or token != (session or {}).get("pending_idle_token"):
+        await query.edit_message_text("Запрос уже устарел. Напишите его заново.")
+        return
+
     if not session or not pending_text:
         await query.edit_message_text("Запрос уже устарел. Напишите его заново.")
         return
 
-    if query.data == "tarot_idle:continue":
+    if action == "continue":
+        session = deepcopy(session)
+        session.pop("pending_idle_token", None)
         session.pop("pending_idle_text", None)
         session["last_activity_at"] = time.time()
         set_tarot_session(user_id, session)
@@ -298,7 +360,7 @@ async def handle_tarot_idle_choice_callback(update: Update, context: ContextType
         await handle_tarot_message(proxy_update, context)
         return
 
-    if query.data == "tarot_idle:llm":
+    if action == "llm":
         await leave_tarot_for_chat(user_id, query.message)
         await query.edit_message_text("🤔 Думаю...")
         from app.handlers.agent import process_long_request

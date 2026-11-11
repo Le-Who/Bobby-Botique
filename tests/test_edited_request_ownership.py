@@ -128,10 +128,11 @@ async def ownership(monkeypatch):
             )
         return contexts[uid]
 
-    def update(text, *, edited=False, uid=11):
+    def update(text, *, edited=False, uid=11, message_id=None):
         context(uid)
         chat = SimpleNamespace(id=uid, type="private", send_action=AsyncMock())
         msg = SimpleNamespace(
+            message_id=message_id,
             text=text,
             caption=None,
             photo=(),
@@ -333,6 +334,48 @@ async def test_legacy_agent_override_call_remains_compatible(monkeypatch, owners
     update = ownership.update("original input")
     await agent.process_long_request(ownership.placeholders[11], update, context)
     assert chat.await_args.args[2] == "legacy corrected input"
+
+
+@pytest.mark.parametrize("running", [False, True])
+async def test_older_message_edit_cannot_replace_unrelated_latest_response(monkeypatch, ownership, running):
+    seen = []
+    started = asyncio.Event()
+
+    async def process(_placeholder, _update, _context, *, text_override, **_kwargs):
+        seen.append(text_override)
+        started.set()
+        if running:
+            await asyncio.Future()
+
+    monkeypatch.setattr(agent, "process_long_request", process)
+    await ownership.launch(ownership.update("latest request", message_id=200))
+    await started.wait()
+    if not running:
+        await settle()
+    latest_worker = state.get_active_task(11)
+    await ownership.launch(ownership.update("old corrected request", edited=True, message_id=100))
+    await settle()
+    assert seen == ["latest request"]
+    ownership.context().bot.edit_message_text.assert_not_awaited()
+    if running:
+        assert state.get_active_task(11) is latest_worker
+        assert not latest_worker.done()
+        assert state.get_user_state(11).is_processing
+
+
+async def test_matching_source_edit_reuses_its_own_response(monkeypatch, ownership):
+    seen = []
+
+    async def process(_placeholder, _update, _context, *, text_override, **_kwargs):
+        seen.append(text_override)
+
+    monkeypatch.setattr(agent, "process_long_request", process)
+    await ownership.launch(ownership.update("original", message_id=200))
+    await settle()
+    await ownership.launch(ownership.update("corrected", edited=True, message_id=200))
+    await settle()
+    assert seen == ["original", "corrected"]
+    ownership.context().bot.edit_message_text.assert_awaited_once()
 
 
 async def test_rapid_edits_keep_latest_admission_owned_until_predecessor_drains(monkeypatch, ownership):

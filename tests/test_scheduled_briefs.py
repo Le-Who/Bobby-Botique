@@ -8,6 +8,7 @@ Validates:
 """
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +22,13 @@ def _allow_private_data_lease_boundary():
 
     with patch("app.repos.memory_consent.private_data_lease", allowed):
         yield
+
+
+@pytest.fixture(autouse=True)
+def scheduled_boundary(monkeypatch):
+    from tests.scheduled_delivery_fakes import install_scheduled_journal
+
+    return install_scheduled_journal(monkeypatch)
 
 
 class TestParseBriefSchedule:
@@ -126,6 +134,8 @@ class TestDueSubscriptions:
     async def test_get_due_subscriptions(self):
         mock_rows = [
             {
+                "id": 1,
+                "delivery_revision": 1,
                 "user_id": 42,
                 "subscription_type": "morning_brief",
                 "timezone": "UTC",
@@ -133,6 +143,8 @@ class TestDueSubscriptions:
                 "last_sent_at": None,
             },
             {
+                "id": 2,
+                "delivery_revision": 1,
                 "user_id": 99,
                 "subscription_type": "morning_brief",
                 "timezone": "UTC",
@@ -175,6 +187,7 @@ class TestBriefGeneration:
             from app.handlers.scheduled_briefs import generate_and_send_brief
 
             mock_bot = AsyncMock()
+            mock_bot.send_message.return_value = SimpleNamespace(message_id=1)
             result = await generate_and_send_brief(42, mock_bot)
             assert result is False
             mock_bot.send_message.assert_not_awaited()
@@ -228,6 +241,7 @@ class TestBriefGeneration:
             from app.handlers.scheduled_briefs import generate_and_send_brief
 
             mock_bot = AsyncMock()
+            mock_bot.send_message.return_value = SimpleNamespace(message_id=1)
             result = await generate_and_send_brief(42, mock_bot)
             assert result is True
             mock_bot.send_message.assert_awaited_once()

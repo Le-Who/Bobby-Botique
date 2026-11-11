@@ -162,6 +162,39 @@ async def test_request_rejects_busy_user_then_accepts_after_cleanup(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_direct_intent_keeps_admission_until_reply_finishes(monkeypatch, request_boundary):
+    uid = request_boundary.user_id
+    reply_started, release_reply = asyncio.Event(), asyncio.Event()
+    downstream = AsyncMock()
+    intent = AsyncMock(return_value=SimpleNamespace(handled=True, text="Synthetic weather"))
+    monkeypatch.setattr("app.intent_router.try_direct_intent", intent)
+    monkeypatch.setattr("app.handlers.agent.process_long_request", downstream)
+    first = make_telegram_update("weather", user_id=uid, chat_id=uid)
+    second = make_telegram_update("another request", user_id=uid, chat_id=uid)
+
+    async def send(*_args, **_kwargs):
+        reply_started.set()
+        await release_reply.wait()
+        return SimpleNamespace(message_id=555)
+
+    first.effective_message.reply_text.side_effect = send
+    owner = asyncio.create_task(messages.handle_request(first, make_telegram_context()))
+    try:
+        await asyncio.wait_for(reply_started.wait(), 1)
+        await messages.handle_request(second, make_telegram_context())
+        request_boundary.busy.assert_awaited_once_with(second)
+        assert state.get_user_state(uid).is_processing
+        assert state.get_active_task(uid) is owner
+        assert intent.await_count == 1
+        downstream.assert_not_awaited()
+    finally:
+        release_reply.set()
+        await owner
+    assert not state.get_user_state(uid).is_processing
+    assert state.get_active_task(uid) is None
+
+
+@pytest.mark.asyncio
 async def test_new_chat_callback_rejects_busy_user_before_read_or_write(monkeypatch):
     from app.handlers.cb_navigation import new_chat_callback
 

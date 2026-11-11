@@ -47,6 +47,10 @@ class CrocodileGameRepository:
     @staticmethod
     async def save(game: CrocodileGame) -> bool:
         ttl_kwargs = {"ex": _GAME_TTL_ACTIVE if game.guesser_id is not None else _GAME_TTL_IDLE}
+        from app.games.crocodile_runtime import save_owned_game
+
+        if await save_owned_game(game._redis_key(), game.to_json_bytes(), ttl_kwargs["ex"]):
+            return True
         try:
             from app.cache import redis_client
 
@@ -61,10 +65,13 @@ class CrocodileGameRepository:
 
     @staticmethod
     async def delete(game: CrocodileGame) -> None:
+        from app.games.crocodile_runtime import delete_owned_game
+
+        owned = await delete_owned_game(game._redis_key())
         try:
             from app.cache import redis_client
 
-            if redis_client:
+            if redis_client and not owned:
                 await redis_client.delete(game._redis_key())  # type: ignore[misc]
         except Exception as exc:
             logger.debug("CrocodileGame.delete failed game=%s: %s", game.game_id, exc)
@@ -203,6 +210,9 @@ class CrocodileGame:
             topic_id=self.topic_id,
             sense_context=self.sense_context,
         )
+        from app.games.crocodile_runtime import ensure_game_mutation_owned
+
+        ensure_game_mutation_owned()
         self.has_activity = True
 
         # LLM race failed — do NOT record the attempt; let the player retry.
@@ -277,6 +287,9 @@ class CrocodileGame:
 
     async def finalize(self, bot) -> None:
         """Edit the inline message in Telegram to reflect the game outcome."""
+        from app.games.crocodile_runtime import ensure_game_mutation_owned
+
+        ensure_game_mutation_owned()
         try:
             from app.games.crocodile_telegram import CrocodileTelegramService
 
@@ -486,6 +499,11 @@ async def load_game(game_id: str) -> CrocodileGame | None:
     available. This function is the single canonical entry point; there is no
     module-level monkey-patching.
     """
+    from app.games.crocodile_runtime import load_owned_game
+
+    owned, payload = await load_owned_game(f"{_GAME_KEY_PREFIX}{game_id}")
+    if owned:
+        return CrocodileGame.from_json(payload) if payload is not None else None
     try:
         from app.cache import redis_client
 

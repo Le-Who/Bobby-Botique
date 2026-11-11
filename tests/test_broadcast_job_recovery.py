@@ -742,3 +742,117 @@ async def test_daily_delivery_rechecks_explicit_and_default_game_preference(monk
     monkeypatch.setattr("app.repos.daily_2048.get_active_daily_game_mode", AsyncMock(return_value="trivia"))
     result = await actual_repo.candidates("daily_challenge", (101,), mode="delivery", variant="crocodile")
     assert result[0]["reason_code"] == "game_preference_changed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        "none",
+        "unsubscribe",
+        "hour",
+        "timezone",
+        "next_day",
+        "already_sent",
+        "epoch",
+        "pause",
+        "timeout",
+        "marker_failure",
+        "missing_setting",
+    ],
+)
+async def test_tarot_delivery_keeps_schedule_snapshot_and_confirmed_receipts(monkeypatch, change):
+    from datetime import date
+
+    from app.repos import broadcast_jobs as actual_repo
+
+    row = {
+        "user_id": 101,
+        "memory_epoch": 7,
+        "private_data_blocked": False,
+        "daily_subscribed": False,
+        "discovery_snoozed_until": None,
+        "horoscope_subscribed": False,
+        "tarot_subscribed": True,
+        "tarot_timezone": "Europe/Kyiv",
+        "tarot_preferred_local_hour": 10,
+        "tarot_last_sent_date": None,
+        "observed_at": datetime(2097, 10, 28, 12, tzinfo=UTC),
+    }
+
+    @asynccontextmanager
+    async def transaction():
+        yield SimpleNamespace(fetch=AsyncMock(side_effect=lambda *_args: [row.copy()]))
+
+    monkeypatch.setattr(actual_repo, "transaction", transaction)
+
+    class TarotJournal(ExecutionJournal):
+        async def candidates(self, channel, user_ids, **kwargs):
+            return await actual_repo.candidates(channel, user_ids, **kwargs)
+
+    journal = TarotJournal()
+    journal.acknowledge_tarot = AsyncMock(side_effect=ConnectionError() if change == "marker_failure" else None)
+    queue = SimpleNamespace(enqueue_job=AsyncMock(return_value=QueueAdmission(AdmissionState.ACCEPTED, "task")))
+    bot = SimpleNamespace(
+        send_message=AsyncMock(
+            side_effect=TimedOut() if change == "timeout" else None,
+            return_value=SimpleNamespace(message_id=81),
+        )
+    )
+    service = BroadcastService(journal=journal, queue=queue, bot_provider=lambda: bot)
+    admission = await service._enqueue(
+        channel="tarot",
+        user_ids=[101],
+        operation_id="00000000-0000-4000-8000-000000000015",
+        mode="delivery",
+        effective_date=date(2097, 10, 28),
+        scheduled=True,
+    )
+    if change == "unsubscribe":
+        row["tarot_subscribed"] = False
+    elif change == "hour":
+        row["tarot_preferred_local_hour"] = 11
+    elif change == "timezone":
+        row["tarot_timezone"] = "UTC"
+    elif change == "next_day":
+        row["observed_at"] += timedelta(days=1)
+    elif change == "already_sent":
+        row["tarot_last_sent_date"] = date(2097, 10, 28)
+    elif change == "epoch":
+        row["memory_epoch"] = 8
+    guard = SimpleNamespace(
+        snapshot=SimpleNamespace(task_id="task"), checkpoint=AsyncMock(), update_progress=AsyncMock()
+    )
+    monkeypatch.setattr("app.queue.current_job_guard", lambda: guard)
+    monkeypatch.setattr("app.repos.memory_consent.private_data_lease", allowed_lease)
+    if change == "missing_setting":
+        from app.repos import settings_repo
+
+        monkeypatch.setattr(settings_repo, "_cache", {})
+        monkeypatch.setattr(settings_repo.db, "db_query", AsyncMock(return_value=[]))
+    else:
+        monkeypatch.setattr(
+            "app.repos.settings_repo.get_global_setting", AsyncMock(return_value="off" if change == "pause" else "on")
+        )
+    monkeypatch.setattr(
+        "app.tarot_daily.get_prepared_daily_reading",
+        AsyncMock(return_value=SimpleNamespace(body_markdown="Синтетический совет на день.")),
+    )
+
+    await service.execute(admission["batch"]["batch_id"])
+    batch = journal.batches[admission["batch"]["batch_id"]]
+    if change in {"none", "marker_failure"}:
+        bot.send_message.assert_awaited_once()
+        assert batch["sent"] == 1
+        journal.acknowledge_tarot.assert_awaited_once()
+        assert journal.acknowledge_tarot.await_args.args[1]["slot_date"] == date(2097, 10, 28)
+    elif change == "timeout":
+        bot.send_message.assert_awaited_once()
+        assert batch["unknown_delivery"] == 1
+        journal.acknowledge_tarot.assert_not_awaited()
+    else:
+        bot.send_message.assert_not_awaited()
+        assert batch["skipped"] == 1
+        journal.acknowledge_tarot.assert_not_awaited()
+    await service.execute(admission["batch"]["batch_id"])
+    assert bot.send_message.await_count <= 1

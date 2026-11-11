@@ -61,6 +61,11 @@ async def get_pending_reminders() -> list[dict[str, Any]]:
         """SELECT id, user_id, prompt, context_history, trigger_at
            FROM user_reminders
            WHERE trigger_at <= $1 AND is_delivered = FALSE
+             AND NOT EXISTS (SELECT 1 FROM public.chats c
+                             WHERE c.user_id=user_reminders.user_id AND c.private_data_blocked)
+             AND NOT EXISTS (SELECT 1 FROM public.scheduled_deliveries d
+                             WHERE d.kind='reminder' AND d.source_id=user_reminders.id
+                               AND NOT (d.state='failed' AND d.retryable AND d.retry_at<=$1))
            ORDER BY trigger_at ASC
            LIMIT 50""",
         (now,),
@@ -68,24 +73,16 @@ async def get_pending_reminders() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-async def mark_delivered(reminder_id: int) -> None:
-    """Mark a reminder as delivered."""
-    await db_query(
-        "UPDATE user_reminders SET is_delivered = TRUE WHERE id = $1",
-        (reminder_id,),
-    )
-
-
 async def get_user_reminders(user_id: int, *, limit: int = 10) -> list[dict[str, Any]]:
-    """Get upcoming reminders for a user."""
-    now = datetime.now(UTC_TZ)
+    """Include terminal delivery problems so they do not silently disappear."""
     rows = await db_query(
-        """SELECT id, prompt, trigger_at, is_delivered, context_history
-           FROM user_reminders
-           WHERE user_id = $1 AND trigger_at > $2 AND is_delivered = FALSE
-           ORDER BY trigger_at ASC
-           LIMIT $3""",
-        (user_id, now, limit),
+        """SELECT r.id, r.prompt, r.trigger_at, r.is_delivered, r.context_history,
+                  d.state AS delivery_state, d.retryable
+           FROM user_reminders r LEFT JOIN public.scheduled_deliveries d
+             ON d.kind='reminder' AND d.source_id=r.id
+           WHERE r.user_id = $1 AND r.is_delivered = FALSE
+           ORDER BY r.trigger_at ASC LIMIT $2""",
+        (user_id, limit),
     )
     return [dict(r) for r in rows]
 

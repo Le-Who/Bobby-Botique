@@ -616,6 +616,11 @@ let observer = null;
 
 let settingsData = null;
 let isDirty = false;
+let settingsRevision = 0;
+let savedSettingsRevision = 0;
+let settingsLoadGeneration = 0;
+let renderedSettingsDraft = null;
+let isSavingSettings = false;
 let availableModels = [];
 let groupedModels = [];
 let thinkingMap = { "off": "Выкл", "low": "Низкий", "medium": "Средний", "high": "Высокий" };
@@ -731,15 +736,21 @@ function showUndoToast(msg, onUndo) {
   
   let cleared = false;
   const undoBtn = t.querySelector('.toast-undo');
-  undoBtn.onclick = () => {
+  const retire = () => {
     if (cleared) return;
     cleared = true;
-    if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
-    onUndo();
+    undoBtn.disabled = true;
     t.style.opacity = '0'; setTimeout(() => t.remove(), 300);
   };
+  undoBtn.onclick = () => {
+    if (cleared) return;
+    if (onUndo() === false) return;
+    if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+    retire();
+  };
   
-  setTimeout(() => { if (!cleared) { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); } }, 5000);
+  setTimeout(retire, 5000);
+  return retire;
 }
 
 // ── Memories (Infinite Scroll, Swipe) ──
@@ -973,11 +984,16 @@ function scheduleDelete(id, cardNode) {
     }
   };
   
-  // Set deletion timer
-  const doDelete = async () => {
-    delete pendingDeletions[id];
+  const operation = { state: 'undoable', timer: null, doDelete: null, retireUndo: null };
+  const doDelete = async ({keepalive = false} = {}) => {
+    if (pendingDeletions[id] !== operation || operation.state !== 'undoable') return;
+    operation.state = 'deleting';
+    clearTimeout(operation.timer);
+    operation.retireUndo();
     try {
-      await api(`/memories/${id}`, { method: 'DELETE' });
+      await api(`/memories/${id}`, { method: 'DELETE', keepalive });
+      if (pendingDeletions[id] !== operation) return;
+      operation.state = 'deleted';
       cardNode.remove();
       if (prevHeader) prevHeader.remove();
       const st = document.getElementById('mem-stats-text');
@@ -987,41 +1003,33 @@ function scheduleDelete(id, cardNode) {
       }
       allMemories = allMemories.filter(m => m.id !== id);
     } catch(e) {
+      if (pendingDeletions[id] !== operation) return;
+      operation.state = 'failed';
       showToast('Ошибка удаления');
       restoreCard();
+    } finally {
+      if (pendingDeletions[id] === operation) delete pendingDeletions[id];
     }
   };
-  let timer = setTimeout(doDelete, 5000);
-  
-  // Store both the timer and the doDelete fn so we can flush on app close.
-  pendingDeletions[id] = { timer, doDelete };
+  operation.doDelete = doDelete;
+  pendingDeletions[id] = operation;
+  operation.timer = setTimeout(doDelete, 5000);
 
-  showUndoToast('Воспоминание удалено', () => {
-    clearTimeout(timer);
+  operation.retireUndo = showUndoToast('Воспоминание удалено', () => {
+    if (pendingDeletions[id] !== operation || operation.state !== 'undoable') return false;
+    operation.state = 'undone';
+    clearTimeout(operation.timer);
     delete pendingDeletions[id];
     restoreCard();
+    return true;
   });
 }
 
 // ── Flush pending deletes immediately on app close ──
-// If the user swipes the MiniApp closed before the 5s undo window expires,
-// we fire all outstanding DELETE requests synchronously via sendBeacon so
-// they survive page teardown. The undo window is effectively cancelled.
+// Commit each owned undoable operation once, using best-effort keepalive for
+// page teardown. The normal completion/error path still owns the visible card.
 async function flushPendingDeletions() {
-  const ids = Object.keys(pendingDeletions);
-  if (ids.length === 0) return;
-  ids.forEach(id => {
-    clearTimeout(pendingDeletions[id].timer);
-    // sendBeacon for guaranteed delivery on page unload
-    const url = API + `/memories/${id}`;
-    // sendBeacon does not support DELETE; fall back to fetch(keepalive)
-    fetch(url, {
-      method: 'DELETE',
-      headers: { 'Authorization': AUTH, 'Content-Type': 'application/json' },
-      keepalive: true,
-    }).catch(() => {});
-  });
-  pendingDeletions = {};
+  await Promise.all(Object.values(pendingDeletions).map(operation => operation.doDelete({keepalive: true})));
 }
 
 // Fired when the native Telegram close gesture collapses the viewport
@@ -1174,31 +1182,48 @@ function renderSettings(d, r, v) {
     });
     voiceList.appendChild(row);
   });
+  renderedSettingsDraft = settingsDraft();
 }
 
 async function loadSettings() {
+  const generation = ++settingsLoadGeneration;
+  const revision = settingsRevision;
+  let loadBaseline = renderedSettingsDraft;
+  let serverSettled = false;
   try {
     // Optimistic UI via CloudStorage
     if (tg.CloudStorage) {
       tg.CloudStorage.getItem('gemaibot_settings_cache', (err, val) => {
-        if (!err && val) {
+        if (generation === settingsLoadGeneration && !serverSettled && settingsRevision === revision && !err && val) {
           try {
             const cached = JSON.parse(val);
             renderSettings({...cached.d, thinking_editable:false, effective_reasoning:{source:'loading'}}, cached.r, cached.v);
+            loadBaseline = renderedSettingsDraft;
           } catch(e) {}
         }
       });
     }
 
     const [d, r, v] = await Promise.all([ api('/settings'), api('/roles'), api('/voices') ]);
-    
-    renderSettings(d, r, v);
+    if (generation !== settingsLoadGeneration) return;
+    serverSettled = true;
+    const changes = {};
+    if (settingsData && loadBaseline) {
+      for (const [key, value] of Object.entries(settingsDraft())) {
+        if (value !== loadBaseline[key]) changes[key] = value;
+      }
+    }
+    if (d.model_editable === false) delete changes.model;
+    if (d.thinking_editable === false) delete changes.thinking_level;
+    renderSettings({...d, settings: {...d.settings, ...changes}}, r, v);
+    renderedSettingsDraft = {...renderedSettingsDraft, ...d.settings, system_prompt: d.settings.system_prompt || ''};
     
     if (tg.CloudStorage) {
       tg.CloudStorage.setItem('gemaibot_settings_cache', JSON.stringify({d, r, v}));
     }
     
-    isDirty = false;
+    isDirty = settingsRevision !== savedSettingsRevision;
+    updateMainButton();
   } catch(e) { showToast('Ошибка загрузки настроек'); }
 }
 
@@ -1221,10 +1246,10 @@ function renderRoles(activePrompt) {
 }
 
 function markDirty() {
-  if (!isDirty && stack[stack.length -1 ] === 'page-settings') {
-    isDirty = true;
-    updateMainButton();
-  }
+  settingsRevision += 1;
+  if (settingsData) settingsData.system_prompt = document.getElementById('s-prompt-area').value;
+  isDirty = true;
+  updateMainButton();
 }
 
 function updateMainButton() {
@@ -1237,11 +1262,8 @@ function updateMainButton() {
   }
 }
 
-async function saveSettings() {
-  tg.MainButton.showProgress();
-  if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-  
-  const body = {
+function settingsDraft() {
+  return {
     ...(settingsData.model_editable !== false ? {model: settingsData.model} : {}),
     system_prompt: document.getElementById('s-prompt-area').value.trim(),
     ...(settingsData.thinking_editable !== false ? {thinking_level: settingsData.thinking_level} : {}),
@@ -1251,18 +1273,32 @@ async function saveSettings() {
     tts_temperature: settingsData.tts_temperature,
     voice_id: settingsData.voice_id
   };
+}
+
+async function saveSettings() {
+  if (!settingsData || !isDirty || isSavingSettings) return;
+  const revision = settingsRevision;
+  const body = settingsDraft();
+  isSavingSettings = true;
+  tg.MainButton.showProgress();
+  if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
   
   try {
     await api('/settings', { method: 'PATCH', body: JSON.stringify(body) });
     if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-    settingsData.system_prompt = body.system_prompt;
-    isDirty = false;
-    tg.MainButton.hide();
+    renderedSettingsDraft = {...renderedSettingsDraft, ...body};
+    savedSettingsRevision = revision;
+    if (settingsRevision === revision) {
+      settingsData.system_prompt = body.system_prompt;
+      isDirty = false;
+    }
+    updateMainButton();
     showToast('Настройки сохранены ✓');
   } catch(e) {
     if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
     showToast('Ошибка сохранения');
   } finally {
+    isSavingSettings = false;
     tg.MainButton.hideProgress();
   }
 }

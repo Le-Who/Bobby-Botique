@@ -587,17 +587,22 @@ async def run_bot_with_retry():
                         return "Service Unavailable", 503
 
                     update_id = json_data.get("update_id")
+                    claim = None
                     if isinstance(update_id, int):
-                        from app.webhook_dedupe import should_accept_webhook_update
+                        from app.webhook_dedupe import WebhookDedupeUnavailable, claim_webhook_update
 
-                        if not await should_accept_webhook_update(
-                            update_id,
-                            seen_update_ids,
-                            seen_lock,
-                            payload=json_data,
-                            ttl_seconds=dedup_ttl_seconds,
-                            capacity=dedup_capacity,
-                        ):
+                        try:
+                            claim = await claim_webhook_update(
+                                update_id,
+                                seen_update_ids,
+                                seen_lock,
+                                payload=json_data,
+                                ttl_seconds=dedup_ttl_seconds,
+                                capacity=dedup_capacity,
+                            )
+                        except WebhookDedupeUnavailable:
+                            return "Service Unavailable", 503
+                        if claim is None:
                             return "", 200
 
                     # PTB owns processing concurrency; ingress only enqueues.
@@ -610,12 +615,21 @@ async def run_bot_with_retry():
                     except QueueFull:
                         if isinstance(update_id, int):
                             webhook_origins.discard(update_id)
+                        if claim is not None:
+                            await claim.release()
                         logging.warning("Webhook update_queue is full; returning 503 for retry")
                         return "Service Unavailable", 503
                     except BaseException:
                         if isinstance(update_id, int):
                             webhook_origins.discard(update_id)
+                        if claim is not None:
+                            await claim.release()
                         raise
+                    if claim is not None:
+                        try:
+                            await claim.confirm_enqueued()
+                        except WebhookDedupeUnavailable:
+                            return "Service Unavailable", 503
                     return "", 200
 
                 try:
@@ -718,6 +732,20 @@ async def run_bot_with_retry():
                 logging.info("Tarot daily preparation job registered")
         except Exception as e:
             logging.warning("Failed to register Tarot daily preparation job: %s", e)
+
+        try:
+            from app.handlers.tarot_daily import check_and_send_tarot_readings
+
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    check_and_send_tarot_readings,
+                    interval=60,
+                    first=165,
+                    name="tarot_daily_delivery",
+                )
+                logging.info("Tarot daily delivery job registered (60s interval)")
+        except Exception as e:
+            logging.warning("Failed to register Tarot daily delivery job: %s", e)
 
         # Schedule reminder delivery poll (every 60 seconds)
         try:

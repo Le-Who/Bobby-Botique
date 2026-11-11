@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from collections.abc import Mapping
 
 try:
@@ -16,6 +17,85 @@ logger = logging.getLogger(__name__)
 
 _DEDUP_KEY_PREFIX = "telegram:webhook:update:"
 _COMMAND_DEDUP_KEY_PREFIX = "telegram:webhook:cmd:"
+
+
+class WebhookDedupeUnavailable(Exception):
+    """Distributed admission did not receive a definitive claim result."""
+
+
+_CONFIRM_ENQUEUED = """
+for _, key in ipairs(KEYS) do
+    if redis.call('GET', key) ~= ARGV[1] then return 0 end
+end
+for _, key in ipairs(KEYS) do redis.call('SET', key, ARGV[2], 'EX', ARGV[3]) end
+return 1
+"""
+_RELEASE_PENDING = """
+for _, key in ipairs(KEYS) do
+    if redis.call('GET', key) == ARGV[1] then redis.call('DEL', key) end
+end
+return 1
+"""
+
+
+class WebhookUpdateClaim:
+    """A pending reservation becomes accepted only after the local queue handoff."""
+
+    def __init__(
+        self, keys: list[object], history: dict[object, float], lock: asyncio.Lock, ttl_seconds: float, capacity: int
+    ) -> None:
+        self.keys = keys
+        self.history = history
+        self.lock = lock
+        self.ttl_seconds = ttl_seconds
+        self.capacity = max(1, capacity)
+        self.client = redis_client
+        self.token = uuid.uuid4().hex
+        self.pending = "pending:" + self.token
+
+    @property
+    def redis_keys(self) -> list[str]:
+        return [f"{_DEDUP_KEY_PREFIX}{key}" if isinstance(key, int) else str(key) for key in self.keys]
+
+    async def release(self) -> None:
+        """Release only our unqueued reservation; uncertainty remains pending."""
+        if self.client:
+            try:
+                async with asyncio.timeout(5.0):
+                    await self.client.eval(_RELEASE_PENDING, len(self.keys), *self.redis_keys, self.pending)
+            except Exception as exc:
+                logger.warning("Webhook reservation release unavailable type=%s", type(exc).__name__)
+
+    async def confirm_enqueued(self) -> None:
+        # Queue acceptance is definitive even if the subsequent Redis ACK is
+        # lost. Retain that local evidence for this process's future retries.
+        async with self.lock:
+            now = time.monotonic()
+            remembered = self.keys[-self.capacity :]
+            overflow = len(self.history) + sum(key not in self.history for key in remembered) - self.capacity
+            if overflow > 0:
+                oldest = sorted(
+                    ((key, ts) for key, ts in self.history.items() if key not in remembered), key=lambda item: item[1]
+                )[: max(overflow, max(1, self.capacity // 10))]
+                for key, _ in oldest:
+                    self.history.pop(key, None)
+            for key in remembered:
+                self.history[key] = now
+        if self.client:
+            try:
+                async with asyncio.timeout(5.0):
+                    confirmed = await self.client.eval(
+                        _CONFIRM_ENQUEUED,
+                        len(self.keys),
+                        *self.redis_keys,
+                        self.pending,
+                        "accepted:" + self.token,
+                        max(1, int(self.ttl_seconds)),
+                    )
+                if confirmed != 1:
+                    raise WebhookDedupeUnavailable("Webhook reservation replaced before acknowledgment")
+            except Exception as exc:
+                raise WebhookDedupeUnavailable from exc
 
 
 def _command_identity_key(payload: Mapping[str, object] | None) -> str | None:
@@ -58,7 +138,7 @@ def _command_identity_key(payload: Mapping[str, object] | None) -> str | None:
     return f"{_COMMAND_DEDUP_KEY_PREFIX}{chat_type}:{chat_id}:{message_id}:{command}"
 
 
-async def should_accept_webhook_update(
+async def claim_webhook_update(
     update_id: int,
     seen_update_ids: dict[object, float],
     seen_lock: asyncio.Lock,
@@ -66,13 +146,14 @@ async def should_accept_webhook_update(
     payload: Mapping[str, object] | None = None,
     ttl_seconds: float = 180.0,
     capacity: int = 10_000,
-) -> bool:
-    """Return False when a Telegram update was already claimed.
+) -> WebhookUpdateClaim | None:
+    """Reserve an update or return None for a confirmed queue admission.
 
     Redis is the primary guard so overlapping old/new bot containers cannot both
     process the same webhook update during deploys. The in-process map remains a
-    bounded history of confirmed admissions for local/dev or degraded Redis.
-    It cannot recover unknown Redis acknowledgements or survive process restarts.
+    bounded history of confirmed admissions and supports no-Redis local/dev mode.
+    Pending, legacy and unknown claims remain retryable. An accepted marker is
+    bounded evidence of the local queue handoff, not crash-durable processing.
     """
     ttl = max(1, int(ttl_seconds))
     keys: list[object] = [update_id]
@@ -80,17 +161,23 @@ async def should_accept_webhook_update(
     if command_key:
         keys.append(command_key)
 
-    redis_confirmed = False
+    claim = WebhookUpdateClaim(keys, seen_update_ids, seen_lock, ttl_seconds, capacity)
+    redis_failure = None
     if redis_client:
         try:
-            for key in keys:
-                redis_key = f"{_DEDUP_KEY_PREFIX}{key}" if isinstance(key, int) else str(key)
-                claimed = await redis_client.set(redis_key, "1", ex=ttl, nx=True)
+            for redis_key in claim.redis_keys:
+                claimed = await redis_client.set(redis_key, claim.pending, ex=ttl, nx=True)
                 if not claimed:
-                    return False
-            redis_confirmed = True
+                    value = await redis_client.get(redis_key)
+                    if isinstance(value, bytes):
+                        value = value.decode("ascii", errors="replace")
+                    if isinstance(value, str) and value.startswith("accepted:"):
+                        await claim.release()
+                        return None
+                    raise WebhookDedupeUnavailable("Webhook reservation is pending or unknown")
         except Exception as exc:
-            logger.warning("Webhook Redis dedupe unavailable; using local fallback: %s", exc)
+            redis_failure = exc
+            logger.warning("Webhook Redis dedupe unavailable; deferring new admission type=%s", type(exc).__name__)
 
     now = time.monotonic()
     async with seen_lock:
@@ -98,22 +185,10 @@ async def should_accept_webhook_update(
         for uid in stale:
             seen_update_ids.pop(uid, None)
 
-        if not redis_confirmed and update_id in seen_update_ids:
-            return False
-        if not redis_confirmed and command_key and command_key in seen_update_ids:
-            return False
+        if (not redis_client or redis_failure is not None) and any(key in seen_update_ids for key in keys):
+            await claim.release()
+            return None
+        if redis_failure is not None:
+            raise WebhookDedupeUnavailable from redis_failure
 
-        local_capacity = max(1, capacity)
-        remembered_keys = keys[-local_capacity:]
-        new_keys = sum(key not in seen_update_ids for key in remembered_keys)
-        overflow = len(seen_update_ids) + new_keys - local_capacity
-        if overflow > 0:
-            oldest = sorted(
-                ((uid, ts) for uid, ts in seen_update_ids.items() if uid not in remembered_keys),
-                key=lambda item: item[1],
-            )[: max(overflow, max(1, local_capacity // 10))]
-            for uid, _ in oldest:
-                seen_update_ids.pop(uid, None)
-        for key in remembered_keys:
-            seen_update_ids[key] = now
-        return True
+        return claim

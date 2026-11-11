@@ -1,6 +1,8 @@
 """Request-scoped retry ownership; no provider text or durable schema changes."""
 
+import asyncio
 import uuid
+import weakref
 from dataclasses import dataclass
 from typing import Literal
 
@@ -9,6 +11,36 @@ from app import state
 
 class StaleRetryRequest(ValueError):
     pass
+
+
+@dataclass(slots=True)
+class MessageRequest:
+    source_ref: tuple[int, int]
+    owner: asyncio.Task
+    response_ref: tuple[int, int] | None = None
+
+
+# The canonical state's lifetime also bounds source identities. These never
+# survive eviction/erasure and cannot accidentally attach to a new user state.
+_message_requests: weakref.WeakKeyDictionary[state.UserState, MessageRequest] = weakref.WeakKeyDictionary()
+
+
+def message_request(user_id: int) -> MessageRequest | None:
+    return _message_requests.get(state.get_user_state(user_id))
+
+
+def remember_message_request(user_id: int, message_id, chat_id: int, owner: asyncio.Task) -> None:
+    user_state = state.get_user_state(user_id)
+    if isinstance(message_id, int):
+        _message_requests[user_state] = MessageRequest((message_id, chat_id), owner)
+    else:
+        _message_requests.pop(user_state, None)
+
+
+def transfer_message_request(user_id: int, previous_owner: asyncio.Task | None, owner: asyncio.Task) -> None:
+    request = message_request(user_id)
+    if request is not None and request.owner is previous_owner:
+        request.owner = owner
 
 
 @dataclass(slots=True)
@@ -28,6 +60,7 @@ class RetryRequest:
     reply_with_voice: bool = False
     text_parts: tuple[str, ...] | None = None
     replayable: bool = True
+    source_ref: tuple[int, int] | None = None
 
     @property
     def callback_data(self) -> str:
@@ -71,6 +104,13 @@ def begin_request(
         getattr(chat_state, "branch_id", None),
         len(getattr(chat_state, "history", ())),
     )
+    try:
+        owner = asyncio.current_task()
+    except RuntimeError:
+        owner = None
+    source = message_request(user_id)
+    if owner is not None and state.get_active_task(user_id) is owner and source is not None and source.owner is owner:
+        request.source_ref = source.source_ref
     state.get_user_state(user_id).retry_request = request
     return request
 

@@ -1212,7 +1212,11 @@ async def api_update_settings(user_id: int):
             voice_id = body["voice_id"]
             if not isinstance(voice_id, str) or not await valid_user_voice(voice_id):
                 return jsonify({"error": "invalid_voice_id"}), 400
-        changed = False
+        from copy import copy
+
+        original_chat = chat_state
+        chat_state = copy(chat_state)
+        changed_fields: set[str] = set()
         requested_ltm_enabled: bool | None = None
 
         # System prompt
@@ -1220,7 +1224,7 @@ async def api_update_settings(user_id: int):
             prompt = body["system_prompt"]
             if isinstance(prompt, str) and len(prompt) <= 4000:
                 chat_state.system_prompt = prompt.strip() or None
-                changed = True
+                changed_fields.add("system_prompt")
 
         # Model — validate against all providers (single source of truth)
         if "model" in body:
@@ -1230,14 +1234,14 @@ async def api_update_settings(user_id: int):
             all_models = get_all_available_models()
             if model in all_models:
                 chat_state.model = model
-                changed = True
+                changed_fields.add("model")
 
         # Thinking level
         if "thinking_level" in body:
             level = body["thinking_level"]
             if level in ("off", "low", "medium", "high"):
                 chat_state.thinking_level = level if level != "off" else None
-                changed = True
+                changed_fields.add("thinking_level")
 
         # LTM
         if "ltm_enabled" in body:
@@ -1249,36 +1253,36 @@ async def api_update_settings(user_id: int):
         # Search
         if "search_enabled" in body:
             chat_state.search_enabled = bool(body["search_enabled"])
-            changed = True
+            changed_fields.add("search_enabled")
 
         # Temperature
         if "temperature" in body:
             temp = body["temperature"]
             if temp is None:
                 chat_state.temperature = None
-                changed = True
+                changed_fields.add("temperature")
             elif isinstance(temp, (int, float)):
                 temp = float(temp)
                 if 0.0 <= temp <= 2.0:
                     chat_state.temperature = temp
-                    changed = True
+                    changed_fields.add("temperature")
 
         # TTS Temperature
         if "tts_temperature" in body:
             temp = body["tts_temperature"]
             if temp is None:
                 chat_state.tts_temperature = None
-                changed = True
+                changed_fields.add("tts_temperature")
             elif isinstance(temp, (int, float)):
                 temp = float(temp)
                 if 0.0 <= temp <= 2.0:
                     chat_state.tts_temperature = temp
-                    changed = True
+                    changed_fields.add("tts_temperature")
 
         # Voice ID
         if "voice_id" in body:
             chat_state.voice_id = body["voice_id"]
-            changed = True
+            changed_fields.add("voice_id")
 
         if requested_ltm_enabled is not None:
             # Consent is its own atomic write.  A stale full ChatState save
@@ -1289,15 +1293,40 @@ async def api_update_settings(user_id: int):
                 user_id,
                 requested_ltm_enabled,
             )
+            original_chat.memory_epoch = chat_state.memory_epoch
+            original_chat.ltm_enabled = requested_ltm_enabled
             if not requested_ltm_enabled:
                 from app.repos.memory_autosave import cancel_user_memory_tasks
 
                 await cancel_user_memory_tasks(user_id)
 
-        if changed:
-            await update_user_chat(user_id, chat_state)
+        if changed_fields:
+            from app import state
 
-        if changed or requested_ltm_enabled is not None:
+            async with state.get_user_lock(user_id):
+                current = await get_user_chat(user_id)
+                if current is None:
+                    return jsonify({"error": "state_changed"}), 409
+                if "thinking_level" in changed_fields:
+                    prospective = copy(current)
+                    for field in changed_fields:
+                        setattr(prospective, field, getattr(chat_state, field))
+                    if menus.openai_reasoning_readonly(prospective) and (
+                        (prospective.thinking_level or "off") != (current.thinking_level or "off")
+                    ):
+                        return jsonify(
+                            {
+                                "error": "thinking_readonly",
+                                "message": "Уровень рассуждений OpenAI задаёт администратор.",
+                            }
+                        ), 403
+                await state.cancel_interaction(user_id)
+                for field in changed_fields:
+                    setattr(current, field, getattr(chat_state, field))
+                if not await update_user_chat(user_id, current):
+                    return jsonify({"error": "state_changed"}), 409
+
+        if changed_fields or requested_ltm_enabled is not None:
             return jsonify({"ok": True})
 
         return jsonify({"ok": True, "note": "no_changes"})
@@ -1315,14 +1344,18 @@ async def api_update_settings(user_id: int):
 async def api_reset_context(user_id: int):
     """Clear chat history and summary."""
     try:
+        from app import state
         from app.repos.chats import get_user_chat, update_user_chat
 
-        chat_state = await get_user_chat(user_id)
-        if chat_state:
-            chat_state.history = []
-            chat_state.token_count = 0
-            chat_state.context_summary = None
-            await update_user_chat(user_id, chat_state)
+        async with state.get_user_lock(user_id):
+            await state.cancel_interaction(user_id)
+            chat_state = await get_user_chat(user_id)
+            if chat_state:
+                chat_state.history = []
+                chat_state.token_count = 0
+                chat_state.context_summary = None
+                if not await update_user_chat(user_id, chat_state):
+                    return jsonify({"error": "state_changed"}), 409
         return jsonify({"ok": True})
     except Exception as e:
         logger.error("Mini App context reset error: %s", e, exc_info=True)
@@ -2310,6 +2343,17 @@ async def daily2048_ws():
                     event = await await_owned_game_action(
                         apply_and_cache_move(direction, msg, client_elapsed_ms, pending_id, result)
                     )
+            except daily2048_repo.DailyProgressConflict:
+                await websocket.send_json(
+                    {
+                        "event": "error",
+                        "reason": "progress_conflict",
+                        "retryable": True,
+                        "message": "Игра изменилась в другой вкладке. Обновляем состояние.",
+                    }
+                )
+                await websocket.close(1013, "Progress changed")
+                break
             except daily2048_repo.DailyPuzzleUnavailable as exc:
                 await websocket.send_json(
                     {
@@ -2592,6 +2636,19 @@ async def daily_game_ws():
                             await websocket.send_json(cached_event)
                             continue
                     event, was_active = await await_owned_game_action(apply_and_cache_guess(word, pending_id))
+            except daily_croc_repo.DailyCrocConflict as exc:
+                if exc.reason != "progress_conflict":
+                    raise
+                await websocket.send_json(
+                    {
+                        "event": "error",
+                        "reason": "progress_conflict",
+                        "retryable": True,
+                        "message": "Игра изменилась в другой вкладке. Обновляем состояние.",
+                    }
+                )
+                await websocket.close(1013, "Progress changed")
+                break
             except TimeoutError:
                 logger.warning("daily_game_ws: mutation lock timeout user=%s", user_id)
                 await websocket.send_json(
@@ -2749,8 +2806,19 @@ async def game_ws():
 
     # Register guesser on first connect (not the creator)
     if game.guesser_id is None and user_id != game.creator_id:
-        game.guesser_id = user_id
-        await game.save()
+        try:
+            async with game_mutation_lock(game_id):
+                current_game = await load_game(game_id)
+                if current_game is None or current_game.status != "active":
+                    await websocket.close(4009, "Game already finished")
+                    return
+                game = current_game
+                if game.guesser_id is None:
+                    game.guesser_id = user_id
+                    await game.save()
+        except TimeoutError:
+            await websocket.close(1013, "Game temporarily unavailable")
+            return
         try:
             from app.repos.crocodile_daily import record_player_activity
 
@@ -3010,9 +3078,10 @@ async def game_ws():
                             await websocket.send_json(cached_event)
                             continue
                     # Reload game state from Redis (another tab may have mutated it)
-                    game = await load_game(game_id) or game
-                    if game.status != "active":
+                    current_game = await load_game(game_id)
+                    if current_game is None or current_game.status != "active":
                         break
+                    game = current_game
 
                     event = await await_owned_game_action(apply_and_publish_guess(word, pending_id))
             except TimeoutError:
@@ -3125,6 +3194,11 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
             nx=True,
             ex=_LIVE_SESSION_LEASE_SECONDS,
         )
+    else:
+        # No await or expiry can transfer this local slot before its owner exits.
+        has_active_session = user_id in ACTIVE_LIVE_SESSIONS
+        if not has_active_session:
+            ACTIVE_LIVE_SESSIONS.add(user_id)
 
     if has_active_session:
         await websocket.close(4009, "User already has an active session")
@@ -3148,6 +3222,8 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
     finally:
         if redis_client:
             await _release_live_session_lease(redis_client, lease_key, lease_token)
+        else:
+            ACTIVE_LIVE_SESSIONS.discard(user_id)
 
 
 @miniapp_blueprint.websocket("/live/ws")

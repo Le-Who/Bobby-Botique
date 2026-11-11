@@ -39,7 +39,12 @@ def isolated_runtime(monkeypatch):
 
 
 def _role_update(monkeypatch):
+    from app.state import clear_custom_role_state
+    from tests.interaction_fakes import install_private_interaction_fakes
+
+    install_private_interaction_fakes(monkeypatch)
     user_id = 401
+    clear_custom_role_state(user_id)
     state = get_user_state(user_id)
     state._loaded_from_db = True
     state.last_custom_role_prompt = "Create a science teacher"

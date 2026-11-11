@@ -57,7 +57,104 @@ def live_lease(monkeypatch):
     monkeypatch.setattr(web_miniapp, "settings", SimpleNamespace(TELEGRAM_BOT_TOKEN="synthetic"))
     monkeypatch.setattr(web_miniapp, "_validate_init_data", lambda *args: {"user": {"id": 777}})
     monkeypatch.setattr(web_miniapp, "_require_authorized_websocket_user", AsyncMock(return_value=True))
+    monkeypatch.setattr(web_miniapp, "_vertex_live_enabled", lambda: True)
+    monkeypatch.setattr(web_miniapp, "ACTIVE_LIVE_SESSIONS", set())
     return web_miniapp, store, socket
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_route", ["live_audio_ws", "live_vertex_audio_ws"])
+async def test_live_without_redis_excludes_both_routes_until_owner_finishes(live_lease, monkeypatch, first_route):
+    module, _, socket = live_lease
+    monkeypatch.setattr("app.cache.redis_client", None)
+    entered = asyncio.Event()
+    finished = asyncio.Event()
+    session_calls = 0
+
+    async def session(*args, **kwargs):
+        nonlocal session_calls
+        session_calls += 1
+        if session_calls == 1:
+            entered.set()
+            await finished.wait()
+
+    monkeypatch.setattr(module, "_handle_live_session", session)
+    first = asyncio.create_task(getattr(module, first_route)())
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        await module.live_audio_ws()
+        await module.live_vertex_audio_ws()
+        assert session_calls == 1
+        assert [code for code, _ in socket.closed] == [4009, 4009]
+    finally:
+        finished.set()
+        await first
+
+    await module.live_audio_ws()
+    assert session_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_live_without_redis_holds_admission_during_cancelled_handler_cleanup(live_lease, monkeypatch):
+    module, _, socket = live_lease
+    monkeypatch.setattr("app.cache.redis_client", None)
+    entered = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    cleanup_allowed = asyncio.Event()
+    session_calls = 0
+
+    async def session(*args, **kwargs):
+        nonlocal session_calls
+        session_calls += 1
+        if session_calls == 1:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await cleanup_allowed.wait()
+
+    monkeypatch.setattr(module, "_handle_live_session", session)
+    owner = asyncio.create_task(module.live_audio_ws())
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        owner.cancel()
+        await asyncio.wait_for(cleanup_started.wait(), 1)
+        await module.live_vertex_audio_ws()
+        assert session_calls == 1
+        assert [code for code, _ in socket.closed] == [4009]
+    finally:
+        cleanup_allowed.set()
+        await asyncio.gather(owner, return_exceptions=True)
+
+    assert owner.cancelled()
+    await module.live_vertex_audio_ws()
+    assert session_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_live_without_redis_releases_admission_after_setup_failure(live_lease, monkeypatch):
+    module, _, _ = live_lease
+    monkeypatch.setattr("app.cache.redis_client", None)
+    session = AsyncMock(side_effect=[RuntimeError("synthetic setup failure"), None])
+    monkeypatch.setattr(module, "_handle_live_session", session)
+
+    with pytest.raises(RuntimeError, match="synthetic setup failure"):
+        await module.live_audio_ws()
+    await module.live_vertex_audio_ws()
+    assert session.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_live_redis_acquisition_failure_does_not_admit_local_fallback(live_lease, monkeypatch):
+    module, store, _ = live_lease
+    monkeypatch.setattr(store, "set", AsyncMock(side_effect=ConnectionError("synthetic Redis failure")))
+    session = AsyncMock()
+    monkeypatch.setattr(module, "_handle_live_session", session)
+
+    with pytest.raises(ConnectionError, match="synthetic Redis failure"):
+        await module.live_audio_ws()
+    session.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -117,6 +117,19 @@ async def test_concurrent_websocket_retry_applies_one_move(monkeypatch, move_sto
 
 
 @pytest.mark.asyncio
+async def test_progress_conflict_requests_reload_without_caching_move(monkeypatch, move_store):
+    monkeypatch.setattr(repo, "update_result_after_move", AsyncMock(side_effect=repo.DailyProgressConflict()))
+    async with quart_app.test_client().websocket(move_store.path) as socket:
+        await socket.receive()
+        await socket.send(json.dumps({"type": "move", "direction": "right", "pending_id": "conflicted"}))
+        response = json.loads(await socket.receive())
+        assert response["event"] == "error" and response["reason"] == "progress_conflict"
+        assert response["retryable"]
+    assert move_store.read().moves == 0
+    assert not crocodile_runtime._local_pending_results
+
+
+@pytest.mark.asyncio
 async def test_cancelled_socket_finishes_committed_move_cache_before_retry(monkeypatch, move_store):
     stamp_started = asyncio.Event()
     finish_stamp = asyncio.Event()

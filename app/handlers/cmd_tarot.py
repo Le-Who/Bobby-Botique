@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 
 from app.handlers.tarot_chat import TAROT_END_SESSION_TEXT
 from app.i18n import detect_language, t
-from app.state import ensure_state_loaded, set_tarot_mode, set_tarot_session
+from app.state import _schedule_persist, begin_interaction, ensure_state_loaded, run_interaction
 from app.tarot import SpreadType
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
@@ -22,6 +22,11 @@ async def tarot_command(
 ) -> bool | None:
     user_id = update.effective_user.id
     await ensure_state_loaded(user_id)
+    from app.handlers.interaction_work import reject_busy_interaction
+
+    message = update.message or update.callback_query.message
+    if await reject_busy_interaction(user_id, message.reply_text):
+        return None
 
     from app.handlers.compatibility import clear_compatibility_input
 
@@ -57,12 +62,26 @@ async def tarot_command(
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
-    await context.bot.send_message(
-        chat_id=user_id, text=formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-    )
+    owner = begin_interaction(user_id, "tarot")
+    entered = False
 
-    # Apply the transition only after delivery, without an intervening await.
-    clear_compatibility_input(context.user_data)
-    set_tarot_mode(user_id, True)
-    set_tarot_session(user_id, session_data)
-    return True
+    async def enter() -> None:
+        nonlocal entered
+        await context.bot.send_message(
+            chat_id=user_id, text=formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+        if not owner.current():
+            return
+        from app.handlers.interaction_work import retire_context_text_input
+
+        retire_context_text_input(context.user_data)
+        # Publish only after delivery. A later command/cancel can fence this
+        # welcome while preserving the previously saved session on failure.
+        clear_compatibility_input(context.user_data)
+        owner.state.tarot_mode = True
+        owner.state.tarot_session = session_data
+        _schedule_persist(owner.state)
+        entered = True
+
+    await run_interaction(owner, enter)
+    return True if entered else None

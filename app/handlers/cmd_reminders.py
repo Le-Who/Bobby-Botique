@@ -19,13 +19,15 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.config import UTC_TZ
+from app.repos import scheduled_deliveries as scheduled
 from app.repos.reminders import (
     create_reminder,
     delete_reminder,
     get_pending_reminders,
     get_user_reminders,
-    mark_delivered,
 )
+from app.scheduled_delivery import run_scheduled_delivery
+from app.utils.background_tasks import try_submit_task
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
 from app.utils.json_compat import json
@@ -360,6 +362,10 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     mode = ctx.get("mode", "qna")
                     ai_badge = " 🔬" if mode == "research" else " 🔎"
                 text_parts.append(f"  • `{time_str}` — {prompt_preview}{ai_badge}\n")
+                if r.get("delivery_state") == "unknown_delivery":
+                    text_parts.append("    ⚠️ Доставка не подтверждена; автоматический повтор остановлен.\n")
+                elif r.get("delivery_state") == "failed" and not r.get("retryable"):
+                    text_parts.append("    ❌ Не доставлено. Создайте новое напоминание для повтора.\n")
                 buttons.append(
                     [
                         InlineKeyboardButton(
@@ -438,116 +444,51 @@ async def _execute_ai_reminder(
     prompt: str,
     mode: str,
     reminder_id: int,
+    *,
+    claim: dict,
 ) -> None:
-    """Execute an AI-powered reminder in a fire-and-forget coroutine.
+    """Keep the durable owner through generation and the final response receipt."""
 
-    Sends a shadow placeholder message, then dispatches to the appropriate
-    AI pipeline. The placeholder acts as a real Telegram Message that the
-    streaming/editing UI can operate on.
-
-    Guards:
-      - Concurrency semaphore: max 3 parallel AI reminders globally.
-      - Timeout: 5 minutes hard limit with graceful user notification.
-
-    This function is designed to be called via ``asyncio.create_task()``
-    so it does NOT block the reminder delivery loop.
-    """
-    try:
+    async def execute(owner):
         async with _AI_REMINDER_SEMAPHORE:
-            # ── Send shadow placeholder ──────────────────────────────
-            mode_emoji = "🔬" if mode == "research" else "🔎"
-            placeholder_text = f"⏰ **Отложенный ИИ-запрос** {mode_emoji}\n\n_{prompt}_\n\n⏳ Выполняю..."
-            formatted_text, parse_mode = TelegramFormatter.format_text(placeholder_text)
-            placeholder_message = await bot.send_message(
-                chat_id=user_id,
-                text=formatted_text,
-                parse_mode=parse_mode,
-            )
-
-            # ── Load user's chat state ───────────────────────────────
+            await owner.checkpoint()
             from app.repos.chats import get_user_chat
 
             chat_state = await get_user_chat(user_id)
-
-            # ── Dispatch to appropriate pipeline with timeout ────────
-            try:
-                if mode == "research":
-                    from app.handlers.ai_search import _handle_research_agent
-
-                    await asyncio.wait_for(
-                        _handle_research_agent(
-                            placeholder_message,
-                            user_id,
-                            prompt,
-                            chat_state,
-                        ),
-                        timeout=_AI_REMINDER_TIMEOUT,
-                    )
-                else:
-                    from app.handlers.ai_search import _handle_qna_search
-
-                    await asyncio.wait_for(
-                        _handle_qna_search(
-                            placeholder_message,
-                            prompt,
-                            chat_state,
-                            user_id=user_id,
-                        ),
-                        timeout=_AI_REMINDER_TIMEOUT,
-                    )
-            except TimeoutError:
-                logger.warning(
-                    "AI reminder %d timed out after %ds (mode=%s, user=%s)",
-                    reminder_id,
-                    _AI_REMINDER_TIMEOUT,
-                    mode,
-                    user_id,
-                )
-                timeout_text = (
-                    f"⏰ **Отложенный запрос — таймаут**\n\n"
-                    f"_{prompt}_\n\n"
-                    f"⏱ Запрос не завершился за {_AI_REMINDER_TIMEOUT // 60} мин. "
-                    f"Попробуйте отправить его вручную."
-                )
-                fmt, pm = TelegramFormatter.format_text(timeout_text)
-                try:
-                    await placeholder_message.edit_text(fmt, parse_mode=pm)
-                except Exception:
-                    await bot.send_message(chat_id=user_id, text=fmt, parse_mode=pm)
+            # Loading state must not adopt a new account generation for old work.
+            if chat_state.memory_epoch != claim["privacy_epoch"]:
                 return
+            await owner.checkpoint()
+            mode_emoji = "🔬" if mode == "research" else "🔎"
+            placeholder_text = f"⏰ **Отложенный ИИ-запрос** {mode_emoji}\n\n_{prompt}_\n\n⏳ Выполняю..."
+            formatted_text, parse_mode = TelegramFormatter.format_text(placeholder_text)
+            placeholder = await owner.send_message(chat_id=user_id, text=formatted_text, parse_mode=parse_mode)
+            if mode == "research":
+                from app.handlers.ai_search import _handle_research_agent
 
-            logger.info(
-                "AI reminder %d executed successfully (mode=%s, user=%s)",
-                reminder_id,
-                mode,
-                user_id,
-            )
+                work = _handle_research_agent(
+                    placeholder,
+                    user_id,
+                    prompt,
+                    chat_state,
+                    delivery_observer=owner.observe_response,
+                    voice_delivery_bot=bot,
+                )
+            else:
+                from app.handlers.ai_search import _handle_qna_search
 
-    except Exception as e:
-        logger.error(
-            "AI reminder %d execution failed (mode=%s, user=%s): %s",
-            reminder_id,
-            mode,
-            user_id,
-            e,
-            exc_info=True,
-        )
-        # Notify user about the failure gracefully
-        try:
-            error_text = (
-                f"⏰ **Отложенный запрос не удался**\n\n"
-                f"_{prompt}_\n\n"
-                f"❌ Произошла ошибка при выполнении. "
-                f"Попробуйте отправить этот запрос вручную."
-            )
-            formatted_text, parse_mode = TelegramFormatter.format_text(error_text)
-            await bot.send_message(
-                chat_id=user_id,
-                text=formatted_text,
-                parse_mode=parse_mode,
-            )
-        except Exception:
-            logger.error("Failed to send error notification for AI reminder %d", reminder_id)
+                work = _handle_qna_search(
+                    placeholder,
+                    prompt,
+                    chat_state,
+                    user_id=user_id,
+                    delivery_observer=owner.observe_response,
+                )
+            # Timeout/cancellation after a placeholder is a terminal uncertain
+            # execution. Replaying it would duplicate a possibly visible answer.
+            await asyncio.wait_for(work, timeout=_AI_REMINDER_TIMEOUT)
+
+    await run_scheduled_delivery(claim, bot, execute, ai_response=True)
 
 
 async def check_and_deliver_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -561,65 +502,52 @@ async def check_and_deliver_reminders(context: ContextTypes.DEFAULT_TYPE) -> Non
     streams the result back to the user's chat.
     """
     try:
+        await scheduled.recover_abandoned()
         pending = await get_pending_reminders()
         if not pending:
             return
 
         async def _process_single_reminder(reminder: dict) -> None:
             try:
+                claim = await scheduled.claim_reminder(reminder["id"])
+                if claim is None:
+                    return
                 user_id = reminder["user_id"]
                 prompt = reminder["prompt"]
                 ctx = reminder.get("context_history")
-
-                # ── Determine if this is an AI reminder ──────────────
-                is_ai = False
-                ai_mode = "qna"
-                if isinstance(ctx, dict):
-                    is_ai = ctx.get("is_ai", False)
-                    ai_mode = ctx.get("mode", "qna")
-                elif isinstance(ctx, str):
-                    # Legacy: context_history stored as JSON string
+                if isinstance(ctx, str):
                     try:
-                        parsed = json.loads(ctx)
-                        is_ai = parsed.get("is_ai", False)
-                        ai_mode = parsed.get("mode", "qna")
+                        ctx = json.loads(ctx)
                     except json.JSONDecodeError, TypeError:
-                        pass
-
+                        ctx = None
+                is_ai = isinstance(ctx, dict) and bool(ctx.get("is_ai"))
                 if is_ai:
-                    # ── AI Reminder: fire-and-forget background task ──
-                    task = asyncio.create_task(
+                    task = try_submit_task(
                         _execute_ai_reminder(
                             context.bot,
                             user_id,
                             prompt,
-                            ai_mode,
+                            ctx.get("mode", "qna"),
                             reminder["id"],
+                            claim=claim,
                         ),
-                        name=f"ai_remind_{reminder['id']}",
+                        operation="reminder.ai",
                     )
+                    if task is None:
+                        await scheduled.release_unstarted(claim)
+                        logger.warning("AI reminder %d admission rejected; leaving it pending", reminder["id"])
+                        return
+                    task.set_name(f"ai_remind_{reminder['id']}")
                     _background_ai_tasks.add(task)
                     task.add_done_callback(_background_ai_tasks.discard)
-                    logger.info(
-                        "AI reminder %d dispatched (mode=%s, user=%s)",
-                        reminder["id"],
-                        ai_mode,
-                        user_id,
-                    )
                 else:
-                    # ── Plain text reminder (original behavior) ───────
-                    text = f"⏰ **Напоминание**\n\n{prompt}"
-                    formatted_text, parse_mode = TelegramFormatter.format_text(text)
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=formatted_text,
-                        parse_mode=parse_mode,
-                    )
-                    logger.info("Reminder %d delivered to user %s", reminder["id"], user_id)
 
-                # Mark delivered immediately (AI task handles its own errors)
-                await mark_delivered(reminder["id"])
+                    async def send(owner):
+                        text = f"⏰ **Напоминание**\n\n{prompt}"
+                        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+                        await owner.send_message(chat_id=user_id, text=formatted_text, parse_mode=parse_mode)
 
+                    await run_scheduled_delivery(claim, context.bot, send)
             except Exception as e:
                 logger.warning("Failed to deliver reminder %d: %s", reminder["id"], e)
 

@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 import re
+from collections.abc import Awaitable, Callable
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -34,9 +35,178 @@ from app.repos.chats import get_user_chat
 from app.request_context import ensure_request_id as set_request_id
 from app.request_context import set_user_context
 from app.runtime_settings.additional_prompts import render_additional_prompt
+from app.utils.background_tasks import try_submit_task
 from app.utils.metrics_middleware import MetricsMiddleware
 
 _CODE_BLOCK_STRIP_RE = re.compile(r"```.*?```", flags=re.DOTALL)
+_STALE_CONTINUATION_TOAST = "Этот ответ уже изменён или устарел. Продолжите актуальный ответ."
+
+
+def _message_ref(message, chat_id=None) -> tuple[int, int] | None:
+    message_id = getattr(message, "message_id", None)
+    chat_id = getattr(getattr(message, "chat", None), "id", chat_id)
+    return (message_id, chat_id) if isinstance(message_id, int) and isinstance(chat_id, int) else None
+
+
+def _callback_source(query, context):
+    original = getattr(query.message, "reply_to_message", None)
+    if original is None:
+        from app.handlers.retry_requests import message_request
+
+        response_ref = _message_ref(query.message)
+        if response_ref is None or state.get_last_bot_message(query.from_user.id) != response_ref:
+            return None
+        original = (getattr(context, "user_data", None) or {}).get("original_message")
+        source = message_request(query.from_user.id)
+        if source is not None and (
+            source.response_ref != response_ref or source.source_ref != _message_ref(original, response_ref[1])
+        ):
+            return None
+    if getattr(getattr(original, "from_user", None), "id", None) != query.from_user.id:
+        return None
+    return original
+
+
+def _continuation_request(query):
+    from app.handlers.retry_requests import StaleRetryRequest, current_request, message_request
+
+    user_id = query.from_user.id
+    clicked = _message_ref(query.message)
+    last = state.get_last_bot_message(user_id)
+    source = message_request(user_id)
+    request = current_request(user_id)
+    if last is None and source is None and request is None:
+        return None  # Replies created before ownership metadata was recorded.
+    if clicked is None or request is None or request.response_ref != clicked:
+        raise StaleRetryRequest("Continuation no longer owns this response")
+    if request.source_ref is not None:
+        if source is None or source.source_ref != request.source_ref:
+            raise StaleRetryRequest("Continuation source changed")
+        # The delivery receipt owns split/replacement actions even when the
+        # router still remembers this source's original placeholder.
+        return request
+    if (last is not None and last != clicked) or (source is not None and source.response_ref != clicked):
+        raise StaleRetryRequest("Continuation response ownership is uncertain")
+    original = _message_ref(getattr(query.message, "reply_to_message", None), clicked[1])
+    if source is not None and original is not None and source.source_ref != original:
+        raise StaleRetryRequest("Continuation source changed")
+    return request
+
+
+class _CallbackAdmission:
+    def __init__(self, user_id: int, lock: asyncio.Lock):
+        self.user_id = user_id
+        self.lock = lock
+        owner = asyncio.current_task()
+        assert owner is not None
+        self.owner: asyncio.Task = owner
+        self.released = False
+        state.get_user_state(user_id).is_processing = True
+        state.register_active_task(user_id, self.owner)
+
+    def bind_response(self, message) -> None:
+        from app.handlers.retry_requests import message_request
+
+        ref = _message_ref(message)
+        if ref is not None:
+            state.set_last_bot_message(self.user_id, *ref)
+            source = message_request(self.user_id)
+            if source is not None and source.owner is self.owner:
+                source.response_ref = ref
+
+    def transfer(self, task: asyncio.Task, message) -> None:
+        from app.handlers.retry_requests import transfer_message_request
+
+        transfer_message_request(self.user_id, self.owner, task)
+        self.owner = task
+        state.register_active_task(self.user_id, task)
+        self.bind_response(message)
+        task.add_done_callback(self.release)
+
+    def release(self, owner: asyncio.Task | None) -> None:
+        if self.released or self.owner is not owner:
+            return
+        self.released = True
+        if state.get_active_task(self.user_id) is owner:
+            state.clear_active_task(self.user_id)
+            state.get_user_state(self.user_id).is_processing = False
+        self.lock.release()
+
+
+async def _admit_callback(
+    query,
+    original=None,
+    *,
+    validate: Callable[[], Awaitable[bool]] | None = None,
+    source_ref: tuple[int, int] | None = None,
+) -> _CallbackAdmission | None:
+    from app.handlers.retry_requests import message_request, remember_message_request
+
+    user_id = query.from_user.id
+    user_lock = state.get_user_lock(user_id)
+    user_state = state.get_user_state(user_id)
+    owner = state.get_active_task(user_id)
+    interaction = user_state.interaction
+    if (
+        user_lock.locked()
+        or user_state.is_processing
+        or (owner is not None and not owner.done())
+        or (interaction is not None and interaction.task is not None)
+    ):
+        await query.answer(_BUSY_TOAST)
+        return None
+    # This acquisition cannot block: no await separates inspection and reserve.
+    await user_lock.acquire()
+    admission = _CallbackAdmission(user_id, user_lock)
+    try:
+        if validate is not None and not await validate():
+            admission.release(asyncio.current_task())
+            await query.answer(_STALE_CONTINUATION_TOAST)
+            return None
+        source_ref = source_ref or _message_ref(original, getattr(getattr(query.message, "chat", None), "id", None))
+        if source_ref is not None:
+            remember_message_request(user_id, *source_ref, admission.owner)
+        else:
+            source = message_request(user_id)
+            if source is not None and source.response_ref == _message_ref(query.message):
+                source.owner = admission.owner
+            else:
+                remember_message_request(user_id, None, 0, admission.owner)
+        admission.bind_response(query.message)
+        await query.answer()
+    except BaseException:
+        admission.release(asyncio.current_task())
+        raise
+    return admission
+
+
+async def _schedule_ai_callback(coroutine, placeholder, *, operation: str, nested=None) -> asyncio.Task | None:
+    from app.runtime_settings.lifecycle import current_operation_snapshot, runtime_settings_scope
+
+    snapshot = current_operation_snapshot()
+
+    async def request_worker():
+        if snapshot is None:
+            await coroutine
+        else:
+            # This is admitted request work; retain its route revision while
+            # the shared manager detaches ordinary background-job snapshots.
+            async with runtime_settings_scope(snapshot):
+                await coroutine
+
+    task = try_submit_task(request_worker(), operation=operation)
+    if task is None:
+        coroutine.close()
+        if nested is not None:
+            nested.close()
+        await placeholder.edit_text(t("role.server_overloaded"))
+        return None
+    task.add_done_callback(lambda _task: coroutine.close())
+    if nested is not None:
+        task.add_done_callback(lambda _task: nested.close())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 def _strip_tts_code_blocks(text: str) -> str:
@@ -59,12 +229,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
         await placeholder_message.delete()
         return
 
-    # Get оригинальное message from contextа or from reply_to_message
-    original_message = None
-    if hasattr(context, "user_data") and context.user_data is not None and "original_message" in context.user_data:
-        original_message = context.user_data["original_message"]
-    else:
-        original_message = query.message.reply_to_message
+    original_message = _callback_source(query, context)
 
     if not original_message:
         from app.utils.keyboards import error_with_back_keyboard
@@ -76,48 +241,49 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
         )
         return
 
-    user_id = original_message.from_user.id
-    user_lock = state.get_user_lock(user_id)
-
-    # P4: single query.answer() — Telegram ignores subsequent calls per callback_query_id
-    await query.answer(_BUSY_TOAST if user_lock.locked() else "")
-    if user_lock.locked():
+    user_id = query.from_user.id
+    admission = await _admit_callback(query, original_message)
+    if admission is None:
         return
+    try:
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+        # 1. Определяем, какую задачу будем запускать.
+        task_to_run = None
+        if action == "vision_only":
+            # 2. СРАЗУ даем обратную связь пользователю.
+            await placeholder_message.edit_text(t("processing.describing_image"))
+            chat_state = await get_user_chat(user_id)
+            task_to_run = agent._handle_photo(placeholder_message, original_message, chat_state)  # type: ignore[arg-type]  # message comes from original update
+        elif action == "confirm":
+            # У этой функции своя обратная связь ("Аналfromирую..."), поэтому здесь ничего не меняем.
+            search_prefix = "??" if (original_message.caption and original_message.caption.startswith("??")) else "?"
+            task_to_run = agent._handle_complex_agent_search(placeholder_message, original_message, search_prefix)
 
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # 1. Определяем, какую задачу будем запускать.
-    task_to_run = None
-    if action == "vision_only":
-        # 2. СРАЗУ даем обратную связь пользователю.
-        await placeholder_message.edit_text(t("processing.describing_image"))
-        chat_state = await get_user_chat(user_id)
-        task_to_run = agent._handle_photo(placeholder_message, original_message, chat_state)  # type: ignore[arg-type]  # message comes from original update
-    elif action == "confirm":
-        # У этой функции своя обратная связь ("Аналfromирую..."), поэтому здесь ничего не меняем.
-        search_prefix = "??" if (original_message.caption and original_message.caption.startswith("??")) else "?"
-        task_to_run = agent._handle_complex_agent_search(placeholder_message, original_message, search_prefix)
+        # 3. If задача определена, запускаем ее в фоне под блокировкой.
+        if task_to_run:
 
-    # 3. If задача определена, запускаем ее в фоне под блокировкой.
-    if task_to_run:
+            async def task_wrapper() -> None:
+                try:
+                    from app.adapters.concurrency import ultra_heavy_semaphore
 
-        async def task_wrapper() -> None:
-            try:
-                from app.adapters.concurrency import ultra_heavy_semaphore
+                    async with (
+                        ultra_heavy_semaphore,
+                        MetricsMiddleware("complex_search_callback", user_id=user_id),
+                    ):
+                        await task_to_run
+                except Exception as e:
+                    logging.error("complex_search task failed: %s", e, exc_info=True)
+                    with contextlib.suppress(Exception):
+                        await placeholder_message.edit_text(t("error.generic"))
 
-                async with (
-                    ultra_heavy_semaphore,
-                    user_lock,
-                    MetricsMiddleware("complex_search_callback", user_id=user_id),
-                ):
-                    await task_to_run
-            except Exception as e:
-                logging.error("complex_search task failed: %s", e, exc_info=True)
-                with contextlib.suppress(Exception):
-                    await placeholder_message.edit_text(t("error.generic"))
+            task = await _schedule_ai_callback(
+                task_wrapper(), placeholder_message, operation="callback.complex_search", nested=task_to_run
+            )
 
-        _task = asyncio.create_task(task_wrapper())
-        _background_tasks.add(_task)
-        _task.add_done_callback(_background_tasks.discard)
+            if task is not None:
+                admission.transfer(task, placeholder_message)
+    finally:
+        admission.release(asyncio.current_task())
 
 
 async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -138,12 +304,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await placeholder_message.edit_text(t("btn.operation_cancelled"))
         return
 
-    # Get оригинальное message from contextа or from reply_to_message
-    original_message = None
-    if hasattr(context, "user_data") and context.user_data is not None and "original_message" in context.user_data:
-        original_message = context.user_data["original_message"]
-    else:
-        original_message = query.message.reply_to_message
+    original_message = _callback_source(query, context)
 
     if not original_message:
         from app.utils.keyboards import error_with_back_keyboard
@@ -155,43 +316,44 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    user_id = original_message.from_user.id
-    user_lock = state.get_user_lock(user_id)
-
-    # P4: single query.answer() — Telegram ignores subsequent calls per callback_query_id
-    await query.answer(_BUSY_TOAST if user_lock.locked() else "")
-    if user_lock.locked():
+    user_id = query.from_user.id
+    admission = await _admit_callback(query, original_message)
+    if admission is None:
         return
+    try:
 
-    async def task_wrapper() -> None:
-        try:
-            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
-                if action == "confirm":
-                    user_message = original_message.text
-                    # ⚡ Bolt Optimization: Fetch chat state and detect TTS intent concurrently
-                    from app.voice_intent import detect_tts_intent
+        async def task_wrapper() -> None:
+            try:
+                async with _HEAVY_CALLBACK_SEMAPHORE:
+                    if action == "confirm":
+                        user_message = original_message.text
+                        # ⚡ Bolt Optimization: Fetch chat state and detect TTS intent concurrently
+                        from app.voice_intent import detect_tts_intent
 
-                    chat_state, voice_decision = await asyncio.gather(
-                        get_user_chat(user_id), detect_tts_intent(user_text=user_message)
-                    )
-
-                    async with MetricsMiddleware("fallback_callback", user_id=user_id):
-                        await agent._handle_regular_chat(
-                            placeholder_message,  # type: ignore[arg-type]  # MaybeInaccessibleMessage
-                            user_id,
-                            user_message,
-                            chat_state,
-                            model_override=model_override,
-                            reply_with_voice=voice_decision.explicit_tts,
+                        chat_state, voice_decision = await asyncio.gather(
+                            get_user_chat(user_id), detect_tts_intent(user_text=user_message)
                         )
-        except Exception as e:
-            logging.error("fallback task failed: %s", e, exc_info=True)
-            with contextlib.suppress(Exception):
-                await placeholder_message.edit_text(t("error.generic"))
 
-    _task = asyncio.create_task(task_wrapper())
-    _background_tasks.add(_task)
-    _task.add_done_callback(_background_tasks.discard)
+                        async with MetricsMiddleware("fallback_callback", user_id=user_id):
+                            await agent._handle_regular_chat(
+                                placeholder_message,  # type: ignore[arg-type]  # MaybeInaccessibleMessage
+                                user_id,
+                                user_message,
+                                chat_state,
+                                model_override=model_override,
+                                reply_with_voice=voice_decision.explicit_tts,
+                            )
+            except Exception as e:
+                logging.error("fallback task failed: %s", e, exc_info=True)
+                with contextlib.suppress(Exception):
+                    await placeholder_message.edit_text(t("error.generic"))
+
+        task = await _schedule_ai_callback(task_wrapper(), placeholder_message, operation="callback.fallback")
+
+        if task is not None:
+            admission.transfer(task, placeholder_message)
+    finally:
+        admission.release(asyncio.current_task())
 
 
 async def cancel_long_wait_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -267,6 +429,7 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         StaleRetryRequest,
         current_request,
         legacy_request,
+        message_request,
         retry_history,
         scope_matches,
     )
@@ -286,7 +449,12 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     user_lock = state.get_user_lock(user_id)
     owner = state.get_active_task(user_id)
-    if user_lock.locked() or (owner is not None and not owner.done()):
+    interaction = state.get_user_state(user_id).interaction
+    if (
+        user_lock.locked()
+        or (owner is not None and not owner.done())
+        or (interaction is not None and interaction.task is not None)
+    ):
         await query.answer(_BUSY_TOAST)
         return
     # No intervening await after the check: acquisition and reservation are one
@@ -381,11 +549,15 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             finally:
                 release_admission()
 
-        task = asyncio.create_task(_retry_wrapper())
+        task = await _schedule_ai_callback(_retry_wrapper(), placeholder_message, operation="callback.retry")
+        if task is None:
+            return
+        source = message_request(user_id)
+        if source is not None and source.response_ref == source_ref:
+            source.owner = task
+            source.response_ref = (placeholder_message.message_id, placeholder_message.chat.id)
         state.register_active_task(user_id, task)
-        _background_tasks.add(task)
         task.add_done_callback(lambda _: release_admission())
-        task.add_done_callback(_background_tasks.discard)
         handed_off = True
     except StaleRetryRequest:
         await query.answer("Этот запрос уже изменён или устарел. Отправьте его снова.", show_alert=True)
@@ -507,57 +679,99 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
     # Strip the interruption footer to get clean partial text
     clean_partial = _strip_interruption_footer(partial_text)
 
-    # P4+P5: single query.answer() with toast if busy
-    user_lock = state.get_user_lock(user_id)
-    await query.answer(_BUSY_TOAST if user_lock.locked() else "")
-    if user_lock.locked():
+    from app.handlers.retry_requests import StaleRetryRequest, current_request, message_request, scope_matches
+
+    try:
+        request = _continuation_request(query)
+    except StaleRetryRequest:
+        await query.answer(_STALE_CONTINUATION_TOAST)
         return
+    chat_state = None
+    legacy_scope: tuple[int, object | None] | None = None
 
-    # Create placeholder for the continuation response
-    placeholder_message = await query.message.reply_text(t("processing.continuing"))
+    async def validate_continuation() -> bool:
+        nonlocal chat_state, legacy_scope
+        current = await get_user_chat(user_id)
+        if current is None or current_request(user_id) is not request:
+            return False
+        if request is not None:
+            if request.response_ref != _message_ref(query.message) or not scope_matches(request, current):
+                return False
+            if request.source_ref is not None:
+                source = message_request(user_id)
+                if source is None or source.source_ref != request.source_ref:
+                    return False
+        else:
+            if getattr(current, "private_data_blocked", False):
+                return False
+            scope = (int(getattr(current, "memory_epoch", 0) or 0), getattr(current, "branch_id", None))
+            if legacy_scope is not None and legacy_scope != scope:
+                return False
+            legacy_scope = scope
+        chat_state = current
+        return True
 
-    from app.handlers.agent import _handle_regular_chat
+    admission = await _admit_callback(
+        query,
+        getattr(query.message, "reply_to_message", None),
+        validate=validate_continuation,
+        source_ref=request.source_ref if request is not None else None,
+    )
+    if admission is None:
+        return
+    try:
+        # Create placeholder for the continuation response
+        placeholder_message = await query.message.reply_text(t("processing.continuing"))
 
-    # Captured here so the inner closure can reference them without closure mutation risk
-    _clean_partial = clean_partial
-    _continuation_prompt = render_additional_prompt("chat.continue")
+        from app.handlers.agent import _handle_regular_chat
 
-    async def _continue_wrapper() -> None:
-        try:
-            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
-                # Fetch and mutate state under lock to prevent history data race
-                from app.metrics import role_conv_metrics
-                from app.utils.background_tasks import submit_task
+        # Captured here so the inner closure can reference them without closure mutation risk
+        _clean_partial = clean_partial
+        _continuation_prompt = render_additional_prompt("chat.continue")
 
-                _chat_state = await get_user_chat(user_id)
-                last_turn = _chat_state.history[-1] if _chat_state.history else None
-                if not last_turn or last_turn.get("role") != "model":
-                    # Compatibility for interrupted replies created before
-                    # partial deliveries were persisted. Current deliveries
-                    # already end in a model turn. Comparing rendered Telegram
-                    # text is unsafe because formatting entities are normalized.
-                    _chat_state.history.append({"role": "model", "parts": [_clean_partial]})
-                submit_task(role_conv_metrics.record_stream_recovery())
-
-                async with MetricsMiddleware("continue_stream_callback", user_id=user_id):
-                    await _handle_regular_chat(
-                        placeholder_message,
-                        user_id,
-                        _continuation_prompt,
-                        _chat_state,
-                    )
-        except Exception as e:
-            logging.error("continue_stream_callback failed: %s", e, exc_info=True)
+        async def _continue_wrapper() -> None:
             try:
-                from app.utils.keyboards import error_with_back_keyboard
+                async with _HEAVY_CALLBACK_SEMAPHORE:
+                    # Fetch and mutate state under lock to prevent history data race
+                    from app.metrics import role_conv_metrics
+                    from app.utils.background_tasks import submit_task
 
-                await placeholder_message.edit_text(
-                    t("error.retry_failed"),
-                    reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
-                )
-            except Exception:
-                pass
+                    if not await validate_continuation():
+                        await placeholder_message.edit_text(_STALE_CONTINUATION_TOAST)
+                        return
+                    _chat_state = chat_state
+                    assert _chat_state is not None
+                    last_turn = _chat_state.history[-1] if _chat_state.history else None
+                    if not last_turn or last_turn.get("role") != "model":
+                        # Compatibility for interrupted replies created before
+                        # partial deliveries were persisted. Current deliveries
+                        # already end in a model turn. Comparing rendered Telegram
+                        # text is unsafe because formatting entities are normalized.
+                        _chat_state.history.append({"role": "model", "parts": [_clean_partial]})
+                    submit_task(role_conv_metrics.record_stream_recovery())
 
-    _task = asyncio.create_task(_continue_wrapper())
-    _background_tasks.add(_task)
-    _task.add_done_callback(_background_tasks.discard)
+                    async with MetricsMiddleware("continue_stream_callback", user_id=user_id):
+                        await _handle_regular_chat(
+                            placeholder_message,
+                            user_id,
+                            _continuation_prompt,
+                            _chat_state,
+                        )
+            except Exception as e:
+                logging.error("continue_stream_callback failed: %s", e, exc_info=True)
+                try:
+                    from app.utils.keyboards import error_with_back_keyboard
+
+                    await placeholder_message.edit_text(
+                        t("error.retry_failed"),
+                        reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
+                    )
+                except Exception:
+                    pass
+
+        task = await _schedule_ai_callback(_continue_wrapper(), placeholder_message, operation="callback.continue")
+
+        if task is not None:
+            admission.transfer(task, placeholder_message)
+    finally:
+        admission.release(asyncio.current_task())

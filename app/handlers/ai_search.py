@@ -5,9 +5,10 @@ AI Search handlers — QnA quick answers, research agent, and complex agent sear
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest, NetworkError
 
 from app.config import DEFAULT_GEMINI_MODELS, GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL, settings
@@ -27,6 +28,7 @@ from app.metrics import metrics_collector, track_metrics
 from app.prompt_registry import get_prompt_text, get_registry, register_controlled_text, render_prompt_text
 from app.providers.base import is_opencode_model
 from app.repos.chats import ensure_chat_generation, get_user_chat, update_user_chat
+from app.response_delivery.outcomes import TelegramResponseOutcome
 from app.utils.heartbeat import retire_heartbeat
 from app.utils.metrics_middleware import mark_operation_failed
 from app.utils.stage_indicators import (
@@ -94,6 +96,7 @@ async def _handle_qna_search(
     *,
     user_id: int,
     retry_request=None,
+    delivery_observer: Callable[[TelegramResponseOutcome], None] | None = None,
 ) -> str | None:
     """Lease private query/role data through provider and Telegram delivery."""
     from app.repos.memory_consent import private_data_lease
@@ -119,6 +122,7 @@ async def _handle_qna_search(
             search_query,
             user_id=user_id,
             retry_request=retry_request,
+            delivery_observer=delivery_observer,
         )
 
 
@@ -130,6 +134,7 @@ async def _handle_qna_search_leased_impl(
     *,
     user_id: int,
     retry_request=None,
+    delivery_observer: Callable[[TelegramResponseOutcome], None] | None = None,
 ) -> str | None:
     """Quick search with web grounding.
 
@@ -252,6 +257,8 @@ async def _handle_qna_search_leased_impl(
     from app.handlers.retry_requests import bind_response
 
     bind_response(logical_request, outcome)
+    if delivery_observer is not None:
+        delivery_observer(outcome)
     if isinstance(outcome, (CompleteDelivery, PartialDelivery)):
         if isinstance(outcome, PartialDelivery):
             mark_operation_failed()
@@ -268,6 +275,9 @@ async def _handle_research_agent(
     chat_state: ChatState,
     model_override: str | None = None,
     search_query: str | None = None,
+    *,
+    delivery_observer: Callable[[TelegramResponseOutcome], None] | None = None,
+    voice_delivery_bot: Bot | None = None,
 ):
     """Hold one exact-generation lease through research, delivery, and CAS."""
     from app.repos.memory_consent import private_data_lease
@@ -299,6 +309,8 @@ async def _handle_research_agent(
                     search_query,
                     _ltm_enabled=True,
                     _expected_epoch=expected_epoch,
+                    delivery_observer=delivery_observer,
+                    voice_delivery_bot=voice_delivery_bot,
                 )
 
     # Research always includes the active chat history, even when LTM is off.
@@ -321,6 +333,8 @@ async def _handle_research_agent(
             search_query,
             _ltm_enabled=False,
             _expected_epoch=expected_epoch,
+            delivery_observer=delivery_observer,
+            voice_delivery_bot=voice_delivery_bot,
         )
 
 
@@ -334,6 +348,8 @@ async def _handle_research_agent_leased_impl(
     *,
     _ltm_enabled: bool,
     _expected_epoch: int,
+    delivery_observer: Callable[[TelegramResponseOutcome], None] | None = None,
+    voice_delivery_bot: Bot | None = None,
 ):
     # If search_query is provided, use it for search, else use user_message
     actual_search_query = search_query if search_query else user_message
@@ -583,6 +599,8 @@ async def _handle_research_agent_leased_impl(
         )
         from app.response_delivery.outcomes import FailedDelivery, PartialDelivery
 
+        if delivery_observer is not None:
+            delivery_observer(delivery)
         if isinstance(delivery, (FailedDelivery, PartialDelivery)):
             mark_operation_failed()
 
@@ -592,7 +610,9 @@ async def _handle_research_agent_leased_impl(
                 from app.voice_engine import fire_voice_reply
                 from app.voice_intent import build_voice_source_key
 
-                _bot = placeholder_message.get_bot()
+                # Detached TTS has its own FIFO, dedupe and privacy owner. A
+                # scheduled text claim must not govern its later voice send.
+                _bot = voice_delivery_bot if voice_delivery_bot is not None else placeholder_message.get_bot()
                 _chat_id = placeholder_message.chat.id if placeholder_message.chat else None
                 if _bot and _chat_id:
                     await fire_voice_reply(

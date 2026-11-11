@@ -6,6 +6,7 @@ import logging
 import re
 import time
 import unicodedata
+from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -175,7 +176,11 @@ def _lexical_scalar(value: str) -> bool:
 
 
 async def try_handle_speech_collection(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, reservation: SpeechIngressReservation | None = None
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    reservation: SpeechIngressReservation | None = None,
+    *,
+    on_admitted: Callable[[], None] | None = None,
 ) -> bool:
     """Intercept explicit split sources before state inputs, commands and chat."""
     import asyncio
@@ -225,21 +230,27 @@ async def try_handle_speech_collection(
 
         batch = await debounce_message(user.id, message, bot=context.bot, load_speech_epoch=load_speech_epoch)
         if batch is not None:
-            await handle_speech_request(update, context, speech_request_for_message(message, batch))
+            await handle_speech_request(
+                update, context, speech_request_for_message(message, batch), on_admitted=on_admitted
+            )
     finally:
         _release_admission(user.id, owner)
     return True
 
 
 async def handle_speech_request(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, request: SpeechRequestIntent
-) -> None:
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    request: SpeechRequestIntent,
+    *,
+    on_admitted: Callable[[], None] | None = None,
+) -> bool:
     """Enqueue the exact source or ask for it; never fall back to generated text."""
     user = update.effective_user
     assert user is not None
     started = time.monotonic()
     try:
-        success = await _enqueue_speech_request(update, context, request)
+        success = await _enqueue_speech_request(update, context, request, on_admitted=on_admitted)
     except Exception:
         await metrics_collector.record_request(
             "direct_speech", time.monotonic() - started, success=False, user_id=user.id
@@ -248,10 +259,15 @@ async def handle_speech_request(
     await metrics_collector.record_request(
         "direct_speech", time.monotonic() - started, success=success, user_id=user.id
     )
+    return success
 
 
 async def _enqueue_speech_request(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, request: SpeechRequestIntent
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    request: SpeechRequestIntent,
+    *,
+    on_admitted: Callable[[], None] | None = None,
 ) -> bool:
     """Return admission outcome; cancelled submissions are not completed requests."""
     from app.repos.chats import get_user_chat
@@ -282,6 +298,8 @@ async def _enqueue_speech_request(
                     await _notify_source(context.bot, chat.id, source_id, notice)
             return False
         await message.reply_text(t("speech.clarify", lang))
+        if on_admitted is not None:
+            on_admitted()
         return True
     parts = request.parts or (SpeechSourcePart(request.text, message.message_id),)
     shared_cleanup = request.contiguous_parts and len(parts) > 1
@@ -334,6 +352,9 @@ async def _enqueue_speech_request(
                 ),
             )
             if result.queued or result.deduped:
+                if on_admitted is not None:
+                    on_admitted()
+                    on_admitted = None
                 if result.queued:
                     for source_id in part.merged_source_ids:
                         await _notify_source(context.bot, chat.id, source_id, t("speech.tail_joined", lang))

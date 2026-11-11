@@ -22,6 +22,16 @@ pytestmark = pytest.mark.browser
         "reasoning_admin",
         "reasoning_default",
         "reasoning_gemini",
+        "settings_save_newer_edit",
+        "settings_duplicate_save",
+        "cloud_late_server",
+        "cloud_late_edit",
+        "cloud_server_after_edit",
+        "cloud_server_after_saved_edit",
+        "delete_undo_before_send",
+        "delete_stale_undo",
+        "delete_flush_stale_undo",
+        "delete_flush_error",
     ],
 )
 def test_miniapp_selection_keeps_data_out_of_event_handler_source(scenario, tmp_path):

@@ -9,7 +9,7 @@ from telegram import CallbackQuery, Chat, InlineKeyboardMarkup, Message, ReplyKe
 from telegram.ext import Application, ConversationHandler
 
 from app import state
-from app.handlers import cmd_tarot, commands, inline
+from app.handlers import cmd_tarot, commands, inline, tarot_chat
 
 
 def _update(text="/start compat_m7_f10", chat_type="private", *, message_id=1, edited=False):
@@ -38,6 +38,10 @@ def _context(payload="compat_m7_f10"):
 
 @pytest.fixture(autouse=True)
 def _isolated_bot_state(monkeypatch):
+    from tests.interaction_fakes import install_private_interaction_fakes
+
+    install_private_interaction_fakes(monkeypatch, chat_reader=True)
+
     async def interpret_response(*args, history, **kwargs):
         return "Совместимость пары\n" + history[0]["parts"][0], 120
 
@@ -48,6 +52,7 @@ def _isolated_bot_state(monkeypatch):
     loaded = AsyncMock()
     monkeypatch.setattr(state, "ensure_state_loaded", loaded)
     monkeypatch.setattr(cmd_tarot, "ensure_state_loaded", loaded)
+    monkeypatch.setattr(tarot_chat, "ensure_state_loaded", loaded)
     monkeypatch.setattr(
         commands, "get_user_chat", AsyncMock(side_effect=AssertionError("Unexpected general start menu"))
     )

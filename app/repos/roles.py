@@ -51,12 +51,13 @@ async def delete_custom_role(role_id: int, user_id: int) -> None:
     await db.db_query("DELETE FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
 
 
-async def rename_custom_role(role_id: int, user_id: int, new_title: str) -> None:
-    """Renames a custom role."""
-    await db.db_query(
-        "UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3",
+async def rename_custom_role(role_id: int, user_id: int, new_title: str) -> bool:
+    """Return whether the caller's existing role accepted the new title."""
+    rows = await db.db_query(
+        "UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3 RETURNING id",
         (new_title, role_id, user_id),
     )
+    return bool(rows)
 
 
 async def update_custom_role_prompt(role_id: int, user_id: int, new_prompt: str) -> bool:

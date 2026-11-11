@@ -3,6 +3,7 @@
 import asyncio
 from datetime import date
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -22,6 +23,42 @@ async def seed(conn, *, hints=None):
         ["Домашний любимец", "Усатая мордочка", "Мягкие лапки"] if hints is None else hints,
     )
     return await repo.get_puzzle(DAY, conn=conn)
+
+
+async def test_two_daily_attempts_cannot_replace_the_same_progress(contract_pool, monkeypatch):
+    async with contract_pool.acquire() as conn:
+        await seed(conn)
+        _, source = await repo.start_puzzle(USER, DAY, conn=conn)
+    both_loaded = asyncio.Event()
+    readers = 0
+    original_load = repo.get_or_create_result
+
+    async def load(*args, **kwargs):
+        nonlocal readers
+        result = await original_load(*args, **kwargs)
+        readers += 1
+        if readers == 2:
+            both_loaded.set()
+        await both_loaded.wait()
+        return result
+
+    monkeypatch.setattr(repo, "get_or_create_result", load)
+    outcomes = await asyncio.gather(
+        *(
+            repo.append_attempt_and_maybe_finish(
+                user_id=USER,
+                puzzle_date=DAY,
+                expected_attempts=source.attempts,
+                attempt={"word": word, "status": "wrong", "score": 0.0},
+            )
+            for word in ("stone", "tree")
+        ),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(outcome, repo.DailyResult) for outcome in outcomes) == 1
+    assert sum(isinstance(outcome, repo.DailyCrocConflict) for outcome in outcomes) == 1
+    current = await repo.get_result(USER, DAY)
+    assert len(current.attempts) == 1
 
 
 async def blocked(observer, contender, blocker):

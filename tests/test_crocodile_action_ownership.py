@@ -71,6 +71,20 @@ def croc_store(monkeypatch, request):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("croc_store", ["classic"], indirect=True)
+async def test_stale_first_connection_cannot_overwrite_existing_game_progress(monkeypatch, croc_store):
+    stale = replace(croc_store.game, guesser_id=None, attempts=[])
+    current = replace(croc_store.game, attempts=["previous guess"])
+    monkeypatch.setattr(crocodile, "load_game", AsyncMock(side_effect=[stale, current]))
+    save = AsyncMock(return_value=True)
+    monkeypatch.setattr(crocodile.CrocodileGameRepository, "save", save)
+    async with quart_app.test_client().websocket(croc_store.path) as socket:
+        initial = json.loads(await socket.receive())
+    assert initial["attempts"] == 1
+    save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_daily_concurrent_retry_counts_one_wrong_guess(monkeypatch, croc_store):
     original_lookup = crocodile_runtime.get_cached_pending_action_result
     both_missed = asyncio.Event()
@@ -102,6 +116,21 @@ async def test_daily_concurrent_retry_counts_one_wrong_guess(monkeypatch, croc_s
     assert first_event["attempts"] == 1
     assert first_event["status"] == "wrong"
     assert first_event["score"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_daily_progress_conflict_requests_reload_without_caching_action(monkeypatch, croc_store):
+    monkeypatch.setattr(
+        repo, "append_attempt_and_maybe_finish", AsyncMock(side_effect=repo.DailyCrocConflict("progress_conflict"))
+    )
+    async with quart_app.test_client().websocket(croc_store.path) as socket:
+        await socket.receive()
+        await socket.send(json.dumps({"type": "guess", "word": "stone", "pending_id": "conflicted"}))
+        response = json.loads(await socket.receive())
+        assert response["event"] == "error" and response["reason"] == "progress_conflict"
+        assert response["retryable"]
+    assert not croc_store.attempts()
+    assert not crocodile_runtime._local_pending_results
 
 
 @pytest.mark.asyncio

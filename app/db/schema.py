@@ -51,6 +51,8 @@ EXPECTED_TABLES = frozenset(
         "broadcast_batches",
         "broadcast_recipients",
         "broadcast_delivery_attempts",
+        "scheduled_deliveries",
+        "scheduled_delivery_attempts",
         "tavily_api_keys",
         "tavily_key_usage",
         "openrouter_api_keys",
@@ -96,6 +98,26 @@ EXPECTED_COLUMNS = {
     "broadcast_batches": frozenset({"batch_id", "operation_id", "task_id", "mode", "state", "unknown_delivery"}),
     "broadcast_recipients": frozenset({"batch_id", "recipient_id", "privacy_epoch", "state", "owner_token"}),
     "broadcast_delivery_attempts": frozenset({"attempt_id", "batch_id", "operation_id", "outcome", "message_id"}),
+    "scheduled_deliveries": frozenset(
+        {
+            "delivery_id",
+            "kind",
+            "source_id",
+            "source_revision",
+            "slot_date",
+            "user_id",
+            "privacy_epoch",
+            "owner_token",
+            "state",
+            "expires_at",
+            "retryable",
+            "retry_at",
+        }
+    ),
+    "scheduled_delivery_attempts": frozenset(
+        {"attempt_id", "delivery_id", "owner_token", "sequence", "outcome", "message_id"}
+    ),
+    "brief_subscriptions": frozenset({"id", "user_id", "is_active", "delivery_revision"}),
     "tarot_daily_generation": frozenset({"reading_date", "language", "revision", "token", "updated_at"}),
     "crocodile_daily_puzzles": frozenset({"puzzle_date", "difficulty", "content_revision", "generation_token"}),
     "daily_2048_puzzles": frozenset({"puzzle_date", "revision"}),

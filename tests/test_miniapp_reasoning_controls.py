@@ -233,16 +233,25 @@ def test_cached_thinking_is_not_editable_until_fresh_server_policy_arrives():
         pytest.skip("Node unavailable")
     template = (Path(__file__).parents[1] / "app/templates/miniapp.html").read_text(encoding="utf-8")
     load = template[template.index("async function loadSettings()") : template.index("function renderRoles(")]
+    state = template[template.index("let settingsData =") : template.index("// Human-readable display names")]
+    draft = template[template.index("function settingsDraft(") : template.index("async function saveSettings(")]
     script = (
         r"""
 const assert=require('node:assert/strict');
-const rendered=[];let release,isDirty;
+const rendered=[];let release;
 const pendingSettings=new Promise(resolve=>release=resolve);
 const tg={CloudStorage:{getItem:(key,cb)=>cb(null,JSON.stringify({d:{settings:{thinking_level:'high'}},r:{},v:{}})),setItem:()=>{}}};
 const api=path=>path==='/settings'?pendingSettings:Promise.resolve({});
-const renderSettings=d=>rendered.push(d);
+const document={getElementById:()=>({value:settingsData.system_prompt||'',checked:false})};
+const renderSettings=d=>{
+ settingsData={...d.settings,thinking_editable:d.thinking_editable!==false,model_editable:d.model_editable!==false};
+ rendered.push(d);renderedSettingsDraft=settingsDraft();
+};
+const updateMainButton=()=>{};
 const showToast=message=>{throw Error(message)};
 """
+        + state
+        + draft
         + load
         + r"""
 (async()=>{

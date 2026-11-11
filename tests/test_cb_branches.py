@@ -7,6 +7,33 @@ import pytest
 from app.database import ChatState
 
 
+@pytest.mark.asyncio
+async def test_return_replaces_same_length_persisted_history(monkeypatch):
+    from app import database
+    from app.handlers import cb_branches
+    from app.repos import chats
+    from tests.test_chat_persistence import ChatDriver
+
+    driver = ChatDriver()
+    driver.messages = [("user", "Synthetic branch message")]
+    chat = _make_chat_state(branch_id=9, history=[{"role": "user", "content": "Synthetic branch message"}])
+    chat.memory_epoch = driver.epoch
+    chat._original_length = 1
+    monkeypatch.setattr(database.db_manager, "pool", driver)
+    monkeypatch.setattr(chats, "set_user_context", AsyncMock())
+    monkeypatch.setattr(chats, "clear_user_context", AsyncMock())
+    monkeypatch.setattr(cb_branches, "get_user_chat", AsyncMock(return_value=chat))
+    monkeypatch.setattr(
+        cb_branches, "restore_branch", AsyncMock(return_value=[{"role": "user", "content": "Synthetic original"}])
+    )
+    monkeypatch.setattr(cb_branches, "delete_branch", AsyncMock(return_value=True))
+    update, _query = _make_update()
+
+    await cb_branches.branch_return_callback(update, MagicMock())
+
+    assert driver.messages == [("user", "Synthetic original")]
+
+
 def _make_update(user_id: int = 42):
     """Build a mock Update with callback_query for branch tests."""
     update = MagicMock()
@@ -113,7 +140,7 @@ class TestBranchReturnCallback:
 
         assert chat_state.history == original
         assert chat_state.branch_id is None
-        mock_save.assert_awaited_once_with(42, chat_state)
+        mock_save.assert_awaited_once_with(42, chat_state, rewrite_history=True)
         mock_delete.assert_awaited_once_with(10, 42)
         reply_text = query.message.reply_text.call_args[0][0]
         assert "Вернулись" in reply_text

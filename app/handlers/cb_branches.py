@@ -30,6 +30,7 @@ async def branch_create_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer(_BUSY_TOAST, show_alert=True)
         return
     async with state.get_user_lock(user_id):
+        await state.cancel_interaction(user_id)
         chat_state = await get_user_chat(user_id)
         if not chat_state:
             await query.answer("⚠️ Чат не найден", show_alert=True)
@@ -47,7 +48,10 @@ async def branch_create_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         # Mark chat state as being in a branch
         chat_state.branch_id = branch_id
-        await update_user_chat(user_id, chat_state)
+        if not await update_user_chat(user_id, chat_state):
+            await delete_branch(branch_id, user_id)
+            await query.answer("❌ Не удалось сохранить ветку", show_alert=True)
+            return
         from app.state import clear_retry_request
 
         clear_retry_request(user_id)
@@ -77,6 +81,7 @@ async def branch_return_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer(_BUSY_TOAST, show_alert=True)
         return
     async with state.get_user_lock(user_id):
+        await state.cancel_interaction(user_id)
         chat_state = await get_user_chat(user_id)
         if not chat_state:
             await query.answer("⚠️ Чат не найден", show_alert=True)
@@ -95,7 +100,9 @@ async def branch_return_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         chat_state.history = original_history
         chat_state.branch_id = None
-        await update_user_chat(user_id, chat_state)
+        if not await update_user_chat(user_id, chat_state, rewrite_history=True):
+            await query.answer("❌ Не удалось восстановить ветку", show_alert=True)
+            return
         from app.state import clear_retry_request
 
         clear_retry_request(user_id)

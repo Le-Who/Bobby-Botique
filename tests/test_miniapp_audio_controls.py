@@ -93,6 +93,7 @@ async def test_settings_persists_valid_voice_or_default_reset(audio_web, monkeyp
 
     async def write(user_id, chat_state):
         saved.append((user_id, chat_state.voice_id))
+        return True
 
     monkeypatch.setattr(web, "valid_user_voice", AsyncMock(return_value=True), raising=False)
     monkeypatch.setattr("app.repos.chats.get_user_chat", AsyncMock(return_value=state))
@@ -175,6 +176,7 @@ def test_voice_picker_preserves_catalog_order_default_and_literal_text():
         pytest.skip("Node.js unavailable")
     template = (Path(__file__).parents[1] / "app/templates/miniapp.html").read_text(encoding="utf-8")
     render = template[template.index("function renderSettings(") : template.index("async function loadSettings(")]
+    draft = template[template.index("function settingsDraft(") : template.index("async function saveSettings(")]
     choose = template[template.index("function setVoice(") : template.index("// ── Temperature Controller")]
     script = r"""
 const assert = require('node:assert/strict');
@@ -195,7 +197,7 @@ const document = {
   querySelectorAll() { return elements.get('settings-voices-list').children; }
 };
 const tg = {};
-let settingsData, availableModels, groupedModels, roleDataCache, dirty = false;
+let settingsData, renderedSettingsDraft, availableModels, groupedModels, roleDataCache, dirty = false;
 function buildModelSheet() {}
 function renderRoles() {}
 function setThinking() {}
@@ -205,7 +207,7 @@ function modelDisplayName(value) { return value; }
 function esc(value) { return value; }
 function markDirty() { dirty = true; }
 """
-    script += render + choose
+    script += render + choose + draft
     script += (
         "const catalog = "
         + json.dumps(

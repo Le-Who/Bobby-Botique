@@ -11,6 +11,12 @@ from telegram.ext import ContextTypes
 
 from app.config import settings
 from app.handlers import menus
+from app.handlers.interaction_work import (
+    begin_text_input_intent,
+    bind_context_text_input,
+    prepare_text_input,
+    reject_busy_interaction,
+)
 from app.metrics import role_conv_metrics
 from app.observability.content import content_fields
 from app.prompt_registry import get_registry
@@ -70,11 +76,18 @@ async def role_rename_menu_callback(update: Update, context: ContextTypes.DEFAUL
 
 async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
+    input_intent = begin_text_input_intent(query.from_user.id)
     await query.answer()
     user_id = query.from_user.id
     if not await _is_authorized(user_id):
         return
     role_id = int(query.data.split(":")[1])
+    if not await prepare_text_input(user_id, query.message, query.answer, context.user_data, input_intent=input_intent):
+        return
+    from app.state import begin_interaction
+
+    owner = begin_interaction(user_id, "rename")
+    bind_context_text_input(owner, context.user_data)
     if context.user_data is not None:
         context.user_data["rename_role_id"] = role_id
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data="role_rename_cancel")]])
@@ -96,6 +109,8 @@ async def start_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
+    if await reject_busy_interaction(user_id, query.answer):
+        return
     key = query.data.split(":", 1)[1]
     role_title = ""
 
@@ -131,6 +146,8 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
+    if await reject_busy_interaction(user_id, query.answer):
+        return
     chat_state = await get_user_chat(user_id)
     # Clean up системный промпт (будет использован базовый)
     chat_state.system_prompt = None
@@ -150,10 +167,19 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
+    input_intent = begin_text_input_intent(query.from_user.id)
     await query.answer()
-    await ensure_state_loaded(query.from_user.id)
+    if not await prepare_text_input(
+        query.from_user.id, query.message, query.answer, context.user_data, input_intent=input_intent
+    ):
+        return
     begin_custom_role_creation(query.from_user.id)
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data="role_create_cancel")]])
+    from app.state import get_user_state
+
+    owner = get_user_state(query.from_user.id).interaction
+    bind_context_text_input(owner, context.user_data)
+    token = owner.token
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_create_cancel:{token}")]])
     await query.edit_message_text(
         "📝 Опишите, какую роль хотите создать (1–2 предложения):",
         reply_markup=kb,
@@ -163,12 +189,29 @@ async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def role_create_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отмена создания кастомной роли — возврат в hub."""
     query = update.callback_query
-    await query.answer("❌ Создание роли отменено")
     user_id = query.from_user.id
     await ensure_state_loaded(user_id)
+    from app.state import cancel_interaction, get_user_state
+
+    owner = get_user_state(user_id).interaction
+    if owner is not None and owner.kind != "role":
+        await query.answer("Запрос уже устарел.")
+        return
+    expected = (
+        owner.token
+        if owner is not None and owner.kind == "role"
+        else (get_generated_role(user_id) or {}).get("_interaction_token")
+    )
+    if _callback_token(query, "role_create_cancel") != expected:
+        await query.answer("Запрос уже устарел.")
+        return
     clear_custom_role_state(user_id)
+    await cancel_interaction(user_id)
+    await query.answer("❌ Создание роли отменено")
     chat_state = await get_user_chat(user_id)
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="hub")
+    if get_user_state(user_id).interaction is not None:
+        return
     try:
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except telegram.error.BadRequest as e:
@@ -191,189 +234,119 @@ async def role_rename_cancel_callback(update: Update, context: ContextTypes.DEFA
             raise e
 
 
-async def role_custom_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def _callback_token(query, prefix: str) -> str | None:
+    data = getattr(query, "data", "") or ""
+    return data.removeprefix(prefix + ":") if data.startswith(prefix + ":") else None
+
+
+def _role_preview_owner(user_id: int, query, prefix: str):
+    from app.state import begin_interaction, get_user_state
+
+    state = get_user_state(user_id)
+    role = get_generated_role(user_id)
+    if not role or _callback_token(query, prefix) != role.get("_interaction_token"):
+        return None
+    owner = state.interaction
+    if owner is not None:
+        if owner.kind != "role" or owner.task is not None:
+            return None
+        if role.get("_interaction_token") and owner.token != role["_interaction_token"]:
+            return None
+    else:
+        owner = begin_interaction(user_id, "role")
+        if role.get("_interaction_token"):
+            owner.token = role["_interaction_token"]
+        owner.epoch = role.get("_memory_epoch")
+    return owner
+
+
+async def _use_custom_role(update: Update, *, save: bool) -> None:
+    from app.handlers.interaction_work import interaction_current, private_interaction
+    from app.state import run_interaction
+
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
     await ensure_state_loaded(user_id)
-    chat_state = await get_user_chat(user_id)
-    role = get_generated_role(user_id)
-    if not role:
-        from app.utils.keyboards import error_with_back_keyboard
-
-        await query.edit_message_text(
-            "❌ Нет сгенерированной роли для применения.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
+    if await reject_busy_interaction(user_id, query.answer):
         return
-    prompt_text = role.get("prompt") or role.get("system_prompt") or ""
-    # Save only промпт roles (without базового системного промпта)
-    # compose_system_instruction будет вызван on использовании
-    chat_state.system_prompt = prompt_text
-    await update_user_chat(user_id, chat_state)
-    clear_custom_role_state(user_id)
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]])
-    await query.edit_message_text(
-        f"✅ Роль '{role.get('title', 'Кастомная роль')}' применена.",
-        reply_markup=kb,
-    )
+    await query.answer()
+    prefix = "role_custom_save" if save else "role_custom_apply"
+    owner = _role_preview_owner(user_id, query, prefix)
+    if owner is None:
+        await query.edit_message_text("Запрос уже устарел. Создайте роль заново.")
+        return
+    role = get_generated_role(user_id)
+    assert role is not None
+
+    async def apply() -> None:
+        try:
+            chat_state = await get_user_chat(user_id)
+            async with private_interaction(owner, chat_state) as allowed:
+                if not allowed:
+                    return
+                prompt = role.get("prompt") or role.get("system_prompt") or ""
+                if save:
+                    await create_custom_role(user_id, role.get("title", "Моя роль"), prompt)
+                    if not await interaction_current(owner):
+                        return
+                    await role_conv_metrics.record_custom_role_creation()
+                if not await interaction_current(owner):
+                    return
+                chat_state.system_prompt = prompt
+                applied = await update_user_chat(user_id, chat_state, expected_epoch=owner.epoch)
+                if not await interaction_current(owner):
+                    return
+                if applied is False:
+                    await query.edit_message_text("Не удалось применить роль: запрос устарел. Выберите роль заново.")
+                    return
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]])
+                text = (
+                    "💾 Роль сохранена и применена."
+                    if save
+                    else f"✅ Роль '{role.get('title', 'Кастомная роль')}' применена."
+                )
+                await query.edit_message_text(text, reply_markup=kb)
+                if owner.current():
+                    clear_custom_role_state(user_id)
+        except Exception as exc:
+            logging.error("Error applying custom role: %s", exc, exc_info=True)
+            if await interaction_current(owner):
+                await query.edit_message_text("❌ Ошибка сохранения роли. Попробуйте позже.")
+
+    await run_interaction(owner, apply)
+
+
+async def role_custom_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _use_custom_role(update, save=False)
 
 
 async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    await ensure_state_loaded(user_id)
-    role = get_generated_role(user_id)
-    if not role:
-        from app.utils.keyboards import error_with_back_keyboard
-
-        await query.edit_message_text(
-            "❌ Нет сгенерированной роли для сохранения.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
-        return
-    # Save в user_roles
-    try:
-        # Save
-        await create_custom_role(
-            user_id,
-            role.get("title", "Моя роль"),
-            role.get("prompt") or role.get("system_prompt", ""),
-        )
-        await role_conv_metrics.record_custom_role_creation()
-        # И сразу onменяем
-        prompt_text = role.get("prompt") or role.get("system_prompt") or ""
-        chat_state = await get_user_chat(user_id)
-        # Save only промпт roles (without базового системного промпта)
-        # compose_system_instruction будет вызван on использовании
-        chat_state.system_prompt = prompt_text
-        await update_user_chat(user_id, chat_state)
-        clear_custom_role_state(user_id)
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]])
-        await query.edit_message_text("💾 Роль сохранена и применена.", reply_markup=kb)
-    except Exception as e:
-        logging.error("Error saving custom role: %s", e, exc_info=True)
-        from app.utils.keyboards import error_with_back_keyboard
-
-        await query.edit_message_text(
-            "❌ Ошибка сохранения роли. Попробуйте позже.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
+    await _use_custom_role(update, save=True)
 
 
 async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.handlers.msg_roles import generate_custom_role
+    from app.state import begin_interaction
+
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
     await ensure_state_loaded(user_id)
+    if await reject_busy_interaction(user_id, query.answer):
+        return
+    await query.answer()
+    role = get_generated_role(user_id)
+    if role is not None and _role_preview_owner(user_id, query, "role_custom_retry") is None:
+        await query.edit_message_text("Запрос уже устарел. Создайте роль заново.")
+        return
     last_prompt = get_last_custom_role_prompt(user_id)
     if not last_prompt:
-        from app.utils.keyboards import error_with_back_keyboard
-
-        await query.edit_message_text(
-            "❌ Нет предыдущего запроса для повтора.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
+        await query.edit_message_text("❌ Нет предыдущего запроса для повтора.")
         return
-    # Запускаем повтор генерации как в messages.handle_request
-    chat_state = await get_user_chat(user_id)
-
-    # Используем универсальную функцию for получения keyа (поддерживает и Gemini, и OpenRouter)
-    from app.handlers.ai_core import (
-        _get_ai_response,
-        _resolve_ai_request,
-    )
-    from app.process_policies import execute_text_process, resolve_process
-
-    model_for_role = chat_state.model or settings.DEFAULT_MODEL
-    policy = await resolve_process("roles.generate", (model_for_role,))
-    key_data, model_used, _ = (
-        (None, model_for_role, None) if policy.explicit else await _resolve_ai_request(model_for_role)
-    )
-    if not key_data and not policy.explicit:
-        from app.utils.keyboards import error_with_back_keyboard
-
-        await query.edit_message_text(
-            "❌ Сейчас не удалось создать роль автоматически. Попробуйте позже или создайте её вручную.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
+    if role is None and _callback_token(query, "role_custom_retry") is not None:
+        await query.edit_message_text("Запрос уже устарел. Создайте роль заново.")
         return
-    progress_msg = await query.message.reply_text("🛠️ Генерирую роль…")
-    set_generating_custom_role(user_id, True)
-    history = [{"role": "user", "parts": [last_prompt]}]
-
-    try:
-        if policy.explicit:
-            response_text, _ = await execute_text_process(
-                "roles.generate",
-                (model_for_role,),
-                history,
-                system_instruction=get_registry().get("prompt_engineer").text,
-                user_id=user_id,
-                chat_id=user_id,
-            )
-        else:
-            assert key_data is not None
-            response_text, _ = await _get_ai_response(
-                key_data["api_key"],
-                history,
-                model_used,
-                system_instruction=get_registry().get("prompt_engineer").text,
-                user_id=user_id,
-                chat_id=user_id,
-            )
-
-        logging.info(
-            "Role retry response received",
-            extra={
-                "_event_name": "role.generation_response_received",
-                "retry": True,
-                **content_fields("provider_response", response_text, subsystem="roles"),
-            },
-        )
-
-        role_obj = extract_json_object(response_text)
-        if not role_obj:
-            if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
-                await progress_msg.edit_text("🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.")
-            else:
-                logging.error(
-                    "Failed to parse role JSON on retry",
-                    extra={
-                        "_event_name": "role.response_parse_failed",
-                        "retry": True,
-                        **content_fields("provider_response", response_text, subsystem="roles"),
-                    },
-                )
-                await progress_msg.edit_text("❌ Снова не удалось сгенерировать роль. Попробуйте изменить описание.")
-            return
-        set_last_custom_role_prompt(user_id, last_prompt)
-
-        set_generated_role(user_id, role_obj)
-        title = role_obj.get("title", "Кастомная роль")
-        purpose = role_obj.get("purpose", "")
-        style = ", ".join(role_obj.get("style", [])[:3])
-        preview = (
-            f"🆕 *Новая роль:* {title}\n\n🎯 Цель: {purpose}\n🧭 Стиль: {style}\n\nПрименить сейчас или сохранить?"
-        )
-        kb = [
-            [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
-            [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")],
-        ]
-        formatted_text, parse_mode = TelegramFormatter.format_text(preview)
-        await progress_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
-    except Exception as error:
-        logging.error("Error retrying custom role generation: %s", error, exc_info=True)
-        from app.utils.keyboards import error_with_back_keyboard
-
-        await progress_msg.edit_text(
-            "❌ Ошибка генерации роли. Попробуйте позже.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
-    finally:
-        set_generating_custom_role(user_id, False)
+    begin_interaction(user_id, "role")
+    await generate_custom_role(user_id, user_id, last_prompt, query.message.reply_text, get_chat=get_user_chat)
 
 
 async def role_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -538,198 +511,223 @@ async def role_edit_prompt_callback(update: Update, context: ContextTypes.DEFAUL
     await query.edit_message_text(fmt_text, parse_mode=fmt_pm, reply_markup=kb)
 
 
+def _start_role_edit(user_id: int, data):
+    from app.handlers.msg_roles import clear_role_edit_state
+    from app.state import begin_interaction, get_user_state
+
+    clear_role_edit_state(data)
+    owner = begin_interaction(user_id, "role_edit")
+    bind_context_text_input(owner, data)
+    state = get_user_state(user_id)
+    state.awaiting_custom_role_input = False
+    state.awaiting_manual_role_title = False
+    state.awaiting_manual_role_prompt = False
+    if data is not None:
+        data["role_edit_token"] = owner.token
+    return owner
+
+
+def _edit_callback_owner(user_id: int, query, data):
+    from app.state import begin_interaction, get_user_state
+
+    token = (data or {}).get("role_edit_token")
+    parts = (getattr(query, "data", "") or "").split(":")
+    supplied = parts[-1] if token and len(parts) > 1 else None
+    if supplied != token:
+        return None
+    owner = get_user_state(user_id).interaction
+    if owner is not None:
+        if owner.kind != "role_edit" or owner.task is not None or (token and owner.token != token):
+            return None
+    elif token:
+        return None
+    else:
+        owner = begin_interaction(user_id, "role_edit")
+    return owner
+
+
+def _edit_role_key(query, data) -> str:
+    key = query.data.split(":", 1)[1]
+    token = (data or {}).get("role_edit_token")
+    if token and key.endswith(":" + token):
+        key = key[: -(len(token) + 1)]
+    return key
+
+
 async def role_edit_manual_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sets up state for manual prompt replacement."""
     query = update.callback_query
+    input_intent = begin_text_input_intent(query.from_user.id)
     await query.answer()
-
+    user_id = query.from_user.id
     role_key = query.data.split(":", 1)[1]
-
     if not role_key.startswith("user_role:"):
         return
-
+    if not await prepare_text_input(user_id, query.message, query.answer, context.user_data, input_intent=input_intent):
+        return
     role_id = int(role_key.split(":")[1])
-
+    owner = _start_role_edit(user_id, context.user_data)
     if context.user_data is not None:
-        context.user_data["edit_prompt_role_id"] = role_id
-        context.user_data["edit_prompt_role_key"] = role_key
-
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]])
-    await query.edit_message_text(
-        "📝 Отправьте новый промпт для этой роли:",
-        reply_markup=kb,
+        context.user_data.update(edit_prompt_role_id=role_id, edit_prompt_role_key=role_key)
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}:{owner.token}")]]
     )
+    await query.edit_message_text("📝 Отправьте новый промпт для этой роли:", reply_markup=kb)
 
 
 async def role_edit_ai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Sets up state for AI-enhanced prompt editing."""
     query = update.callback_query
+    input_intent = begin_text_input_intent(query.from_user.id)
     await query.answer()
-
     role_key = query.data.split(":", 1)[1]
     user_id = query.from_user.id
-
     if not role_key.startswith("user_role:"):
         return
-
-    role_id = int(role_key.split(":")[1])
-    role_data = await get_role_data(role_key, user_id)
-    if not role_data:
-        from app.utils.keyboards import error_with_back_keyboard
-
-        await query.edit_message_text(
-            "❌ Роль не найдена.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
+    if not await prepare_text_input(user_id, query.message, query.answer, context.user_data, input_intent=input_intent):
         return
-
+    role_id = int(role_key.split(":")[1])
+    owner = _start_role_edit(user_id, context.user_data)
+    role_data = await get_role_data(role_key, user_id)
+    if not owner.current():
+        return
+    if await reject_busy_interaction(user_id, query.answer):
+        return
+    if not role_data:
+        await query.edit_message_text("❌ Роль не найдена.")
+        return
     if context.user_data is not None:
-        context.user_data["edit_prompt_ai_role_id"] = role_id
-        context.user_data["edit_prompt_ai_role_key"] = role_key
-        context.user_data["edit_prompt_ai_current"] = role_data.get("prompt", "")
-
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]])
+        context.user_data.update(
+            edit_prompt_ai_role_id=role_id,
+            edit_prompt_ai_role_key=role_key,
+            edit_prompt_ai_current=role_data.get("prompt", ""),
+        )
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}:{owner.token}")]]
+    )
     await query.edit_message_text(
-        "✨ Опишите, что нужно изменить в промпте.\n"
-        "Например: «добавь правило всегда отвечать примерами» или «сделай тон более формальным».",
+        "✨ Опишите, что нужно изменить в промпте.\nНапример: «добавь правило всегда отвечать примерами» или «сделай тон более формальным».",
         reply_markup=kb,
     )
 
 
 async def role_edit_ai_tweak_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Transition from AI preview to manual edit, keeping text visible for copying."""
     query = update.callback_query
-    await query.answer()
-
-    role_key = query.data.split(":", 1)[1]
-
-    if not role_key.startswith("user_role:"):
+    user_id = query.from_user.id
+    if await reject_busy_interaction(user_id, query.answer):
         return
-
-    role_id = int(role_key.split(":")[1])
-
-    if context.user_data is not None:
-        # Clear AI save state so we don't accidentally save
-        context.user_data.pop("edit_prompt_ai_save_role_id", None)
-        context.user_data.pop("edit_prompt_ai_save_role_key", None)
-
-        # Transition to manual edit state
-        context.user_data["edit_prompt_role_id"] = role_id
-        context.user_data["edit_prompt_role_key"] = role_key
-
-    # Keep the text, just update the keyboard and add instructions
-    if context.user_data and "edit_prompt_ai_preview" in context.user_data:
-        preview = context.user_data["edit_prompt_ai_preview"]
-        text = (
-            f"✨ **Улучшенный промпт** (скопируйте текст ниже):\n\n"
-            f"`{preview}`\n\n"
-            f"📝 Отправьте измененный текст промпта следующим сообщением."
-        )
-    else:
-        text = "📝 Ок, отправьте новый текст промпта следующим сообщением."
-
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]])
-    from app.utils.formatting import TelegramFormatter
-
-    fmt_text, fmt_pm = TelegramFormatter.format_text(text)
-    await query.edit_message_text(fmt_text, parse_mode=fmt_pm, reply_markup=kb)
+    await query.answer()
+    owner = _edit_callback_owner(user_id, query, context.user_data)
+    if owner is None:
+        await query.edit_message_text("Запрос уже устарел. Откройте редактирование роли заново.")
+        return
+    role_key = _edit_role_key(query, context.user_data)
+    if role_key != (context.user_data or {}).get("edit_prompt_ai_save_role_key"):
+        await query.edit_message_text("Запрос уже устарел.")
+        return
+    preview = context.user_data.get("edit_prompt_ai_preview", "")
+    owner = _start_role_edit(user_id, context.user_data)
+    context.user_data.update(edit_prompt_role_id=int(role_key.split(":")[1]), edit_prompt_role_key=role_key)
+    text = f"✨ **Улучшенный промпт** (скопируйте текст ниже):\n\n`{preview}`\n\n📝 Отправьте измененный текст промпта следующим сообщением."
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}:{owner.token}")]]
+    )
+    text, parse_mode = TelegramFormatter.format_text(text)
+    await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=kb)
 
 
 async def role_edit_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Cancel edit prompt — clear state and return to role details."""
+    from app.handlers.msg_roles import clear_role_edit_state
+    from app.state import cancel_interaction
+
     query = update.callback_query
-    await query.answer("❌ Редактирование отменено")
-
-    role_key = query.data.split(":", 1)[1]
-
-    # Clear all edit prompt state
-    if context.user_data is not None:
-        context.user_data.pop("edit_prompt_role_id", None)
-        context.user_data.pop("edit_prompt_role_key", None)
-        context.user_data.pop("edit_prompt_ai_role_id", None)
-        context.user_data.pop("edit_prompt_ai_role_key", None)
-        context.user_data.pop("edit_prompt_ai_current", None)
-
     user_id = query.from_user.id
+    # Cancellation is allowed during the owned provider call, unlike save/tweak.
+    from app.state import get_user_state
+
+    owner = get_user_state(user_id).interaction
+    token = (context.user_data or {}).get("role_edit_token")
+    if token and (owner is None or owner.token != token or not query.data.endswith(":" + token)):
+        await query.answer("Запрос уже устарел.")
+        return
+    if not token and owner is not None:
+        await query.answer("Запрос уже устарел.")
+        return
+    role_key = _edit_role_key(query, context.user_data)
+    clear_role_edit_state(context.user_data)
+    await cancel_interaction(user_id)
+    await query.answer("❌ Редактирование отменено")
     chat_state = await get_user_chat(user_id)
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state, view_mode="role_details", role_key=role_key
     )
     try:
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-    except telegram.error.BadRequest as e:
-        if "Message is not modified" not in str(e):
-            raise e
+    except telegram.error.BadRequest as exc:
+        if "Message is not modified" not in str(exc):
+            raise
 
 
 async def role_edit_ai_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Save the AI-enhanced prompt that was previewed."""
+    from app.handlers.interaction_work import interaction_current, private_interaction
+    from app.handlers.msg_roles import clear_role_edit_state
+    from app.state import run_interaction
+
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
-
-    # Retrieve the previewed prompt from user_data
-    new_prompt = context.user_data.get("edit_prompt_ai_preview") if context.user_data else None
-    role_id = context.user_data.get("edit_prompt_ai_save_role_id") if context.user_data else None
-    role_key = context.user_data.get("edit_prompt_ai_save_role_key") if context.user_data else None
-
-    if not new_prompt or not role_id:
-        from app.utils.keyboards import error_with_back_keyboard
-
-        await query.edit_message_text(
-            "❌ Нет данных для сохранения. Попробуйте ещё раз.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
+    await ensure_state_loaded(user_id)
+    if await reject_busy_interaction(user_id, query.answer):
+        return
+    await query.answer()
+    data = context.user_data
+    owner = _edit_callback_owner(user_id, query, data)
+    new_prompt = (data or {}).get("edit_prompt_ai_preview")
+    role_id = (data or {}).get("edit_prompt_ai_save_role_id")
+    role_key = (data or {}).get("edit_prompt_ai_save_role_key", f"user_role:{role_id}")
+    old_prompt = (data or {}).get("edit_prompt_ai_current")
+    if owner is None or not new_prompt or not role_id:
+        await query.edit_message_text("Запрос уже устарел. Откройте редактирование роли заново.")
         return
 
-    from app.repos.roles import update_custom_role_prompt
+    async def save() -> None:
+        from app.repos.roles import get_custom_role_prompt, update_custom_role_prompt
 
-    success = await update_custom_role_prompt(role_id, user_id, new_prompt)
-    if not success:
-        from app.utils.keyboards import error_with_back_keyboard
+        chat_state = await get_user_chat(user_id)
+        async with private_interaction(owner, chat_state) as allowed:
+            if not allowed:
+                return
+            # A newer edit of the same saved role also invalidates this preview.
+            source = await get_custom_role_prompt(role_id, user_id)
+            if not await interaction_current(owner):
+                return
+            if source != old_prompt:
+                await query.edit_message_text("Промпт роли уже изменился. Откройте редактирование заново.")
+                return
+            success = await update_custom_role_prompt(role_id, user_id, new_prompt)
+            if not await interaction_current(owner):
+                return
+            if not success:
+                await query.edit_message_text("❌ Не удалось обновить промпт.")
+                return
+            if old_prompt and chat_state.system_prompt == old_prompt:
+                chat_state.system_prompt = new_prompt
+                applied = await update_user_chat(user_id, chat_state, expected_epoch=owner.epoch)
+                if not await interaction_current(owner):
+                    return
+                if applied is False:
+                    await query.edit_message_text(
+                        "Промпт роли обновлён. Не удалось применить его к текущему диалогу: запрос устарел. Выберите роль заново."
+                    )
+                    return
+            text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+                user_id, chat_state, view_mode="role_details", role_key=role_key
+            )
+            if await interaction_current(owner):
+                await query.edit_message_text(
+                    f"✅ Промпт обновлён через AI!\n\n{text}", parse_mode=parse_mode, reply_markup=reply_markup
+                )
+                if owner.current():
+                    clear_role_edit_state(data)
 
-        await query.edit_message_text(
-            "❌ Не удалось обновить промпт.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
-        return
-
-    # If this role is currently active, update system_prompt
-    chat_state = await get_user_chat(user_id)
-
-    # The role's old prompt may have been the active one — check against the stored current
-    old_prompt = context.user_data.get("edit_prompt_ai_current") if context.user_data else None
-    if old_prompt and chat_state.system_prompt == old_prompt:
-        chat_state.system_prompt = new_prompt
-        from app.repos.chats import update_user_chat
-
-        await update_user_chat(user_id, chat_state)
-
-    # Clean up state
-    if context.user_data is not None:
-        for key in [
-            "edit_prompt_ai_preview",
-            "edit_prompt_ai_save_role_id",
-            "edit_prompt_ai_save_role_key",
-            "edit_prompt_ai_current",
-        ]:
-            context.user_data.pop(key, None)
-
-    # Return to role details
-    if not role_key:
-        role_key = f"user_role:{role_id}"
-
-    text, parse_mode, reply_markup = await menus.get_roles_menu_content(
-        user_id, chat_state, view_mode="role_details", role_key=role_key
-    )
-    try:
-        await query.edit_message_text(
-            f"✅ Промпт обновлён через AI!\n\n{text}",
-            parse_mode=parse_mode,
-            reply_markup=reply_markup,
-        )
-    except telegram.error.BadRequest:
-        pass
+    await run_interaction(owner, save)
 
 
 async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -801,13 +799,20 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def role_create_manual_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Start manual role creation — asks user for a title."""
     query = update.callback_query
+    input_intent = begin_text_input_intent(query.from_user.id)
     await query.answer()
     user_id = query.from_user.id
-    await ensure_state_loaded(user_id)
+    if not await prepare_text_input(user_id, query.message, query.answer, context.user_data, input_intent=input_intent):
+        return
     from app.state import begin_manual_role_creation
 
     begin_manual_role_creation(user_id)
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")]])
+    from app.state import get_user_state
+
+    owner = get_user_state(user_id).interaction
+    bind_context_text_input(owner, context.user_data)
+    token = owner.token
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_manual_cancel:{token}")]])
     create_text = "📝 **Создание роли вручную**\n\nВведите **название** для новой роли (1 строка):"
     fmt_text, fmt_pm = TelegramFormatter.format_text(create_text)
     await query.edit_message_text(
@@ -820,14 +825,24 @@ async def role_create_manual_callback(update: Update, context: ContextTypes.DEFA
 async def role_manual_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Cancel manual role creation — return to roles hub."""
     query = update.callback_query
-    await query.answer("↩️ Создание роли отменено")
     user_id = query.from_user.id
     await ensure_state_loaded(user_id)
-    from app.state import clear_manual_role_state
+    from app.state import get_user_state
+
+    owner = get_user_state(user_id).interaction
+    expected = owner.token if owner is not None and owner.kind == "manual_role" else None
+    if (owner is not None and owner.kind != "manual_role") or _callback_token(query, "role_manual_cancel") != expected:
+        await query.answer("Запрос уже устарел.")
+        return
+    from app.state import cancel_interaction, clear_manual_role_state
 
     clear_manual_role_state(user_id)
+    await cancel_interaction(user_id)
+    await query.answer("↩️ Создание роли отменено")
     chat_state = await get_user_chat(user_id)
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="hub")
+    if get_user_state(user_id).interaction is not None:
+        return
     try:
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except telegram.error.BadRequest as e:
@@ -836,52 +851,66 @@ async def role_manual_cancel_callback(update: Update, context: ContextTypes.DEFA
 
 
 async def role_manual_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Save the manually created role to DB and apply it."""
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    await ensure_state_loaded(user_id)
+    from app.handlers.interaction_work import interaction_current, private_interaction
     from app.state import (
+        begin_interaction,
         clear_manual_role_state,
         get_manual_role_prompt,
         get_manual_role_title,
+        get_user_state,
+        run_interaction,
     )
 
+    query = update.callback_query
+    user_id = query.from_user.id
+    await ensure_state_loaded(user_id)
+    if await reject_busy_interaction(user_id, query.answer):
+        return
+    await query.answer()
+    state = get_user_state(user_id)
+    owner = state.interaction
+    supplied = _callback_token(query, "role_manual_save")
+    expected = owner.token if owner is not None and owner.kind == "manual_role" else None
+    if supplied != expected or (owner is not None and (owner.kind != "manual_role" or owner.task is not None)):
+        await query.edit_message_text("Запрос уже устарел. Создайте роль заново.")
+        return
     title = get_manual_role_title(user_id)
     prompt_text = get_manual_role_prompt(user_id)
     if not title or not prompt_text:
-        from app.utils.keyboards import error_with_back_keyboard
-
-        await query.edit_message_text(
-            "⚠️ Данные роли не найдены. Возможно, бот был перезапущен.\n\nПожалуйста, создайте роль заново.",
-            reply_markup=error_with_back_keyboard(
-                "role_create_manual",
-                "📝 Создать заново",
-                extra_buttons=[[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]],
-            ),
-        )
+        await query.edit_message_text("⚠️ Данные роли не найдены. Пожалуйста, создайте роль заново.")
         return
-    try:
-        await create_custom_role(user_id, title, prompt_text)
-        await role_conv_metrics.record_custom_role_creation()
-        # Apply role immediately
-        chat_state = await get_user_chat(user_id)
-        chat_state.system_prompt = prompt_text
-        await update_user_chat(user_id, chat_state)
-        clear_manual_role_state(user_id)
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]])
-        save_text = f"💾 Роль **{title}** сохранена и применена!"
-        fmt_text, fmt_pm = TelegramFormatter.format_text(save_text)
-        await query.edit_message_text(
-            fmt_text,
-            parse_mode=fmt_pm,
-            reply_markup=kb,
-        )
-    except Exception as e:
-        logging.error("Error saving manual role: %s", e, exc_info=True)
-        from app.utils.keyboards import error_with_back_keyboard
+    if owner is None:
+        owner = begin_interaction(user_id, "manual_role")
 
-        await query.edit_message_text(
-            "❌ Ошибка сохранения роли. Попробуйте позже.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
-        )
+    async def save() -> None:
+        try:
+            chat_state = await get_user_chat(user_id)
+            async with private_interaction(owner, chat_state) as allowed:
+                if not allowed:
+                    return
+                await create_custom_role(user_id, title, prompt_text)
+                if not await interaction_current(owner):
+                    return
+                await role_conv_metrics.record_custom_role_creation()
+                if not await interaction_current(owner):
+                    return
+                chat_state.system_prompt = prompt_text
+                applied = await update_user_chat(user_id, chat_state, expected_epoch=owner.epoch)
+                if not await interaction_current(owner):
+                    return
+                if applied is False:
+                    await query.edit_message_text(
+                        "Роль сохранена. Не удалось применить её к текущему диалогу: запрос устарел. Выберите роль заново."
+                    )
+                    return
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]])
+                text, parse_mode = TelegramFormatter.format_text(f"💾 Роль **{title}** сохранена и применена!")
+                await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=kb)
+                if owner.current():
+                    clear_manual_role_state(user_id)
+        except Exception as exc:
+            logging.error("Error saving manual role: %s", exc, exc_info=True)
+            if await interaction_current(owner):
+                await query.edit_message_text("❌ Ошибка сохранения роли. Попробуйте позже.")
+
+    await run_interaction(owner, save)

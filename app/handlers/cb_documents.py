@@ -8,6 +8,7 @@ import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app import state
 from app.document_processor import (
     delete_all_user_documents,
     delete_user_document,
@@ -15,6 +16,7 @@ from app.document_processor import (
     get_user_documents,
 )
 from app.handlers import menus
+from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
 from app.handlers.msg_document import clear_pending_document_upload, confirm_pending_document_upload
 from app.i18n import t
 from app.state import clear_document_state, ensure_state_loaded, get_selected_document_id, set_document_mode
@@ -289,8 +291,15 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if handler:
         try:
             if action in {"cancel", "clear_all_confirm", "use_existing", "select", "delete_document"}:
+                if _is_user_busy(user_id):
+                    await query.answer(_BUSY_TOAST, show_alert=True)
+                    return
                 await ensure_state_loaded(user_id)
-            await handler(query, context, user_id)
+                async with state.get_user_lock(user_id):
+                    await state.cancel_interaction(user_id)
+                    await handler(query, context, user_id)
+            else:
+                await handler(query, context, user_id)
         except Exception as exc:
             logging.error("Document callback failed user=%s action=%s type=%s", user_id, action, type(exc).__name__)
             await query.answer(t("doc.delete_error"))

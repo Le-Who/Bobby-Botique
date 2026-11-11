@@ -41,8 +41,8 @@ _BUSY_TOAST = (
 
 
 def _is_user_busy(user_id: int) -> bool:
-    """Check if user has an active AI request (lock held by streaming/processing)."""
-    return state.get_user_lock(user_id).locked()
+    """Include admission and cleanup outside the canonical request lock."""
+    return state.is_ordinary_request_busy(user_id)
 
 
 def _add_fast_callback(application: Application, callback, pattern: str):
@@ -188,6 +188,16 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(role_edit_manual_callback, pattern="^role_edit_manual:"))
     application.add_handler(CallbackQueryHandler(role_edit_ai_callback, pattern="^role_edit_ai:"))
     application.add_handler(CallbackQueryHandler(role_edit_ai_save_callback, pattern="^role_edit_ai_save$"))
+    for callback, prefix in (
+        (role_create_cancel_callback, "role_create_cancel"),
+        (role_custom_apply_callback, "role_custom_apply"),
+        (role_custom_save_callback, "role_custom_save"),
+        (role_custom_retry_callback, "role_custom_retry"),
+        (role_manual_cancel_callback, "role_manual_cancel"),
+        (role_manual_save_callback, "role_manual_save"),
+        (role_edit_ai_save_callback, "role_edit_ai_save"),
+    ):
+        application.add_handler(CallbackQueryHandler(callback, pattern=rf"^{prefix}:[a-f0-9]{{16}}$"))
     application.add_handler(CallbackQueryHandler(role_edit_ai_tweak_callback, pattern="^role_edit_ai_tweak:"))
     application.add_handler(CallbackQueryHandler(role_edit_cancel_callback, pattern="^role_edit_cancel:"))
     application.add_handler(CallbackQueryHandler(role_delete_ask_callback, pattern="^role_delete_ask:"))

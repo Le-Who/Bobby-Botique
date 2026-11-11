@@ -301,7 +301,8 @@ async def test_idle_voice_action_still_admits_once(admission, action):
     assert not state.get_user_state(11).is_processing
     expected_effect = "asr" if action == "retranscribe_flash" else action
     if action == "edit":
-        assert admission.application.user_data[11]["voice_edit_pending"] is True
+        assert "voice_edit_pending" in admission.application.user_data[11]
+        assert admission.application.user_data[11]["voice_pending_900"] is item
     else:
         assert sum(effect[0] == expected_effect for effect in admission.effects) == 1
     assert admission.edits or action == "transcribe_only"

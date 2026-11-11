@@ -254,17 +254,21 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         return
 
-    # Check for clear command
+    if _is_user_busy(user_id):
+        await update.message.reply_text(_BUSY_TOAST)
+        return
     command_arg = context.args[0].lower()
-    if command_arg in ("clear", "reset") and len(context.args) == 1:
-        chat_state.system_prompt = None
-        await update_user_chat(user_id, chat_state)
+    clear = command_arg in ("clear", "reset") and len(context.args) == 1
+    async with state.get_user_lock(user_id):
+        await state.cancel_interaction(user_id)
+        chat_state = await get_user_chat(user_id)
+        chat_state.system_prompt = None if clear else " ".join(context.args)
+        if not await update_user_chat(user_id, chat_state):
+            await update.message.reply_text("❌ Не удалось сохранить инструкцию. Попробуйте снова.")
+            return
+    if clear:
         await update.message.reply_text("✅ Системная инструкция сброшена. Использую стандартное поведение.")
         return
-
-    # Set new prompt
-    chat_state.system_prompt = " ".join(context.args)
-    await update_user_chat(user_id, chat_state)
 
     # Show preview of what was set
     preview = (
@@ -293,11 +297,14 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(_BUSY_TOAST)
         return
     async with state.get_user_lock(user_id):
+        await state.cancel_interaction(user_id)
         chat_state = await get_user_chat(user_id)
         chat_state.history = []
         chat_state.token_count = 0
         chat_state.system_prompt = None
-        await update_user_chat(user_id, chat_state)
+        if not await update_user_chat(user_id, chat_state):
+            await update.message.reply_text("❌ Не удалось начать новый чат. Попробуйте снова.")
+            return
         from app.state import clear_retry_request
 
         clear_retry_request(user_id)
@@ -308,6 +315,7 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     clear_user_dedup(user_id)
 
     if context and context.user_data is not None:
+        context.user_data.pop("voice_edit_pending", None)
         keys_to_clear = [k for k in context.user_data if str(k).startswith("voice_pending")]
         for k in keys_to_clear:
             context.user_data.pop(k, None)

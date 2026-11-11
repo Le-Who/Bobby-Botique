@@ -368,6 +368,7 @@ async def process_move(
         won=won,
         finished=won or lost,
         recordable=recordable,
+        expected_moves=result.moves,
     )
     return _event_from_result(
         updated,

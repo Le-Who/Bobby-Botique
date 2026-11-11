@@ -14,8 +14,32 @@ import asyncio
 import logging
 import time
 import weakref
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Literal
+from uuid import uuid4
 
 from app.observability.events import emit, record_exception
+
+
+@dataclass(eq=False)
+class InteractionOwner:
+    """One input/preview and its request-scoped work in a user generation."""
+
+    state: UserState
+    kind: Literal["role", "role_edit", "manual_role", "tarot", "draw", "rename"]
+    token: str = field(default_factory=lambda: uuid4().hex[:16])
+    phase: Literal["input", "running", "preview"] = "input"
+    epoch: int | None = None
+    task: asyncio.Task | None = None
+    on_retire: Callable[[], None] | None = None
+
+    def current(self) -> bool:
+        return (
+            self.state._user_id != 0
+            and self.state.interaction is self
+            and (self.task is None or not self.task.cancelling())
+        )
 
 
 class _UserStateLock(asyncio.Lock):
@@ -41,6 +65,10 @@ class UserState:
         "__weakref__",
         "lock",
         "_persist_lock",
+        "interaction",
+        "_interaction_tasks",
+        "_role_inputs_retired",
+        "text_input_intent",
         # Persisted fields
         "document_mode",
         "selected_document_id",
@@ -71,6 +99,10 @@ class UserState:
     def __init__(self, user_id: int = 0):
         self.lock = _UserStateLock(self)
         self._persist_lock = asyncio.Lock()
+        self.interaction: InteractionOwner | None = None
+        self._interaction_tasks: set[asyncio.Task] = set()
+        self._role_inputs_retired = False
+        self.text_input_intent: object | None = None
         self._user_id = user_id
         # Persisted fields
         self.document_mode = False
@@ -178,8 +210,9 @@ def purge_user_runtime_state(user_id: int) -> None:
     live_state = USER_STATES._live_states.pop(user_id, None)
     for old_state in (cached_state, live_state):
         if old_state is not None:
-            # A detached pre-erasure reference cannot schedule another durable write.
             old_state._user_id = 0
+            _invalidate_interaction(old_state)
+            # A detached pre-erasure reference cannot schedule another durable write.
             old_state.retry_request = None
             old_state.last_sent_message_text = None
     _NETWORK_STALL_SINCE.pop(user_id, None)
@@ -221,6 +254,9 @@ async def _ensure_loaded(state: UserState) -> UserState:
                 state.role_diaries = data.get("role_diaries") or {}
                 state.tarot_mode = data.get("tarot_mode", False)
                 state.tarot_session = data.get("tarot_session")
+            if state._role_inputs_retired:
+                _clear_role_inputs(state)
+                state._role_inputs_retired = False
             emit(
                 "state.hydration_finished",
                 operation="state.hydrate",
@@ -250,6 +286,17 @@ async def _ensure_loaded(state: UserState) -> UserState:
 
 async def _persist(state: UserState, *, retry_on_failure: bool = True) -> bool:
     """Save a snapshot; retain retry ownership unless this is the final flush."""
+    if state._role_inputs_retired and not state._loaded_from_db:
+        try:
+            await _ensure_loaded(state)
+        except asyncio.CancelledError:
+            if retry_on_failure:
+                _schedule_persist(state)
+            raise
+        except Exception:
+            if retry_on_failure:
+                _schedule_persist(state)
+            return False
     # Snapshot only after the preceding write (including its retries) finishes.
     # The request lock stays independent so handlers can mutate state during I/O.
     try:
@@ -387,6 +434,12 @@ def get_user_lock(user_id: int) -> asyncio.Lock:
     return get_user_state(user_id).lock
 
 
+def is_ordinary_request_busy(user_id: int) -> bool:
+    """Observe ordinary request admission without acquiring its request lock."""
+    state = get_user_state(user_id)
+    return state.is_processing or get_user_lock(user_id).locked()
+
+
 def get_active_user_lock_count() -> int:
     """Return the number of currently-held process-local user locks."""
     return sum(1 for user_state in USER_STATES._live_states.values() if user_state.lock.locked())
@@ -405,12 +458,140 @@ async def ensure_state_loaded(user_id: int) -> UserState:
     return await _ensure_loaded(state)
 
 
+def _invalidate_interaction(state: UserState) -> None:
+    old_owner = state.interaction
+    state.interaction = None
+    if old_owner is not None and old_owner.on_retire is not None:
+        old_owner.on_retire()
+    if old_owner is not None and old_owner.kind == "role":
+        state.awaiting_custom_role_input = False
+        state.generating_custom_role = False
+        if state.generated_role is not None and state.generated_role.get("_interaction_token") == old_owner.token:
+            state.generated_role = None
+            state.last_custom_role_prompt = None
+        _schedule_persist(state)
+    elif old_owner is not None and old_owner.kind == "manual_role":
+        state.awaiting_manual_role_title = False
+        state.awaiting_manual_role_prompt = False
+        state.manual_role_title = ""
+        state.manual_role_prompt = ""
+        _schedule_persist(state)
+    try:
+        current_task = asyncio.current_task()
+    except RuntimeError:
+        current_task = None
+    for task in tuple(state._interaction_tasks):
+        if task is not current_task and not task.done() and not task.cancelling():
+            task.cancel()
+
+
+def _clear_role_inputs(state: UserState) -> None:
+    state.awaiting_custom_role_input = False
+    state.generated_role = None
+    state.last_custom_role_prompt = None
+    state.generating_custom_role = False
+    state.awaiting_manual_role_title = False
+    state.awaiting_manual_role_prompt = False
+    state.manual_role_title = ""
+    state.manual_role_prompt = ""
+
+
+def begin_interaction(
+    user_id: int, kind: Literal["role", "role_edit", "manual_role", "tarot", "draw", "rename"]
+) -> InteractionOwner:
+    """Replace an input/preview, immediately fencing all predecessor effects."""
+    state = get_user_state(user_id)
+    state.text_input_intent = None
+    _invalidate_interaction(state)
+    owner = InteractionOwner(state, kind)
+    state.interaction = owner
+    return owner
+
+
+async def cancel_interaction(user_id: int, *, input_intent: object | None = None) -> None:
+    """Retire inputs/previews and drain work without acquiring the request lock."""
+    state = get_user_state(user_id)
+    if input_intent is not None:
+        if state.text_input_intent is not input_intent:
+            return
+    else:
+        state.text_input_intent = None
+    tasks = tuple(state._interaction_tasks)
+    _invalidate_interaction(state)
+    _clear_role_inputs(state)
+    # Some context switches already hold state.lock before first hydration.
+    # Fence old JSON immediately; the persistence task loads unrelated fields
+    # under that lock before it writes the cleared, coherent snapshot.
+    state._role_inputs_retired = True
+    _schedule_persist(state)
+    current_task = asyncio.current_task()
+    await _drain_interaction_tasks(tuple(task for task in tasks if task is not current_task))
+
+
+async def _drain_interaction_tasks(tasks: tuple[asyncio.Task, ...]) -> None:
+    drain = asyncio.gather(*tasks, return_exceptions=True)
+    cancellation: asyncio.CancelledError | None = None
+    while not drain.done():
+        try:
+            await asyncio.shield(drain)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+    drain.result()
+    if cancellation is not None:
+        raise cancellation
+
+
+async def run_interaction(owner: InteractionOwner, work: Callable[[], Awaitable[None]]) -> None:
+    """Own a child through provider use, delivery, cancellation and cleanup.
+
+    Children never acquire the request lock. A replacement drains its cancelled
+    predecessors before using private data or making provider calls.
+    """
+    predecessors = tuple(owner.state._interaction_tasks)
+
+    async def run() -> None:
+        await _drain_interaction_tasks(predecessors)
+        if owner.current():
+            await work()
+
+    task = asyncio.create_task(run())
+    owner.task = task
+    owner.phase = "running"
+    owner.state._interaction_tasks.add(task)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        if not task.done() and not task.cancelling():
+            task.cancel()
+        request_task = asyncio.current_task()
+        requested_cancellation = request_task is not None and request_task.cancelling()
+        if owner.state.interaction is owner:
+            _invalidate_interaction(owner.state)
+            raise
+        if requested_cancellation:
+            raise
+    finally:
+        if not task.done() and not task.cancelling():
+            task.cancel()
+        try:
+            await _drain_interaction_tasks((task,))
+        finally:
+            owner.state._interaction_tasks.discard(task)
+            if task.cancelling() and owner.state.interaction is owner:
+                _invalidate_interaction(owner.state)
+            owner.task = None
+            if owner.phase == "running":
+                owner.phase = "input"
+
+
 # --- Document mode ---
 
 
 def set_document_mode(user_id: int, enabled: bool, document_id: int | None = None):
     """Set document mode for a user and persist to DB."""
     state = get_user_state(user_id)
+    if enabled and not state.document_mode:
+        _invalidate_interaction(state)
     state.document_mode = enabled
     state.selected_document_id = document_id if enabled else None
     _schedule_persist(state)
@@ -430,6 +611,9 @@ def clear_document_state(user_id: int):
 
 def begin_custom_role_creation(user_id: int):
     state = get_user_state(user_id)
+    begin_interaction(user_id, "role")
+    state.awaiting_manual_role_title = False
+    state.awaiting_manual_role_prompt = False
     state.awaiting_custom_role_input = True
     state.generated_role = None
     state.last_custom_role_prompt = None
@@ -446,6 +630,8 @@ def set_generated_role(user_id: int, role: dict):
 
 def clear_custom_role_state(user_id: int):
     state = get_user_state(user_id)
+    if state.interaction is not None and state.interaction.kind == "role":
+        _invalidate_interaction(state)
     state.awaiting_custom_role_input = False
     state.generated_role = None
     state.last_custom_role_prompt = None
@@ -526,6 +712,10 @@ def clear_retry_request(user_id: int) -> None:
 def begin_manual_role_creation(user_id: int):
     """Start manual role creation — awaiting title input."""
     state = get_user_state(user_id)
+    begin_interaction(user_id, "manual_role")
+    state.awaiting_custom_role_input = False
+    state.generating_custom_role = False
+    state.generated_role = None
     state.awaiting_manual_role_title = True
     state.awaiting_manual_role_prompt = False
     state.manual_role_title = ""
@@ -564,6 +754,8 @@ def finish_manual_role_input(user_id: int):
 def clear_manual_role_state(user_id: int):
     """Clear ALL manual role creation state (call after save/cancel)."""
     state = get_user_state(user_id)
+    if state.interaction is not None and state.interaction.kind == "manual_role":
+        _invalidate_interaction(state)
     state.awaiting_manual_role_title = False
     state.awaiting_manual_role_prompt = False
     state.manual_role_title = ""
@@ -741,6 +933,7 @@ def is_in_tarot_mode(user_id: int) -> bool:
 def set_tarot_mode(user_id: int, enabled: bool) -> None:
     """Enable or disable Tarot mode."""
     state = get_user_state(user_id)
+    _invalidate_interaction(state)
     state.tarot_mode = enabled
     _schedule_persist(state)
 
@@ -754,6 +947,7 @@ def get_tarot_session(user_id: int) -> dict | None:
 def set_tarot_session(user_id: int, session_data: dict | None) -> None:
     """Set or update the Tarot session data."""
     state = get_user_state(user_id)
+    _invalidate_interaction(state)
     state.tarot_session = session_data
     _schedule_persist(state)
 
@@ -761,6 +955,7 @@ def set_tarot_session(user_id: int, session_data: dict | None) -> None:
 def clear_tarot_session(user_id: int) -> None:
     """Clear Tarot session and exit mode."""
     state = get_user_state(user_id)
+    _invalidate_interaction(state)
     state.tarot_mode = False
     state.tarot_session = None
     _schedule_persist(state)

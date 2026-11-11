@@ -240,6 +240,20 @@ class TestFormattingRules:
 # ── Thread safety ─────────────────────────────────────────────────────────────
 
 
+def test_late_domain_registration_reads_baseline_inside_pinned_revision(monkeypatch):
+    from app import prompt_registry as registry
+    from app.prompt_registry import get_global_registry, get_prompt_text, prompt_scope, register_controlled_text
+
+    monkeypatch.setattr(registry, "_PROMPT_BASELINES", dict(registry._PROMPT_BASELINES))
+    monkeypatch.setattr(registry, "_PROMPT_TITLES", dict(registry._PROMPT_TITLES))
+    monkeypatch.setattr(registry, "_registry_instance", PromptRegistry())
+    name = "test.late-domain-registration"
+    with prompt_scope(overrides={}, revision=83):
+        register_controlled_text(name, "Synthetic baseline", "Synthetic title")
+        get_global_registry().apply_overrides({name: "Newer administrative override"}, revision=84)
+        assert get_prompt_text(name) == "Synthetic baseline"
+
+
 class TestThreadSafety:
     def test_singleton_thread_safe(self):
         reset_registry()

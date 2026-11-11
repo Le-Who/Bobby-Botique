@@ -101,6 +101,8 @@ async def candidates(channel: str, user_ids: tuple[int, ...], *, mode: str, forc
                COALESCE(h.is_active,FALSE) AS horoscope_subscribed,
                h.sign,h.utc_offset,h.time_today,h.time_tomorrow,h.last_today_sent,h.last_tomorrow_sent,
                COALESCE(t.is_subscribed,FALSE) AS tarot_subscribed,
+               t.timezone AS tarot_timezone,t.preferred_local_hour AS tarot_preferred_local_hour,
+               t.last_sent_date AS tarot_last_sent_date,
                clock_timestamp() AS observed_at
                FROM public.users u LEFT JOIN public.chats c USING(user_id)
                LEFT JOIN public.crocodile_daily_preferences d USING(user_id)
@@ -122,6 +124,21 @@ async def candidates(channel: str, user_ids: tuple[int, ...], *, mode: str, forc
     for user_id in user_ids:
         row = by_id.get(user_id)
         reason = None
+        tarot_slot = None
+        if channel == "tarot" and mode == "delivery" and row is not None and row["tarot_subscribed"]:
+            from app.repos.tarot_daily_subscriptions import resolve_delivery_slot
+
+            try:
+                tarot_slot = resolve_delivery_slot(
+                    {
+                        "timezone": row["tarot_timezone"],
+                        "preferred_local_hour": row["tarot_preferred_local_hour"],
+                        "last_sent_date": row["tarot_last_sent_date"],
+                    },
+                    row["observed_at"],
+                )
+            except ValueError:
+                reason = "invalid_subscription_schedule"
         if row is None:
             reason = "account_missing"
         elif row["memory_epoch"] is None or row["private_data_blocked"]:
@@ -141,6 +158,8 @@ async def candidates(channel: str, user_ids: tuple[int, ...], *, mode: str, forc
                 reason = "slot_not_due"
             elif last_sent is not None and (last_sent + offset).date() >= local_now.date():
                 reason = "already_delivered"
+        elif mode == "delivery" and channel == "tarot" and tarot_slot is not None:
+            reason = tarot_slot.reason_code
         elif mode == "offer" and row[field] and not force:
             reason = "already_subscribed"
         elif (
@@ -160,6 +179,12 @@ async def candidates(channel: str, user_ids: tuple[int, ...], *, mode: str, forc
                 subscription_fingerprint=subscription_fingerprint(dict(row), variant),
                 delivery_claimed_at=row["observed_at"],
                 slot_date=(row["observed_at"] + timedelta(hours=row["utc_offset"] or 0)).date(),
+            )
+        elif tarot_slot is not None and row is not None:
+            snapshot.update(
+                subscription_fingerprint=tarot_slot.subscription_fingerprint,
+                delivery_claimed_at=row["observed_at"],
+                slot_date=tarot_slot.slot_date,
             )
         result.append(snapshot)
     return result
@@ -549,5 +574,37 @@ async def acknowledge_horoscope(user_id, variant, recipient):
             WHERE user_id=$1""",
             user_id,
             recipient["delivery_claimed_at"],
+        )
+        return True
+
+
+async def acknowledge_tarot(user_id, recipient):
+    from app.repos.tarot_daily_subscriptions import resolve_delivery_slot
+
+    if not all(recipient.get(key) for key in ("slot_date", "delivery_claimed_at", "subscription_fingerprint")):
+        return False
+    async with transaction() as conn:
+        row = await conn.fetchrow(
+            """SELECT timezone,preferred_local_hour,last_sent_date,is_subscribed
+            FROM public.tarot_daily_subscriptions WHERE user_id=$1 FOR UPDATE""",
+            user_id,
+        )
+        if row is None or not row["is_subscribed"]:
+            return False
+        try:
+            slot = resolve_delivery_slot(row, recipient["delivery_claimed_at"])
+        except ValueError:
+            return False
+        if (
+            slot.subscription_fingerprint != recipient["subscription_fingerprint"]
+            or slot.slot_date != recipient["slot_date"]
+        ):
+            return False
+        await conn.execute(
+            """UPDATE public.tarot_daily_subscriptions SET last_sent_date=
+            CASE WHEN last_sent_date IS NULL OR last_sent_date<$2 THEN $2 ELSE last_sent_date END,
+            updated_at=clock_timestamp() WHERE user_id=$1""",
+            user_id,
+            recipient["slot_date"],
         )
         return True

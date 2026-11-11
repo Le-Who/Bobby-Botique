@@ -15,14 +15,14 @@ _SECRET = "synthetic-webhook-secret"
 
 
 @pytest.fixture
-async def webhook_client(monkeypatch):
+async def webhook_client(monkeypatch, request):
     import bot
 
     test_app = Quart(__name__)
     application = MagicMock()
     application.bot = Bot(_TOKEN, request=MagicMock(), get_updates_request=MagicMock())
     application.update_queue = asyncio.Queue(maxsize=2)
-    application.job_queue = None
+    application.job_queue = MagicMock() if getattr(request, "param", False) else None
     application.initialize = AsyncMock()
     application.start = AsyncMock()
     application.stop = AsyncMock()
@@ -93,21 +93,51 @@ def _payload(update_id=987654321):
     }
 
 
+@pytest.mark.parametrize("webhook_client", [True], indirect=True)
+async def test_startup_registers_tarot_delivery_separately_from_preparation(webhook_client):
+    from app.handlers.tarot_daily import check_and_send_tarot_readings, check_tarot_daily_jobs
+
+    _, application, _ = webhook_client
+    jobs = {call.kwargs.get("name"): call for call in application.job_queue.run_repeating.call_args_list}
+    assert jobs["tarot_daily_delivery"].args[0] is check_and_send_tarot_readings
+    assert jobs["tarot_daily_delivery"].kwargs["interval"] == 60
+    assert jobs["tarot_daily_preparation"].args[0] is check_tarot_daily_jobs
+    assert jobs["tarot_daily_preparation"].kwargs["interval"] == 3600
+
+
 class _RedisClaims:
     """Stateful SET NX transport double; outage occurs before any write."""
 
     def __init__(self):
         self.claims = set()
         self.available = True
+        self.values = {}
 
     async def set(self, key, value, *, ex, nx):
-        assert value == "1" and ex > 0 and nx is True
+        assert value.startswith("pending:") and ex > 0 and nx is True
         if not self.available:
             raise ConnectionError("synthetic Redis outage")
         if key in self.claims:
             return None
         self.claims.add(key)
+        self.values[key] = value
         return True
+
+    async def get(self, key):
+        return self.values.get(key)
+
+    async def eval(self, script, count, *args):
+        keys, token = args[:count], args[count]
+        if "ARGV[2]" in script:
+            if any(self.values.get(key) != token for key in keys):
+                return 0
+            self.values.update(dict.fromkeys(keys, args[count + 1]))
+        else:
+            for key in keys:
+                if self.values.get(key) == token:
+                    self.values.pop(key, None)
+                    self.claims.discard(key)
+        return 1
 
 
 @pytest.mark.parametrize("command", [False, True])
@@ -138,15 +168,19 @@ async def test_confirmed_redis_update_is_not_requeued_during_outage(webhook_clie
     assert origins.consume(replay["update_id"]) is None
     application.process_update.assert_not_awaited()
 
-    # A distinct message remains deliverable while Redis is down.
+    # A distinct message must wait for distributed admission to recover.
     fresh = _payload(44)
     fresh["message"]["message_id"] = 1112
     if command:
         fresh["message"].update(text="/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}])
     response = await client.post(path, json=fresh, headers=headers)
+    assert response.status_code == 503
+    assert application.update_queue.empty()
+    assert origins.consume(44) is None
+    redis.available = True
+    response = await client.post(path, json=fresh, headers=headers)
     assert response.status_code == 200
     assert application.update_queue.get_nowait().update_id == 44
-    assert application.update_queue.empty()
     assert origins.consume(44) is not None
 
 
@@ -264,19 +298,17 @@ async def test_concurrent_webhooks_claim_only_an_available_queue_slot(webhook_cl
     release_first = asyncio.Event()
     second_started = asyncio.Event()
     calls = []
-    claimed = set()
+    redis = _RedisClaims()
 
     async def redis_set(key, value, **kwargs):
         calls.append(key)
         if len(calls) == 1:
             first_entered.set()
             await release_first.wait()
-        if key in claimed:
-            return False
-        claimed.add(key)
-        return True
+        return await _RedisClaims.set(redis, key, value, **kwargs)
 
-    monkeypatch.setattr("app.webhook_dedupe.redis_client", SimpleNamespace(set=redis_set))
+    redis.set = redis_set
+    monkeypatch.setattr("app.webhook_dedupe.redis_client", redis)
 
     @client.app.before_request
     async def observe_second():
@@ -295,7 +327,7 @@ async def test_concurrent_webhooks_claim_only_an_available_queue_slot(webhook_cl
         release_first.set()
         responses = await asyncio.gather(first, second)
         assert [response.status_code for response in responses] == [200, 503]
-        assert claimed == {"telegram:webhook:update:1"}
+        assert redis.claims == {"telegram:webhook:update:1"}
         while not application.update_queue.empty():
             application.update_queue.get_nowait()
         retry = await client.post(path, json=_payload(2), headers=headers)

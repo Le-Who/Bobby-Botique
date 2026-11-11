@@ -9,7 +9,7 @@ from redis.asyncio import Redis
 
 from app.observability.ingress import WebhookOriginStore
 from app.webhook_admission import AdmissionClosed, WebhookAdmissionGate
-from app.webhook_dedupe import should_accept_webhook_update
+from app.webhook_dedupe import WebhookDedupeUnavailable, claim_webhook_update
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -64,6 +64,12 @@ class _AfterRealSet:
                 raise
         return result
 
+    async def get(self, key):
+        return await self.client.get(key)
+
+    async def eval(self, *args):
+        return await self.client.eval(*args)
+
 
 @pytest.mark.parametrize("command, gate_at", [(False, 1), (True, 1), (True, 2)])
 @pytest.mark.parametrize("shutdown_during_claim", [False, True], ids=["request-cancel", "request-and-shutdown-cancel"])
@@ -100,12 +106,14 @@ async def test_persisted_redis_claim_finishes_one_handoff_before_cancellation_an
         if queue.full():
             return 503
         identity = data["update_id"]
-        if not await should_accept_webhook_update(
+        claim = await claim_webhook_update(
             identity, history, history_lock, payload=data, ttl_seconds=86400, capacity=10000
-        ):
+        )
+        if claim is None:
             return 200
         origins.remember(identity)
         queue.put_nowait(identity)
+        await claim.confirm_enqueued()
         order.append("handoff")
         return 200
 
@@ -118,10 +126,10 @@ async def test_persisted_redis_claim_finishes_one_handoff_before_cancellation_an
     shutdown = None
     try:
         await asyncio.wait_for(transport.persisted.wait(), timeout=5)
-        assert await observer.get(update_key) == "1"
+        assert (await observer.get(update_key)).startswith("pending:")
         assert 0 < await observer.ttl(update_key) <= 86400
         if gate_at == 2:
-            assert await observer.get(command_key) == "1"
+            assert (await observer.get(command_key)).startswith("pending:")
         owner.cancel("first real Redis disconnect")
         await _checkpoint()
         owner.cancel("second real Redis disconnect")
@@ -157,9 +165,9 @@ async def test_persisted_redis_claim_finishes_one_handoff_before_cancellation_an
         assert queue.empty()
         assert origins.consume(update_id) is not None
         assert origins.consume(update_id) is None
-        assert await observer.get(update_key) == "1"
+        assert (await observer.get(update_key)).startswith("accepted:")
         if command:
-            assert await observer.get(command_key) == "1"
+            assert (await observer.get(command_key)).startswith("accepted:")
 
         # An open owner (including a replacement lifecycle) sees the actual NX
         # decision. A duplicate ACK cannot conceal a missing first queue handoff.
@@ -174,3 +182,22 @@ async def test_persisted_redis_claim_finishes_one_handoff_before_cancellation_an
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize("stored", ["1", "pending:crashed-owner"])
+async def test_uncertain_real_claim_requires_retry_until_expiry(redis_claims, monkeypatch, stored):
+    writer, observer, own_keys = redis_claims
+    identity = int(uuid.uuid4().hex[:15], 16)
+    key = f"telegram:webhook:update:{identity}"
+    own_keys.add(key)
+    monkeypatch.setattr("app.webhook_dedupe.redis_client", writer)
+    await writer.set(key, stored, ex=60)
+    with pytest.raises(WebhookDedupeUnavailable):
+        await claim_webhook_update(identity, {}, asyncio.Lock())
+    assert await observer.get(key) == stored
+    await observer.pexpire(key, 0)
+    claim = await claim_webhook_update(identity, {}, asyncio.Lock())
+    assert claim is not None
+    await claim.confirm_enqueued()
+    assert (await observer.get(key)).startswith("accepted:")
+    assert await claim_webhook_update(identity, {}, asyncio.Lock()) is None

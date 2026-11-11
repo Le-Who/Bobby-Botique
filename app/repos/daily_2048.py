@@ -66,6 +66,11 @@ class DailyPuzzleUnavailable(Exception):
         super().__init__(reason)
 
 
+class DailyProgressConflict(RuntimeError):
+    def __init__(self):
+        super().__init__("progress_conflict")
+
+
 class DailyPuzzleConflict(Exception):
     def __init__(
         self, actual_revision: int, reason: str = "revision_conflict", *, puzzle: Daily2048Puzzle | None = None
@@ -635,6 +640,7 @@ async def update_result_after_move(
     won: bool,
     finished: bool,
     recordable: bool = True,
+    expected_moves: int | None = None,
     conn=None,
 ) -> Daily2048Result:
     async with _transaction(conn) as acquired:
@@ -642,6 +648,9 @@ async def update_result_after_move(
         if puzzle is None:
             raise DailyPuzzleConflict(0)
         require_available(puzzle)
+        from app.games.crocodile_runtime import ensure_game_mutation_owned
+
+        ensure_game_mutation_owned()
         rows = await db.db_query(
             """
             UPDATE public.daily_2048_results
@@ -656,7 +665,7 @@ async def update_result_after_move(
                 finished_at = CASE WHEN $12 THEN NOW() ELSE finished_at END,
                 recordable = recordable AND $13,
                 updated_at = NOW()
-            WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
+            WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active' AND moves = $14
             RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
                       final_score, elapsed_ms, started_at, won_at, finished_at, recordable
             """,
@@ -674,13 +683,18 @@ async def update_result_after_move(
                 won,
                 finished,
                 recordable,
+                expected_moves if expected_moves is not None else int(moves) - 1,
             ),
             conn=acquired,
         )
         if rows:
             return _row_to_result(rows[0])
+        if expected_moves is not None:
+            raise DailyProgressConflict()
         existing = await get_result(user_id, puzzle_date, conn=acquired)
         if existing:
+            if existing.status == "active":
+                raise DailyProgressConflict()
             return existing
         raise RuntimeError(f"daily 2048 result missing for user={user_id} date={puzzle_date}")
 

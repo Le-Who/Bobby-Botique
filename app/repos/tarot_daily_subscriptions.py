@@ -6,18 +6,21 @@ Stores per-user preferences for the "Карта дня" (daily tarot card) broad
   - preferred_local_hour: preferred delivery hour (0-23) in user's local TZ
   - last_sent_date:       last date card was delivered (prevents same-day re-send)
 
-Scheduler query:
-    get_due_tarot_subscriptions(current_utc_hour)
-    Returns rows where:
-      - is_subscribed = TRUE
-      - localtime hour matches preferred_local_hour (approximated via UTC offset)
-      - last_sent_date < today (not yet sent today)
+``get_due_for_current_hour`` resolves each active subscriber's IANA timezone,
+allows same-day catch-up after the preferred hour, and excludes dates already
+delivered. The broad date query also includes subscribers whose local day is
+ahead of UTC.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
-from datetime import UTC, date, datetime
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.database import db_query
 
@@ -25,6 +28,38 @@ logger = logging.getLogger(__name__)
 
 TABLE = "public.tarot_daily_subscriptions"
 DELIVERY_SETTING_KEY = "tarot_daily_delivery_enabled"
+
+
+@dataclass(frozen=True, slots=True)
+class TarotDeliverySlot:
+    slot_date: date
+    subscription_fingerprint: str
+    reason_code: str | None
+
+
+def resolve_delivery_slot(subscription: Mapping[str, Any], now: datetime) -> TarotDeliverySlot:
+    """Resolve a local delivery date and schedule identity without side effects."""
+    timezone = subscription.get("timezone")
+    hour = subscription.get("preferred_local_hour")
+    if not isinstance(timezone, str) or not timezone or type(hour) is not int or not 0 <= hour <= 23:
+        raise ValueError("invalid_tarot_schedule")
+    try:
+        zone = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError("invalid_tarot_schedule") from exc
+    last_sent = subscription.get("last_sent_date")
+    if last_sent is not None and type(last_sent) is not date:
+        raise ValueError("invalid_tarot_schedule")
+    current = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    local_now = current.astimezone(zone)
+    slot_date = local_now.date()
+    reason = None
+    if last_sent is not None and last_sent >= slot_date:
+        reason = "already_delivered"
+    elif local_now.hour < hour:
+        reason = "slot_not_due"
+    fingerprint = hashlib.sha256(f"{timezone}:{hour}".encode()).hexdigest()
+    return TarotDeliverySlot(slot_date, fingerprint, reason)
 
 
 # ── Read ──────────────────────────────────────────────────────────────────────
@@ -168,19 +203,23 @@ async def unsubscribe_tarot(user_id: int) -> bool:
 
 
 async def get_due_for_current_hour(now: datetime | None = None) -> list[dict]:
-    """Return subscribers for whom the current UTC hour matches their local preferred hour.
-
-    Uses a simple UTC-offset approximation: subscribers in timezone
-    ``Europe/Kyiv`` (UTC+3) with preferred_local_hour=10 are due when
-    UTC hour == 7.
-
-    For production use, the caller (scheduler) should do a broader pull via
-    ``get_due_tarot_subscriptions`` and filter by local time more precisely
-    using the full ``timezone`` field.
-    """
+    """Return subscribers due on their local day, including same-day catch-up."""
     current = now or datetime.now(tz=UTC)
-    today = current.date()
-    return await get_due_tarot_subscriptions(today)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    # UTC+14 can already be on tomorrow's date. Filter the broad pull against
+    # each subscriber's actual local date before admitting a broadcast snapshot.
+    latest_local_date = (current.astimezone(UTC) + timedelta(days=1)).date()
+    due = []
+    for subscription in await get_due_tarot_subscriptions(latest_local_date):
+        try:
+            slot = resolve_delivery_slot(subscription, current)
+        except ValueError:
+            logger.warning("Tarot delivery schedule invalid for user_id=%s", subscription.get("user_id"))
+            continue
+        if slot.reason_code is None:
+            due.append({**subscription, "slot_date": slot.slot_date})
+    return due
 
 
 async def mark_tarot_discovery_sent(user_id: int) -> None:

@@ -204,21 +204,23 @@ async def get_new_entries_count(board_id: int) -> int:
         return 0
 
 
-async def update_summary(board_id: int, summary: str) -> bool:
-    """Persist the latest LLM synthesis and reset the new-entries counter."""
+async def update_summary(board_id: int, summary: str, *, expected_entry_count: int | None = None) -> bool:
+    """Publish a summary only while its board and entry snapshot remain current."""
     await _ensure_table()
     try:
-        await db.db_query(
+        rows = await db.db_query(
             """
             UPDATE inline_boards
                SET last_summary                 = $2,
                    entries_since_last_synthesis = 0,
                    updated_at                   = NOW()
-             WHERE id = $1
+             WHERE id = $1 AND NOT closed
+               AND ($3::int IS NULL OR jsonb_array_length(entries) = $3)
+            RETURNING id
             """,
-            (board_id, summary),
+            (board_id, summary, expected_entry_count),
         )
-        return True
+        return bool(rows)
     except Exception as exc:
         logger.error("boards_repo.update_summary board_id=%s: %s", board_id, exc, exc_info=True)
         return False

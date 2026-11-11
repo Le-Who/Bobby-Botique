@@ -38,6 +38,14 @@ async def test_flush_thermometer_update_keeps_play_button(monkeypatch) -> None:
         raising=False,
     )
     bot = SimpleNamespace(username="testbot", edit_message_text=AsyncMock())
+    monkeypatch.setattr(
+        "app.games.crocodile.load_game",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                game_id="game-456", inline_message_id="inline-456", best_score=0.51, status="active"
+            )
+        ),
+    )
     crocodile_telegram._pending_thermometer_updates["inline-456"] = {
         "bot": bot,
         "game_id": "game-456",

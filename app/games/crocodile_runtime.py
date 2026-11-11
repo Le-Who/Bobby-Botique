@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import time
+import uuid
 from collections import defaultdict
 from collections.abc import Coroutine
 from contextlib import asynccontextmanager
@@ -22,6 +24,129 @@ _PENDING_KEY_PREFIX = "croc:runtime:pending:"
 _LOCK_KEY_PREFIX = "croc:lock:"
 _HISTORY_LIMIT = 32
 _PENDING_RESULTS_LIMIT = 32
+_MUTATION_LEASE_TTL_S = 60.0
+_MUTATION_RENEW_INTERVAL_S = 20.0
+_MUTATION_WAIT_TIMEOUT_S = 5.0
+_RENEW_MUTATION = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+"""
+_RELEASE_MUTATION = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+return redis.call('DEL', KEYS[1])
+"""
+
+
+class GameMutationLeaseLost(TimeoutError):
+    """An admitted mutation no longer has distributed write authority."""
+
+
+class _MutationLease:
+    def __init__(self, client, key: str, token: str, confirmed: float):
+        self.client = client
+        self.key = key
+        self.token = token
+        self.confirmed = confirmed
+        self.owner = asyncio.current_task()
+        self.children: set[asyncio.Task] = set()
+        self.lost = False
+        self.marker = object()
+        self.cancel_sent = False
+
+    def lose(self) -> None:
+        if self.lost:
+            return
+        self.lost = True
+        for child in self.children:
+            if child is not asyncio.current_task() and not child.done():
+                child.cancel(self.marker)
+        if self.owner is not None and self.owner is not asyncio.current_task() and not self.owner.done():
+            self.cancel_sent = True
+            self.owner.cancel(self.marker)
+
+    def check(self) -> None:
+        if time.monotonic() >= self.confirmed + _MUTATION_LEASE_TTL_S:
+            self.lose()
+        if self.lost:
+            raise GameMutationLeaseLost("game mutation lease lost")
+
+    async def renew(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(_MUTATION_RENEW_INTERVAL_S)
+                self.check()
+                started = time.monotonic()
+                remaining = self.confirmed + _MUTATION_LEASE_TTL_S - started
+                async with asyncio.timeout(min(5.0, remaining)):
+                    renewed = await self.client.eval(
+                        _RENEW_MUTATION, 1, self.key, self.token, int(_MUTATION_LEASE_TTL_S * 1000)
+                    )
+                self.check()
+                if renewed != 1:
+                    self.lose()
+                    return
+                self.confirmed = started
+            except Exception as exc:
+                logger.warning("Game mutation renewal unavailable type=%s", type(exc).__name__)
+                self.lose()
+                return
+
+
+_mutation_lease: contextvars.ContextVar[_MutationLease | None] = contextvars.ContextVar(
+    "game_mutation_lease", default=None
+)
+
+
+def ensure_game_mutation_owned() -> None:
+    lease = _mutation_lease.get()
+    if lease is not None:
+        lease.check()
+
+
+async def save_owned_game(game_key: str, payload: bytes, ttl: int) -> bool:
+    """Atomically fence classic Redis persistence against lease replacement."""
+    if _mutation_lease.get() is None:
+        return False
+    await _owned_redis_write("redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3]); return 1", [game_key], payload, ttl)
+    return True
+
+
+async def _owned_redis_write(script: str, keys: list[str], *args):
+    lease = _mutation_lease.get()
+    assert lease is not None
+    lease.check()
+    fenced = "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return redis.error_reply('GAME_LEASE_LOST') end\n"
+    try:
+        async with asyncio.timeout(5.0):
+            result = await lease.client.eval(fenced + script, len(keys) + 1, lease.key, *keys, lease.token, *args)
+    except Exception as exc:
+        lease.lose()
+        raise GameMutationLeaseLost("game mutation persistence unconfirmed") from exc
+    lease.check()
+    return result
+
+
+async def delete_owned_game(game_key: str) -> bool:
+    if _mutation_lease.get() is None:
+        return False
+    await _owned_redis_write("return redis.call('DEL', KEYS[2])", [game_key])
+    return True
+
+
+async def load_owned_game(game_key: str) -> tuple[bool, bytes | str | None]:
+    lease = _mutation_lease.get()
+    if lease is None:
+        return False, None
+    lease.check()
+    try:
+        async with asyncio.timeout(5.0):
+            payload = await lease.client.get(game_key)
+    except Exception as exc:
+        lease.lose()
+        raise GameMutationLeaseLost("game mutation source unavailable") from exc
+    lease.check()
+    return True, payload
+
 
 _local_hints: dict[str, list[str]] = {}
 _local_history: dict[str, list[dict]] = {}
@@ -39,7 +164,16 @@ async def await_owned_game_action[T](action: Coroutine[Any, Any, T]) -> T:
     a disconnected socket from releasing that lock after persistence but before
     the replay result and required completion work have finished.
     """
+    lease = _mutation_lease.get()
+    if lease is not None:
+        try:
+            lease.check()
+        except BaseException:
+            action.close()
+            raise
     accepted_task = asyncio.create_task(action)
+    if lease is not None:
+        lease.children.add(accepted_task)
     cancellation = None
     while not accepted_task.done():
         try:
@@ -49,9 +183,13 @@ async def await_owned_game_action[T](action: Coroutine[Any, Any, T]) -> T:
         except Exception:
             break
     try:
-        return accepted_task.result()
+        result = accepted_task.result()
+        ensure_game_mutation_owned()
+        return result
     finally:
-        if cancellation is not None:
+        if lease is not None:
+            lease.children.discard(accepted_task)
+        if cancellation is not None and not (lease and lease.lost):
             raise cancellation
 
 
@@ -158,7 +296,18 @@ async def get_runtime_replay(game_id: str, *, after_seq: int = 0) -> list[dict]:
 
 
 async def _next_event_seq(game_id: str) -> int:
+    ensure_game_mutation_owned()
     current = _local_event_seq.get(game_id, 0)
+    if _mutation_lease.get() is not None:
+        next_seq = int(
+            await _owned_redis_write(
+                "local seq = redis.call('INCR', KEYS[2]); redis.call('EXPIRE', KEYS[2], ARGV[2]); return seq",
+                [_seq_key(game_id)],
+                _RUNTIME_TTL_S,
+            )
+        )
+        _local_event_seq[game_id] = max(current, next_seq)
+        return next_seq
     if redis_client:
         try:
             next_seq = int(await redis_client.incr(_seq_key(game_id)))  # type: ignore[misc]
@@ -186,10 +335,19 @@ async def stamp_runtime_payload(game_id: str, payload: dict) -> dict:
 
 async def append_runtime_history(game_id: str, item: dict) -> dict:
     stamped = await stamp_runtime_payload(game_id, item)
+    ensure_game_mutation_owned()
+    if _mutation_lease.get() is not None:
+        await _owned_redis_write(
+            "redis.call('RPUSH', KEYS[2], ARGV[2]); redis.call('LTRIM', KEYS[2], -32, -1); "
+            "return redis.call('EXPIRE', KEYS[2], ARGV[3])",
+            [_history_key(game_id)],
+            json.dumps_bytes(stamped),
+            _RUNTIME_TTL_S,
+        )
     _local_history.setdefault(game_id, []).append(dict(stamped))
     if len(_local_history[game_id]) > _HISTORY_LIMIT:
         _local_history[game_id] = _local_history[game_id][-_HISTORY_LIMIT:]
-    if not redis_client:
+    if not redis_client or _mutation_lease.get() is not None:
         return stamped
     try:
         pipe = redis_client.pipeline()
@@ -230,14 +388,23 @@ async def cache_pending_action_result(game_id: str, pending_id: str, payload: di
     if not pending_id:
         return
 
+    ensure_game_mutation_owned()
     stamped = dict(payload)
+    if _mutation_lease.get() is not None:
+        await _owned_redis_write(
+            "redis.call('HSET', KEYS[2], ARGV[2], ARGV[3]); return redis.call('EXPIRE', KEYS[2], ARGV[4])",
+            [_pending_key(game_id)],
+            pending_id,
+            json.dumps_bytes(stamped),
+            _RUNTIME_TTL_S,
+        )
     bucket = _local_pending_results.setdefault(game_id, {})
     bucket[pending_id] = stamped
     if len(bucket) > _PENDING_RESULTS_LIMIT:
         oldest = next(iter(bucket))
         bucket.pop(oldest, None)
 
-    if not redis_client:
+    if not redis_client or _mutation_lease.get() is not None:
         return
     try:
         pipe = redis_client.pipeline()
@@ -249,11 +416,17 @@ async def cache_pending_action_result(game_id: str, pending_id: str, payload: di
 
 
 async def clear_runtime_state(game_id: str) -> None:
+    ensure_game_mutation_owned()
+    if _mutation_lease.get() is not None:
+        await _owned_redis_write(
+            "return redis.call('DEL', KEYS[2], KEYS[3], KEYS[4], KEYS[5])",
+            [_hints_key(game_id), _history_key(game_id), _seq_key(game_id), _pending_key(game_id)],
+        )
     _local_hints.pop(game_id, None)
     _local_history.pop(game_id, None)
     _local_event_seq.pop(game_id, None)
     _local_pending_results.pop(game_id, None)
-    if redis_client:
+    if redis_client and _mutation_lease.get() is None:
         try:
             await redis_client.delete(
                 _hints_key(game_id),
@@ -344,7 +517,14 @@ async def open_game_event_subscription(game_id: str, subscriber_id: str) -> Game
 
 
 async def publish_runtime_event(game_id: str, payload: dict, *, exclude_subscriber_id: str | None = None) -> dict:
+    ensure_game_mutation_owned()
     stamped = await stamp_runtime_payload(game_id, payload)
+    if _mutation_lease.get() is not None:
+        envelope = {"sender_id": exclude_subscriber_id or "", "payload": stamped}
+        await _owned_redis_write(
+            "return redis.call('PUBLISH', ARGV[2], ARGV[3])", [], _events_channel(game_id), json.dumps_bytes(envelope)
+        )
+        return stamped
     if redis_client:
         try:
             envelope = {"sender_id": exclude_subscriber_id or "", "payload": stamped}
@@ -375,25 +555,58 @@ def get_runtime_health_snapshot() -> dict[str, int]:
 
 @asynccontextmanager
 async def game_mutation_lock(game_id: str):
-    if redis_client:
+    client = redis_client
+    if client:
+        key, token = _lock_key(game_id), uuid.uuid4().hex
+        deadline = time.monotonic() + _MUTATION_WAIT_TIMEOUT_S
         try:
-            # Cover the judge's 30-second retry budget plus state persistence.
-            lock = redis_client.lock(_lock_key(game_id), timeout=60, blocking_timeout=5)
-            acquired = await lock.acquire()
+            while True:
+                started = time.monotonic()
+                async with asyncio.timeout(max(0, deadline - started)):
+                    acquired = await client.set(key, token, nx=True, px=int(_MUTATION_LEASE_TTL_S * 1000))
+                if acquired:
+                    break
+                if time.monotonic() >= deadline:
+                    raise TimeoutError
+                await asyncio.sleep(min(0.1, max(0, deadline - time.monotonic())))
         except Exception as exc:
-            logger.warning("Runtime Redis lock unavailable, falling back to local lock game=%s: %s", game_id, exc)
-        else:
-            if not acquired:
-                # Contention must never permit a concurrent process-local mutation.
-                raise TimeoutError(f"game_mutation_lock: timed out waiting for game={game_id}")
-            try:
-                yield
-                return
-            finally:
+            raise TimeoutError(f"game_mutation_lock: timed out waiting for game={game_id}") from exc
+        lease = _MutationLease(client, key, token, started)
+        scope = _mutation_lease.set(lease)
+        renewal = asyncio.create_task(lease.renew())
+        try:
+            lease.check()
+            yield
+            lease.check()
+        except asyncio.CancelledError:
+            if lease.lost:
+                raise GameMutationLeaseLost("game mutation lease lost") from None
+            raise
+        finally:
+
+            async def release():
+                renewal.cancel()
+                await asyncio.gather(renewal, return_exceptions=True)
                 try:
-                    await lock.release()
+                    async with asyncio.timeout(5.0):
+                        await client.eval(_RELEASE_MUTATION, 1, key, token)
                 except Exception as exc:
-                    logger.debug("Runtime lock release failed game=%s: %s", game_id, exc)
+                    logger.debug("Runtime lock release failed game=%s type=%s", game_id, type(exc).__name__)
+
+            cleanup = asyncio.create_task(release())
+            cancellation = None
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError as exc:
+                    cancellation = cancellation or exc
+            cleanup.result()
+            _mutation_lease.reset(scope)
+            if lease.cancel_sent and lease.owner is not None:
+                lease.owner.uncancel()
+            if cancellation is not None:
+                raise cancellation
+        return
     local_lock = _local_locks.setdefault(game_id, asyncio.Lock())
     async with local_lock:
         yield

@@ -11,7 +11,7 @@ from telegram import Bot
 from app.observability.context import request_scope
 from app.observability.ingress import WebhookOriginStore
 from app.update_queue import OutstandingUpdateQueue
-from tests.e2e.test_webhook_lifecycle import _SECRET, _TOKEN, _payload
+from tests.e2e.test_webhook_lifecycle import _SECRET, _TOKEN, _payload, _RedisClaims
 from tests.e2e.test_webhook_lifecycle import webhook_client as _webhook_client_fixture
 
 webhook_client_base = _webhook_client_fixture
@@ -31,10 +31,11 @@ async def _checkpoint():
     await reached.wait()
 
 
-class _PersistedClaims:
+class _PersistedClaims(_RedisClaims):
     """Persist SET NX before holding its acknowledgement at a deterministic barrier."""
 
     def __init__(self, gate_at=1, failure=None):
+        super().__init__()
         self.claims = set()
         self.calls = []
         self.persisted = asyncio.Event()
@@ -44,11 +45,12 @@ class _PersistedClaims:
         self.failure = failure
 
     async def set(self, key, value, *, ex, nx):
-        assert value == "1" and ex == 86400 and nx is True
+        assert value.startswith("pending:") and ex == 86400 and nx is True
         self.calls.append(key)
         if key in self.claims:
             return None
         self.claims.add(key)
+        self.values[key] = value
         if len(self.calls) == self.gate_at:
             self.persisted.set()
             try:
@@ -317,7 +319,6 @@ async def test_handler_cancellation_after_persisted_claim_finishes_one_handoff(
         assert redis.claims == (
             {
                 "telegram:webhook:update:42",
-                "telegram:webhook:update:43",
                 "telegram:webhook:cmd:private:123456789:1111:start",
             }
             if command
@@ -369,7 +370,7 @@ async def test_fetched_unfinished_updates_reject_before_claim_and_retry_after_co
 
 async def test_cancellation_during_confirmed_local_history_still_finishes_handoff(webhook_client, monkeypatch):
     """Protecting only Redis SET leaves the confirmed-history lock gap uncovered."""
-    from app.webhook_dedupe import should_accept_webhook_update
+    from app.webhook_dedupe import claim_webhook_update
 
     client, application, path = webhook_client
     redis = _PersistedClaims()
@@ -384,9 +385,9 @@ async def test_cancellation_during_confirmed_local_history_still_finishes_handof
         if not history_locks:
             await lock.acquire()
             history_locks.append(lock)
-        return await should_accept_webhook_update(update_id, history, lock, **kwargs)
+        return await claim_webhook_update(update_id, history, lock, **kwargs)
 
-    monkeypatch.setattr("app.webhook_dedupe.should_accept_webhook_update", hold_history)
+    monkeypatch.setattr("app.webhook_dedupe.claim_webhook_update", hold_history)
 
     @client.app.before_request
     async def capture_owner():
@@ -460,7 +461,7 @@ async def test_cancelled_handler_waiting_for_admission_has_no_claim_and_can_retr
 
 
 @pytest.mark.parametrize("failure", [TimeoutError("unknown ACK"), ConnectionError("unknown ACK")])
-async def test_unknown_ack_exception_keeps_existing_local_fallback(webhook_client, monkeypatch, failure):
+async def test_unknown_ack_exception_defers_update_without_local_admission(webhook_client, monkeypatch, failure):
     client, application, path = webhook_client
     redis = _PersistedClaims(failure=failure)
     redis.release.set()
@@ -468,12 +469,11 @@ async def test_unknown_ack_exception_keeps_existing_local_fallback(webhook_clien
     monkeypatch.setattr("app.webhook_dedupe.redis_client", redis)
     monkeypatch.setattr("app.observability.ingress.webhook_origins", origins)
     response = await client.post(path, json=_payload(42), headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET})
-    assert response.status_code == 200
-    assert application.update_queue.get_nowait().update_id == 42
+    assert response.status_code == 503
     assert application.update_queue.empty()
-    assert origins.consume(42) is not None
+    assert origins.consume(42) is None
     replay = await client.post(path, json=_payload(42), headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET})
-    assert replay.status_code == 200
+    assert replay.status_code == 503
     assert application.update_queue.empty()
     assert origins.consume(42) is None
 
@@ -506,7 +506,7 @@ async def test_failure_before_origin_preserves_an_existing_origin(webhook_client
     async def fail_before_origin(*args, **kwargs):
         raise RuntimeError("synthetic claim failure")
 
-    monkeypatch.setattr("app.webhook_dedupe.should_accept_webhook_update", fail_before_origin)
+    monkeypatch.setattr("app.webhook_dedupe.claim_webhook_update", fail_before_origin)
     response = await client.post(path, json=_payload(42), headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET})
     assert response.status_code == 500
     assert application.update_queue.empty()

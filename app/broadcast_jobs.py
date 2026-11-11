@@ -273,7 +273,7 @@ class BroadcastService:
             parent_batch_id=str(parent["batch_id"]),
             original_epochs={row["recipient_id"]: row["privacy_epoch"] for row in rows},
             original_subscriptions={row["recipient_id"]: row for row in rows}
-            if parent["channel"] == "horoscope" and parent["mode"] == "delivery"
+            if parent["channel"] in {"horoscope", "tarot"} and parent["mode"] == "delivery"
             else None,
             scheduled=parent.get("scheduled", False),
         )
@@ -388,7 +388,7 @@ class BroadcastService:
                     if live["reason_code"] or live["privacy_epoch"] != recipient["privacy_epoch"]:
                         raise JobCancelRequested(live["reason_code"] or "privacy_revoked")
                     if (
-                        batch["channel"] == "horoscope"
+                        batch["channel"] in {"horoscope", "tarot"}
                         and batch["mode"] == "delivery"
                         and (
                             not recipient.get("subscription_fingerprint")
@@ -397,7 +397,7 @@ class BroadcastService:
                     ):
                         raise JobCancelRequested("subscription_changed")
                     if (
-                        batch["channel"] == "horoscope"
+                        batch["channel"] in {"horoscope", "tarot"}
                         and batch["mode"] == "delivery"
                         and live.get("slot_date") != recipient.get("slot_date")
                     ):
@@ -410,7 +410,8 @@ class BroadcastService:
                             "horoscope": "horoscope_delivery_enabled",
                             "tarot": "tarot_daily_delivery_enabled",
                         }[batch["channel"]]
-                        if str(await get_global_setting(setting, "on")).strip().lower() == "off":
+                        default = "off" if batch["channel"] == "tarot" else "on"
+                        if str(await get_global_setting(setting, default)).strip().lower() == "off":
                             raise JobCancelRequested("channel_paused")
 
                 result = DeliveryResult("skipped", "privacy_revoked")
@@ -426,7 +427,9 @@ class BroadcastService:
                             bot=bot,
                             checkpoint=checkpoint,
                         )
-                        result = await owner.deliver(lambda proxy: self._send(batch, recipient_id, proxy))
+                        result = await owner.deliver(
+                            lambda proxy: self._send(batch, recipient_id, proxy, slot_date=recipient.get("slot_date"))
+                        )
                     if not await self.journal.finish_recipient(batch_id, recipient_id, recipient_token, result):
                         raise BroadcastConflict("recipient_disposition_unconfirmed")
                     if permitted and result.outcome == "sent":
@@ -489,10 +492,13 @@ class BroadcastService:
                     await mark_horoscope_discovery_sent(user_id)
                 else:
                     await self.journal.acknowledge_horoscope(user_id, batch["variant"], recipient)
-            elif batch["channel"] == "tarot" and batch["mode"] == "offer":
-                from app.repos.tarot_daily_subscriptions import mark_tarot_discovery_sent
+            elif batch["channel"] == "tarot":
+                if batch["mode"] == "offer":
+                    from app.repos.tarot_daily_subscriptions import mark_tarot_discovery_sent
 
-                await mark_tarot_discovery_sent(user_id)
+                    await mark_tarot_discovery_sent(user_id)
+                else:
+                    await self.journal.acknowledge_tarot(user_id, recipient)
         except Exception:
             pass  # Journal/reservation remains the authoritative no-replay record.
 
@@ -552,7 +558,7 @@ class BroadcastService:
             )
         return results
 
-    async def _send(self, batch, user_id, bot):
+    async def _send(self, batch, user_id, bot, *, slot_date=None):
         day = batch["effective_date"]
         if isinstance(day, str):
             day = date.fromisoformat(day)
@@ -581,8 +587,10 @@ class BroadcastService:
             if sub is None:
                 raise JobCancelRequested("unsubscribed")
             return await _deliver_horoscope(bot, user_id, sub["sign"], batch["variant"])
-        if batch["mode"] != "offer":
-            raise BroadcastConflict("tarot_delivery_owner_unavailable")
+        if batch["mode"] == "delivery":
+            from app.handlers.tarot_daily import deliver_tarot_reading
+
+            return await deliver_tarot_reading(bot, user_id, day, slot_date=slot_date or day)
         from app.handlers.tarot_daily import send_tarot_invite
 
         return await send_tarot_invite(bot, user_id)

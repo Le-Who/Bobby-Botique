@@ -45,6 +45,68 @@ class _VoiceOperation:
 _voice_operations: dict[tuple[int, int | None, int], _VoiceOperation] = {}
 
 
+@dataclass(frozen=True)
+class _VoiceEditSelection:
+    key: tuple[int, int | None, int]
+    token: object
+
+    @property
+    def pending_key(self) -> str:
+        return f"voice_pending_{self.key[2]}"
+
+
+def _clear_voice_edit(user_data, pending):
+    selection = user_data.get("voice_edit_pending")
+    if isinstance(selection, _VoiceEditSelection) and pending.get("_edit_token") is selection.token:
+        user_data.pop("voice_edit_pending", None)
+
+
+def _discard_voice_edit(user_data):
+    selection = user_data.pop("voice_edit_pending", None)
+    if isinstance(selection, _VoiceEditSelection):
+        pending = user_data.get(selection.pending_key)
+        if pending is not None and pending.get("_edit_token") is selection.token:
+            user_data.pop(selection.pending_key, None)
+
+
+async def prepare_voice_edit(user_data, user_id: int, chat_id: int) -> _VoiceEditSelection | None:
+    """Validate a selection without consuming it before text admission."""
+    if user_data is None:
+        return None
+    selection = user_data.get("voice_edit_pending")
+    if not isinstance(selection, _VoiceEditSelection):
+        user_data.pop("voice_edit_pending", None)
+        return None
+    if selection.key[:2] != (user_id, chat_id):
+        return None
+    pending = user_data.get(selection.pending_key)
+    if pending is None or pending.get("_edit_token") is not selection.token:
+        user_data.pop("voice_edit_pending", None)
+        return None
+
+    from app.repos.memory_consent import is_private_data_snapshot_current
+
+    current = await is_private_data_snapshot_current(user_id, pending.get("memory_epoch"), require_ltm=False)
+    # A newer edit or cancellation can supersede this selection during the check.
+    if user_data.get("voice_edit_pending") is not selection:
+        return None
+    if user_data.get(selection.pending_key) is not pending:
+        user_data.pop("voice_edit_pending", None)
+        return None
+    if not current:
+        _discard_voice_edit(user_data)
+        return None
+    return selection
+
+
+def commit_voice_edit(user_data, selection: _VoiceEditSelection | None) -> bool:
+    """Retire only the prepared generation once its text has been accepted."""
+    if selection is None or user_data is None or user_data.get("voice_edit_pending") is not selection:
+        return False
+    _discard_voice_edit(user_data)
+    return True
+
+
 def _voice_operation_key(user_id, message):
     return user_id, getattr(getattr(message, "chat", None), "id", None), message.message_id
 
@@ -96,7 +158,9 @@ async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     lang = pending.get("lang", "ru") if pending else operation.lang if operation else "ru"
 
     if pending and (
-        pending.get("user_id") != query.from_user.id or pending.get("placeholder_id") != query.message.message_id
+        pending.get("user_id") != query.from_user.id
+        or pending.get("placeholder_id") != query.message.message_id
+        or pending.get("chat_id", query.message.chat.id) != query.message.chat.id
     ):
         await query.answer(t("voice.no_pending", lang))
         return
@@ -182,6 +246,8 @@ def _track_voice_task(coro, pending: dict) -> None:
 
 
 async def _dispatch_voice_action(action, query, context, pending, pending_key, lang):
+    if pending and action in {"cancel", "confirm", "deep_search", "transcribe_only", "retranscribe_flash"}:
+        _clear_voice_edit(context.user_data, pending)
 
     if action == "cancel":
         await _handle_cancel(query, context, lang)
@@ -390,9 +456,19 @@ async def _handle_edit(query, context, pending: dict | None, lang: str) -> None:
         await query.edit_message_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
     # Mark that we're waiting for an edited text from the user
-    if context.user_data and _voice_operation_current(pending.get("_operation")):
-        context.user_data["voice_edit_pending"] = True
-        # Keep voice_pending so we can reference language/user_id later
+    pending_key = f"voice_pending_{query.message.message_id}"
+    if (
+        context.user_data is not None
+        and context.user_data.get(pending_key) is pending
+        and _voice_operation_current(pending.get("_operation"))
+    ):
+        _clear_voice_edit(context.user_data, pending)
+        _discard_voice_edit(context.user_data)
+        token = object()
+        pending["_edit_token"] = token
+        context.user_data["voice_edit_pending"] = _VoiceEditSelection(
+            _voice_operation_key(pending["user_id"], query.message), token
+        )
 
 
 async def _handle_deep_search(query, context, pending: dict | None, lang: str) -> None:

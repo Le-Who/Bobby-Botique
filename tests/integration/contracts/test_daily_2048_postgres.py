@@ -302,6 +302,43 @@ async def test_start_and_edit_are_serialized_on_two_connections(racing_database,
                 await asyncio.gather(pending, return_exceptions=True)
 
 
+async def test_same_player_moves_compare_their_durable_source_progress(racing_database):
+    env = racing_database
+    async with env.pool.acquire() as conn:
+        await _save(conn, env.puzzle, 0)
+        await repo.start_puzzle(env.user_id, env.puzzle, conn=conn)
+
+    async def move(board):
+        async with env.pool.acquire() as conn:
+            return await repo.update_result_after_move(
+                user_id=env.user_id,
+                puzzle_date=env.puzzle.puzzle_date,
+                board=board,
+                spawn_index=1,
+                moves=1,
+                expected_moves=0,
+                merge_score=4,
+                elapsed_ms=1000,
+                status="active",
+                final_score=0,
+                won=False,
+                finished=False,
+                conn=conn,
+            )
+
+    boards = (
+        [[4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 2]],
+        [[0, 0, 0, 4], [0, 0, 0, 0], [0, 0, 0, 0], [2, 0, 0, 0]],
+    )
+    outcomes = await asyncio.gather(*(move(board) for board in boards), return_exceptions=True)
+    winners = [outcome for outcome in outcomes if isinstance(outcome, repo.Daily2048Result)]
+    assert len(winners) == 1
+    assert sum(isinstance(outcome, repo.DailyProgressConflict) for outcome in outcomes) == 1
+    async with env.pool.acquire() as conn:
+        current = await repo.get_result(env.user_id, env.puzzle.puzzle_date, conn=conn)
+    assert current.moves == 1 and current.board == winners[0].board
+
+
 @pytest.mark.parametrize("admin_operation", ["status", "edit"])
 async def test_independent_players_progress_while_admin_waits_on_shared_puzzle_lock(racing_database, admin_operation):
     env = racing_database

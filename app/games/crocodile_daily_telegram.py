@@ -11,6 +11,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 
 from app.repos import crocodile_daily as repo
+from app.utils.background_tasks import try_submit_task
 
 logger = logging.getLogger(__name__)
 
@@ -458,56 +459,73 @@ async def send_daily_completion_bundle(
 
 def queue_daily_result_refresh(bot, puzzle_date: date) -> None:
     key = puzzle_date.isoformat()
-    _pending_bots[key] = bot
     task = _refresh_tasks.get(key)
     if task and not task.done():
+        if not task.cancelling():
+            _pending_bots[key] = bot
         return
-    _refresh_tasks[key] = asyncio.create_task(_flush_daily_result_refresh(puzzle_date))
+    _refresh_tasks.pop(key, None)
+    _pending_bots[key] = bot
+    task = try_submit_task(_flush_daily_result_refresh(puzzle_date), operation="game.daily_result_refresh")
+    if task is None:
+        _pending_bots.pop(key, None)
+        return
+    _refresh_tasks[key] = task
+
+    def completed(owner: asyncio.Task) -> None:
+        if _refresh_tasks.get(key) is not owner:
+            return
+        _refresh_tasks.pop(key, None)
+        _pending_bots.pop(key, None)
+
+    task.add_done_callback(completed)
 
 
 async def _flush_daily_result_refresh(puzzle_date: date) -> None:
     key = puzzle_date.isoformat()
+    owner = asyncio.current_task()
     try:
-        await asyncio.sleep(_REFRESH_DEBOUNCE_S)
-        bot = _pending_bots.pop(key, None)
-        if bot is None:
-            return
+        while True:
+            await asyncio.sleep(_REFRESH_DEBOUNCE_S)
+            bot = _pending_bots.pop(key, None)
+            if bot is None:
+                return
 
-        messages = await repo.get_active_result_messages(puzzle_date, limit=_REFRESH_MESSAGE_LIMIT)
-        for item in messages:
-            try:
-                user_id = int(item["user_id"])
-                focus_difficulty = await _resolve_completion_focus(user_id, puzzle_date)
-                text, keyboard = await render_daily_result_body(
-                    user_id,
-                    puzzle_date,
-                    focus_difficulty=focus_difficulty,
-                )
-                msg_type = item.get("message_type", "text")
-                content = _rendered_content_for_message_type(text, msg_type)
-                text_hash = repo.render_hash(content)
-                if text_hash == item.get("rendered_hash"):
-                    continue
-                puzzle = None
-                if msg_type == "photo":
-                    puzzle = await _load_completion_puzzle_with_art(
-                        bot, user_id, puzzle_date, difficulty=focus_difficulty
+            messages = await repo.get_active_result_messages(puzzle_date, limit=_REFRESH_MESSAGE_LIMIT)
+            for item in messages:
+                try:
+                    user_id = int(item["user_id"])
+                    focus_difficulty = await _resolve_completion_focus(user_id, puzzle_date)
+                    text, keyboard = await render_daily_result_body(
+                        user_id,
+                        puzzle_date,
+                        focus_difficulty=focus_difficulty,
                     )
-                updated = await _update_result_message(bot, item, text, keyboard, puzzle=puzzle)
-                if updated:
-                    await repo.deactivate_other_result_messages(user_id, puzzle_date, keep_id=int(item["id"]))
-                await asyncio.sleep(0.05)
-            except RetryAfter as exc:
-                await asyncio.sleep(float(getattr(exc, "retry_after", 1.0)))
-                _pending_bots[key] = bot
-            except Exception as exc:
-                logger.debug("daily result refresh failed item=%s: %s", item.get("id"), exc)
-    except asyncio.CancelledError:
-        raise
+                    msg_type = item.get("message_type", "text")
+                    content = _rendered_content_for_message_type(text, msg_type)
+                    text_hash = repo.render_hash(content)
+                    if text_hash == item.get("rendered_hash"):
+                        continue
+                    puzzle = None
+                    if msg_type == "photo":
+                        puzzle = await _load_completion_puzzle_with_art(
+                            bot, user_id, puzzle_date, difficulty=focus_difficulty
+                        )
+                    updated = await _update_result_message(bot, item, text, keyboard, puzzle=puzzle)
+                    if updated:
+                        await repo.deactivate_other_result_messages(user_id, puzzle_date, keep_id=int(item["id"]))
+                    await asyncio.sleep(0.05)
+                except RetryAfter as exc:
+                    await asyncio.sleep(float(getattr(exc, "retry_after", 1.0)))
+                    _pending_bots[key] = bot
+                except Exception as exc:
+                    logger.debug("daily result refresh failed item=%s: %s", item.get("id"), exc)
+            if key not in _pending_bots:
+                return
     finally:
-        _refresh_tasks.pop(key, None)
-        if key in _pending_bots:
-            _refresh_tasks[key] = asyncio.create_task(_flush_daily_result_refresh(puzzle_date))
+        if _refresh_tasks.get(key) is owner:
+            _refresh_tasks.pop(key, None)
+            _pending_bots.pop(key, None)
 
 
 def reset_daily_telegram_state_for_tests() -> None:

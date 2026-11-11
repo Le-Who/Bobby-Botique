@@ -9,7 +9,9 @@ import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app import state
 from app.handlers import menus
+from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
 from app.metrics import role_conv_metrics
 from app.repos.conversations import (
     delete_conversation,
@@ -110,9 +112,17 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
         return
     user_id = query.from_user.id
 
+    if _is_user_busy(user_id):
+        await query.answer(_BUSY_TOAST, show_alert=True)
+        return
     try:
-        success = await switch_to_conversation(user_id, conv_id)
+        async with state.get_user_lock(user_id):
+            await state.cancel_interaction(user_id)
+            success = await switch_to_conversation(user_id, conv_id)
         if success:
+            from app.handlers.tarot_chat import leave_tarot_for_chat
+
+            await leave_tarot_for_chat(user_id, query.message)
             await role_conv_metrics.record_conversation_switched()
             # Показываем list бесед с тостом
             text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
@@ -186,10 +196,20 @@ async def conv_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT
 
 async def conv_rename_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Спрашивает новое название беседы"""
+    from app.handlers.interaction_work import begin_text_input_intent, bind_context_text_input, prepare_text_input
+
     query = update.callback_query
+    input_intent = begin_text_input_intent(query.from_user.id)
     await query.answer()
 
     conv_id = int(query.data.split(":")[1])
+
+    if not await prepare_text_input(
+        query.from_user.id, query.message, query.answer, context.user_data, input_intent=input_intent
+    ):
+        return
+    owner = state.begin_interaction(query.from_user.id, "rename")
+    bind_context_text_input(owner, context.user_data)
     if context.user_data is not None:
         context.user_data["rename_conv_id"] = conv_id
 

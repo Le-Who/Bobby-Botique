@@ -1,13 +1,59 @@
 """Board entries retain their object shape through the runtime JSONB codec."""
 
+import json
 import sqlite3
 from contextlib import closing
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app import database
+from app.handlers import board_handler
 from app.repos import boards_repo
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["closed", "changed"])
+async def test_summary_preserves_closed_or_newer_board(monkeypatch, state):
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.create_function("NOW", 0, lambda: "synthetic-time")
+        connection.create_function("jsonb_array_length", 1, lambda value: len(json.loads(value)))
+        connection.execute(
+            "CREATE TABLE inline_boards (id INTEGER PRIMARY KEY, last_summary TEXT, "
+            "entries TEXT, entries_since_last_synthesis INTEGER, closed INTEGER, updated_at TEXT)"
+        )
+        entries = [{"text": "Synthetic first"}]
+        if state == "changed":
+            entries.append({"text": "Synthetic newer"})
+        connection.execute(
+            "INSERT INTO inline_boards VALUES (91, 'Original summary', ?, 1, ?, 'original-time')",
+            (json.dumps(entries), int(state == "closed")),
+        )
+
+        async def query(sql, params=()):
+            # Keep the production predicate; only PostgreSQL's scalar type cast
+            # needs translation for this isolated SQL execution.
+            sql = sql.replace("::int", "")
+            bindings = {str(index): value for index, value in enumerate(params, start=1)}
+            return [dict(row) for row in connection.execute(sql, bindings).fetchall()]
+
+        monkeypatch.setattr(boards_repo, "_TABLE_VERIFIED", True)
+        monkeypatch.setattr(boards_repo.db, "db_query", query)
+
+        monkeypatch.setattr(board_handler, "_run_synthesis", AsyncMock(return_value="Stale summary"))
+        bot = SimpleNamespace(edit_message_text=AsyncMock())
+        await board_handler._maybe_synthesize(
+            bot,
+            {"id": 91, "inline_msg_id": "synthetic-inline", "topic": "Synthetic topic"},
+            [{"text": "Synthetic first"}],
+            1,
+            True,
+        )
+        row = connection.execute("SELECT last_summary, entries_since_last_synthesis FROM inline_boards").fetchone()
+        assert tuple(row) == ("Original summary", 1)
+        bot.edit_message_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio

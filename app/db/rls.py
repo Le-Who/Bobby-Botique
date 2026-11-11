@@ -134,6 +134,8 @@ RLS_CONFIG = {
     "brief_subscriptions": [{"name": "brief_subscriptions_policy", "template": RLS_POLICY_USER}],
     "conversation_branches": [{"name": "conversation_branches_policy", "template": RLS_POLICY_USER}],
     "user_reminders": [{"name": "user_reminders_policy", "template": RLS_POLICY_USER}],
+    "scheduled_deliveries": [{"name": "scheduled_deliveries_admin_policy", "template": RLS_POLICY_ADMIN}],
+    "scheduled_delivery_attempts": [{"name": "scheduled_delivery_attempts_admin_policy", "template": RLS_POLICY_ADMIN}],
     "horoscope_subscriptions": [{"name": "horoscope_subscriptions_policy", "template": RLS_POLICY_USER}],
     "tarot_daily_subscriptions": [{"name": "tarot_daily_subscriptions_policy", "template": RLS_POLICY_USER}],
     "user_achievements": [{"name": "user_achievements_policy", "template": RLS_POLICY_USER}],

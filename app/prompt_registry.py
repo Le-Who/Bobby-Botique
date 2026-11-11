@@ -902,7 +902,12 @@ class PromptRegistry:
 
     def get_prompt_text(self, name: str) -> str:
         """Read effective text without capturing a startup-time string import."""
-        return self._texts[name]
+        if name in self._texts:
+            return self._texts[name]
+        # A domain can load after this operation pinned its revision. Its
+        # immutable baseline is safe; newer global overrides belong to the
+        # next operation.
+        return _PROMPT_BASELINES[name]
 
     def prompt_catalog(self) -> list[dict[str, object]]:
         from app.runtime_settings.prompt_usage import prompt_control_metadata

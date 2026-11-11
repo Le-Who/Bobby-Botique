@@ -413,7 +413,7 @@ async def _show_confirmation_ui_owned(
     _operation,
 ) -> None:
     """Show transcript with confirmation buttons. Dynamic layout based on intent."""
-    from app.handlers.cb_voice import _voice_operation_current
+    from app.handlers.cb_voice import _discard_voice_edit, _voice_operation_current
     from app.utils.formatting import TelegramFormatter
 
     # Build display text
@@ -475,6 +475,7 @@ async def _show_confirmation_ui_owned(
             "transcript": transcript,
             "voice_bytes": voice_bytes,
             "user_id": user_id,
+            "chat_id": getattr(getattr(placeholder, "chat", None), "id", None),
             "lang": lang,
             "file_unique_id": voice.file_unique_id,
             "placeholder_id": placeholder.message_id,
@@ -488,6 +489,7 @@ async def _show_confirmation_ui_owned(
             pending["attached_image"] = attached_image
 
         _operation.pending = pending
+        _discard_voice_edit(context.user_data)
         context.user_data[f"voice_pending_{placeholder.message_id}"] = pending
 
 

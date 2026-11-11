@@ -35,8 +35,11 @@ capacity checks, dedupe claims, origin registration and queue handoff. A caller
 cancelled while waiting starts no claim. Once admission starts, its owned child
 finishes before caller cancellation is restored and the lock is released.
 Lifecycle cleanup closes admission before yielding, drains active admission and
-then stops PTB. The queue remains process-local: process crashes and unknown
-Redis acknowledgements are outside this cooperative cancellation guarantee.
+then stops PTB. Redis deduplication distinguishes token-owned pending claims from
+confirmed queue admissions. Pending, legacy and uncertain claims return retryable
+503 responses; confirmed accepted duplicates return 200. Configured Redis failure
+does not fall back to a local claim. The queue remains process-local: an accepted
+marker proves handoff, without durable processing after process loss.
 See the [dated verification report](webhook-admission-ownership-2026-10-10.md)
 for tested scenarios and evidence limits.
 
@@ -348,6 +351,12 @@ are process-local. Redis holds selected caches, distributed semaphores, deferred
 work and game state; it does not replicate all Python state. Multi-replica safety
 must be evaluated per subsystem.
 
+Canonical chat history has a separate persistence checkpoint on `ChatState`.
+`update_user_chat` advances `_original_length`, `memory_epoch` and
+`_has_persisted_chat` only after its transaction acknowledges success. A failed
+or rejected save preserves the pending history suffix. An ambiguous commit
+acknowledgment requires a durable reload before deciding whether to retry.
+
 Detached work uses tracked submission/retry helpers. Direct request-owned tasks
 are valid when all completion/cancellation paths await cleanup. Synchronous pure
 transformations need not become async. Stdlib logging, structlog, warnings and
@@ -361,6 +370,47 @@ and debounced state writes before closing HTTP/Redis resources. Polling and
 webhook stop operations retain cancellation ownership. State timers submit to
 the tracked task manager; capacity rejection retains their marker and retries
 admission so final cleanup can still persist the latest state.
+
+Reminder and scheduled-brief dispatch use durable source/slot claims and an attempt
+journal (`repos/scheduled_deliveries.py`, migration 082). Accepted workers join the
+shared task-manager drain. Source revision, privacy generation and renewable owner
+identity fence each content attempt and source acknowledgment. Placeholder receipts
+cannot acknowledge a complete AI reminder. Confirmed final receipts advance source
+markers; uncertain effects remain quarantined. Known no-effect failures have bounded
+backoff, including current claims whose private-data lease was temporarily
+unavailable. The hourly brief checker recovers safe retries for the original UTC
+day independently of initial preferred-hour admission. Cleanup drains before the
+lease and claim are released. Optional research TTS retains its separate existing
+queue ownership after text delivery settles.
+
+Role and Tarot interactions have typed process-local owners for input, running work
+and preview. Replacements invalidate predecessor effects before draining their
+children. Modern role callbacks carry the preview identity and writes use the exact
+privacy epoch. Tarot uses copied turn history and hydrates persisted state before
+end/idle mutation. Ordinary request admission drains running interaction work before
+effects; explicit context changes also invalidate completed previews. Model,
+conversation, document and branch mutations use the canonical user lock. These
+owners do not make arbitrary process state replica-safe.
+Canvas prompt editing and role/conversation renaming also own their pending text
+drafts. A shared input transition retires the preceding mode before asking for new
+input. Exact-owner cleanup clears those drafts on replacement or reset without
+discarding canvas settings or unrelated user data. Rename success requires a
+confirmed repository update; failed writes retain the input stage for retry.
+An entry intent is captured before asynchronous feedback or hydration and checked
+again after each transition boundary. An older suspended entry cannot retire a
+newer mode, and reset invalidates pending entries as well as installed owners.
+Explicit retirement also clears persisted role inputs/previews when their runtime
+owner is absent after restart. A cold state loads unrelated saved fields before
+persisting that retirement, and later hydration cannot restore the retired input.
+
+Mini App settings apply validated field patches after reloading under that same
+user lock. Model/reasoning policy is revalidated against the prospective current
+model, and durable rejection returns a conflict. Consent changes retain their
+separate immediate write before waiting for ordinary chat work. Browser saves and
+loads retain draft revisions, and a delete's undo window ends when transmission
+starts. Inline boards serialize publication and closure per board inside one
+process; database closed/snapshot guards do not establish Telegram edit ordering
+between independent replicas.
 
 The process memory monitor is shared by startup, dashboard statistics and
 shutdown. Its periodic psutil sampling and the memory API sample in worker
@@ -389,6 +439,14 @@ Tarot preparation uses per-date/language ownership; missing-only preparation and
 explicit replacement are separate commands, and stale generation cannot overwrite
 a newer owner's result. Provider work stays outside database transactions.
 
+Tarot subscription delivery has a separate minute scheduler and uses the existing
+broadcast queue/journal owner. It defaults off until explicitly enabled in runtime
+settings. Due slots and replay reservations use the subscriber's IANA local date;
+prepared text retains the existing Pacific reading-date convention. Missing
+selected text waits for another scheduler tick before admission. Schedule changes,
+local-date rollover and privacy invalidation fence queued sends. Confirmed receipts
+advance the matching subscription marker; uncertain sends remain quarantined.
+
 Daily Trivia submissions evaluate the selected answer and score against the
 result's pinned question revision. Main and super-game writes share a consistent
 main-row-first lock order inside a short transaction; a super completion updates
@@ -401,11 +459,18 @@ record its replay response under the same game mutation lock. Accepted actions
 finish before socket cancellation releases that lock. Classic result broadcast
 and bounded finalization also remain owned through cancellation; terminal replay
 is restored after finalization clears the game cache. Daily result messages and
-the optional thermometer update remain best effort.
+the optional thermometer update remain best effort and join shared background
+task drain. Cancellation cannot restart their coalesced refresh work. Thermometer
+updates reload an active game under mutation ownership; finalization retires the
+local refresh before publishing the terminal card.
 This is bounded runtime replay, not database-backed exactly-once delivery across
-process crashes or an unavailable Redis cache. The existing Redis mutation lease
-lasts 60 seconds without renewal; local regressions do not establish cross-replica
-safety beyond that lease. Client elapsed-time correction in 2048 remains
+process crashes or an unavailable Redis cache. Redis mutation leases renew with
+unique tokens and retain accepted children through cancellation. Configured Redis
+errors fail closed; classic game cache/runtime writes check the token atomically.
+Daily Crocodile and 2048 database writes compare expected progress before saving,
+and conflicts request a client reload. That comparison does not atomically share a
+fence with a Redis lease for a database command already in flight. Client
+elapsed-time correction in 2048 remains
 supported; the speed score therefore still trusts that client input.
 
 ## Long-term memory

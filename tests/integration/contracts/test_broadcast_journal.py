@@ -241,6 +241,87 @@ async def test_offer_receipts_do_not_count_as_observed_tarot_readings(contract_p
 
 
 @pytest.mark.asyncio
+async def test_tarot_marker_requires_original_schedule_and_never_moves_backwards(contract_pool):
+    from app.repos.tarot_daily_subscriptions import resolve_delivery_slot
+
+    user_id = 2097102801
+    claimed_at = datetime(2097, 10, 28, 12, tzinfo=UTC)
+    subscription = {"timezone": "Europe/Kyiv", "preferred_local_hour": 10, "last_sent_date": None}
+    slot = resolve_delivery_slot(subscription, claimed_at)
+    recipient = {
+        "slot_date": slot.slot_date,
+        "delivery_claimed_at": claimed_at,
+        "subscription_fingerprint": slot.subscription_fingerprint,
+    }
+    async with contract_pool.acquire() as conn:
+        await conn.execute("INSERT INTO public.users(user_id,is_authorized) VALUES($1,1)", user_id)
+        await conn.execute(
+            """INSERT INTO public.tarot_daily_subscriptions(user_id,is_subscribed,timezone,preferred_local_hour)
+            VALUES($1,TRUE,'Europe/Kyiv',10)""",
+            user_id,
+        )
+    assert await repo.acknowledge_tarot(user_id, recipient)
+    async with contract_pool.acquire() as conn:
+        assert (
+            await conn.fetchval("SELECT last_sent_date FROM public.tarot_daily_subscriptions WHERE user_id=$1", user_id)
+            == slot.slot_date
+        )
+        await conn.execute(
+            "UPDATE public.tarot_daily_subscriptions SET preferred_local_hour=11,last_sent_date=NULL WHERE user_id=$1",
+            user_id,
+        )
+    assert not await repo.acknowledge_tarot(user_id, recipient)
+    async with contract_pool.acquire() as conn:
+        assert (
+            await conn.fetchval("SELECT last_sent_date FROM public.tarot_daily_subscriptions WHERE user_id=$1", user_id)
+            is None
+        )
+        await conn.execute(
+            "UPDATE public.tarot_daily_subscriptions SET preferred_local_hour=10,last_sent_date=$2 WHERE user_id=$1",
+            user_id,
+            slot.slot_date + timedelta(days=1),
+        )
+    assert await repo.acknowledge_tarot(user_id, recipient)
+    async with contract_pool.acquire() as conn:
+        assert await conn.fetchval(
+            "SELECT last_sent_date FROM public.tarot_daily_subscriptions WHERE user_id=$1", user_id
+        ) == slot.slot_date + timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_tarot_local_day_reservation_survives_content_day_and_schedule_changes(contract_pool):
+    user_id = 2097102801
+    async with contract_pool.acquire() as conn:
+        await conn.execute("INSERT INTO public.users(user_id,is_authorized) VALUES($1,1)", user_id)
+    batches = []
+    for content_day, fingerprint in [(date(2097, 10, 27), "old-schedule"), (date(2097, 10, 28), "new-schedule")]:
+        batches.append(
+            await repo.create_batch(
+                batch_id=str(uuid4()),
+                operation_id=str(uuid4()),
+                channel="tarot",
+                mode="delivery",
+                effective_date=content_day,
+                variant="",
+                force=False,
+                scheduled=True,
+                recipients=[
+                    {
+                        "recipient_id": user_id,
+                        "privacy_epoch": 7,
+                        "reason_code": None,
+                        "slot_date": date(2097, 10, 28),
+                        "subscription_fingerprint": fingerprint,
+                        "delivery_claimed_at": datetime(2097, 10, 28, 12, tzinfo=UTC),
+                    }
+                ],
+            )
+        )
+    assert batches[0]["pending"] == 1
+    assert (batches[1]["pending"], batches[1]["skipped"]) == (0, 1)
+
+
+@pytest.mark.asyncio
 async def test_different_retry_operations_cannot_bypass_an_unconfirmed_child(contract_pool):
     parent = await make_batch(contract_pool, scheduled=True)
     parent_id, token = await claim(parent)

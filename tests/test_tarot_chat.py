@@ -10,6 +10,9 @@ from app.handlers import messages, tarot_chat
 
 @pytest.fixture(autouse=True)
 def _offline_persistence(monkeypatch):
+    from tests.interaction_fakes import install_private_interaction_fakes
+
+    install_private_interaction_fakes(monkeypatch, chat_reader=True)
     monkeypatch.setattr(state, "_schedule_persist", lambda _state: None)
     monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
 

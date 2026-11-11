@@ -21,6 +21,34 @@ ownership = ownership_support.ownership
 
 
 @pytest.mark.parametrize("kind", ["text", "photo", "voice", "draw"])
+async def test_admitted_request_drains_running_interaction_before_placeholder(admission, kind):
+    owner = state.begin_interaction(admission.uid, "role")
+    started, retired = asyncio.Event(), asyncio.Event()
+
+    async def generate():
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            retired.set()
+
+    predecessor = asyncio.create_task(state.run_interaction(owner, generate))
+    await asyncio.wait_for(started.wait(), 1)
+
+    async def reply(*args, **kwargs):
+        assert retired.is_set(), "placeholder overtook the previous interaction"
+        return SimpleNamespace(message_id=202, edit_text=AsyncMock(), delete=AsyncMock())
+
+    try:
+        request = await admission.launch(kind, 1, reply)
+        await request
+        assert retired.is_set()
+    finally:
+        await state.cancel_interaction(admission.uid)
+        await predecessor
+
+
+@pytest.mark.parametrize("kind", ["text", "photo", "voice", "draw"])
 async def test_full_manager_rejects_request_visibly_and_next_admission_runs(monkeypatch, admission, kind):
     inputs = []
 

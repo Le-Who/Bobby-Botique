@@ -12,7 +12,11 @@ from app.handlers import cb_documents as documents
 
 def callback(data, user_id=101):
     query = SimpleNamespace(
-        data=data, from_user=SimpleNamespace(id=user_id), answer=AsyncMock(), edit_message_text=AsyncMock()
+        data=data,
+        from_user=SimpleNamespace(id=user_id),
+        message=SimpleNamespace(reply_text=AsyncMock()),
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
     )
     return SimpleNamespace(callback_query=query), SimpleNamespace(user_data={})
 
@@ -151,6 +155,7 @@ async def test_conversation_switch_success_calls_exact_owner_and_id(conversation
 
 @pytest.fixture
 def conversation_store(monkeypatch):
+    monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
     rows = {(101, 11), (202, 22)}
     deleted = []
     switched = []

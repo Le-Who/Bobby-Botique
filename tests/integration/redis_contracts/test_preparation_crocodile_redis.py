@@ -144,6 +144,35 @@ async def test_real_game_lock_contention_never_falls_back_to_local(redis_boundar
     assert await first.exists(runtime._lock_key(game_id)) == 0
 
 
+async def test_real_game_lease_renews_past_initial_expiry(redis_boundary, monkeypatch):
+    first, second, _, game_id = redis_boundary
+    worker, contender = replica(first), replica(second)
+    monkeypatch.setattr(worker, "_MUTATION_LEASE_TTL_S", 0.3)
+    monkeypatch.setattr(worker, "_MUTATION_RENEW_INTERVAL_S", 0.03)
+    monkeypatch.setattr(contender, "_MUTATION_WAIT_TIMEOUT_S", 0.05)
+    async with worker.game_mutation_lock(game_id):
+        original_token = await second.get(runtime._lock_key(game_id))
+        await asyncio.sleep(0.4)
+        assert await second.get(runtime._lock_key(game_id)) == original_token
+        with pytest.raises(TimeoutError):
+            async with contender.game_mutation_lock(game_id):
+                pytest.fail("A renewal must exclude another replica after the initial TTL")
+    assert await first.exists(runtime._lock_key(game_id)) == 0
+
+
+async def test_real_game_save_is_fenced_atomically_by_replaced_token(redis_boundary, monkeypatch):
+    first, second, _, game_id = redis_boundary
+    monkeypatch.setattr(runtime, "redis_client", first)
+    game_key = "croc:game:" + game_id
+    await first.set(game_key, "previous-game")
+    with pytest.raises(runtime.GameMutationLeaseLost):
+        async with runtime.game_mutation_lock(game_id):
+            await second.set(runtime._lock_key(game_id), "replacement-owner", ex=60)
+            await runtime.save_owned_game(game_key, b"stale-game", 60)
+    assert await first.get(game_key) == "previous-game"
+    assert await first.get(runtime._lock_key(game_id)) == "replacement-owner"
+
+
 async def test_game_body_failure_preserves_original_error_and_releases_redis_lock(redis_boundary):
     first, _, _, game_id = redis_boundary
     worker = replica(first)

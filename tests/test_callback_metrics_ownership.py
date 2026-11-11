@@ -46,14 +46,26 @@ async def test_draw_execution_owns_one_completed_operation(monkeypatch, collecto
     update = SimpleNamespace(callback_query=query, effective_user=user)
     context = SimpleNamespace(user_data={"draw_state": {"prompt": "Synthetic image", "model": "flux"}})
     tasks = []
-    monkeypatch.setattr("app.utils.background_tasks.submit_task", lambda coro: tasks.append(asyncio.create_task(coro)))
+
+    def submit(coro, **kwargs):
+        task = asyncio.create_task(coro)
+        tasks.append(task)
+        return task
+
+    monkeypatch.setattr("app.utils.background_tasks.try_submit_task", submit)
 
     async def generate(**kwargs):
         return await fail_or_complete(outcome)
 
     monkeypatch.setattr(cmd_image, "_run_generation", generate)
-    await cb_image.draw_callback(update, context)
-    await asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        await cb_image.draw_callback(update, context)
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     requests = int(outcome != "cancelled")
     assert_user_counts(collector, 42, requests, int(outcome in {"failed", "handled_failure"}))
 
@@ -207,7 +219,18 @@ async def test_chat_recovery_callback_owns_its_job(monkeypatch, collector, callb
     tasks = set()
     monkeypatch.setattr(cb_ai_actions, "_background_tasks", tasks)
     monkeypatch.setattr(cb_ai_actions, "_HEAVY_CALLBACK_SEMAPHORE", asyncio.Semaphore(1))
-    monkeypatch.setattr(cb_ai_actions, "get_user_chat", AsyncMock(return_value=SimpleNamespace(history=[])))
+    chat_state = SimpleNamespace(history=[], memory_epoch=0, branch_id=None, private_data_blocked=False)
+    monkeypatch.setattr(cb_ai_actions, "get_user_chat", AsyncMock(return_value=chat_state))
+    if callback == "continue_stream":
+        from app.handlers.retry_requests import begin_request, message_request, remember_message_request
+
+        query.message.chat = SimpleNamespace(id=42)
+        query.message.reply_to_message.message_id = 17
+        request = begin_request(42, "chat", "Synthetic request", chat_state)
+        request.response_ref = (query.message.message_id, 42)
+        state.set_last_bot_message(42, *request.response_ref)
+        remember_message_request(42, 17, 42, asyncio.current_task())
+        message_request(42).response_ref = request.response_ref
     monkeypatch.setattr(state, "ensure_state_loaded", AsyncMock())
     monkeypatch.setattr(state, "get_last_sent_message", lambda uid: "Synthetic retry request")
     monkeypatch.setattr(

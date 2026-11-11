@@ -115,20 +115,24 @@ class TestRetryLastCallback:
 class TestContinueStreamCallback:
     @pytest.mark.asyncio
     async def test_does_not_duplicate_already_persisted_partial_model_turn(self):
+        from app import state
         from app.handlers.cb_ai_actions import continue_stream_callback
         from app.prompt_registry import prompt_scope
 
         update, query = _make_update("continue_stream")
         query.message.text = "A sufficiently long partial model response"
         chat_state = MagicMock()
+        chat_state.private_data_blocked = False
+        chat_state.memory_epoch = 0
+        chat_state.branch_id = None
         chat_state.history = [
             {"role": "user", "parts": ["question"]},
             {"role": "model", "parts": ["A sufficiently **long** partial model response"]},
         ]
         scheduled: list[asyncio.Task] = []
 
-        def schedule(coro):
-            task = asyncio.get_running_loop().create_task(coro)
+        def schedule(coro, **kwargs):
+            task = asyncio.get_running_loop().create_task(coro, **kwargs)
             scheduled.append(task)
             return task
 
@@ -139,6 +143,8 @@ class TestContinueStreamCallback:
             prompt_scope(overrides={"chat.continue": "Edited continuation request"}, revision=100),
             patch("app.handlers.cb_ai_actions.set_request_id"),
             patch("app.handlers.cb_ai_actions.set_user_context"),
+            patch.object(state, "USER_STATES", state._UserStateStore()),
+            patch.object(state, "_LAST_BOT_MESSAGE", {}),
             patch("app.handlers.cb_ai_actions.state.get_user_lock", return_value=asyncio.Lock()),
             patch("app.handlers.cb_ai_actions.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
             patch("app.handlers.cb_ai_actions.asyncio.create_task", side_effect=schedule),

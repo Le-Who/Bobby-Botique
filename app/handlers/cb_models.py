@@ -12,6 +12,7 @@ import telegram
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app import state
 from app.config import get_model_hash, get_openrouter_keys, settings
 from app.handlers import menus
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
@@ -100,9 +101,13 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель"),
             )
             return
-    chat_state = await get_user_chat(user_id)
-    chat_state.model = model_name
-    await update_user_chat(user_id, chat_state)
+    async with state.get_user_lock(user_id):
+        await state.cancel_interaction(user_id)
+        chat_state = await get_user_chat(user_id)
+        chat_state.model = model_name
+        if not await update_user_chat(user_id, chat_state):
+            await query.answer("❌ Не удалось сохранить модель. Попробуйте снова.", show_alert=True)
+            return
     await leave_tarot_for_chat(user_id, query.message)
 
     # Update menu с новой выбранной modelю
@@ -151,9 +156,13 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("⚠️ Эта модель больше недоступна.")
         return
 
-    chat_state = await get_user_chat(user_id)
-    chat_state.model = model_name
-    await update_user_chat(user_id, chat_state)
+    async with state.get_user_lock(user_id):
+        await state.cancel_interaction(user_id)
+        chat_state = await get_user_chat(user_id)
+        chat_state.model = model_name
+        if not await update_user_chat(user_id, chat_state):
+            await query.answer("❌ Не удалось сохранить модель. Попробуйте снова.", show_alert=True)
+            return
     await leave_tarot_for_chat(user_id, query.message)
 
     if model_name.startswith("opencode-go/"):

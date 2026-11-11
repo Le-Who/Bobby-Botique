@@ -882,9 +882,12 @@ async def append_attempt_and_maybe_finish(
     difficulty: str = "easy",
     attempt: dict[str, Any],
     max_attempts: int = DAILY_MAX_ATTEMPTS,
+    expected_attempts: list[dict[str, Any]] | None = None,
 ) -> DailyResult:
     difficulty = normalize_daily_difficulty(difficulty)
     result = await get_or_create_result(user_id, puzzle_date, difficulty=difficulty)
+    if expected_attempts is not None and (result.status != "active" or result.attempts != expected_attempts):
+        raise DailyCrocConflict("progress_conflict")
     if result.status != "active":
         return result
 
@@ -897,6 +900,9 @@ async def append_attempt_and_maybe_finish(
     points = compute_points(won=won, attempt_count=len(attempts), used_hints_count=result.used_hints_count)
     share_grid = build_share_grid(attempts, won=won) if finished else ""
     streak = (await previous_daily_streak(user_id, puzzle_date, difficulty=difficulty)) + 1 if won else 0
+    from app.games.crocodile_runtime import ensure_game_mutation_owned
+
+    ensure_game_mutation_owned()
 
     rows = await db.db_query(
         """
@@ -911,6 +917,7 @@ async def append_attempt_and_maybe_finish(
             streak_after = CASE WHEN $8 THEN $11 ELSE streak_after END,
             updated_at = NOW()
         WHERE user_id = $1 AND puzzle_date = $2 AND difficulty = $3 AND status = 'active'
+          AND attempts = $12::jsonb AND used_hints_count = $13
         RETURNING user_id, puzzle_date, difficulty, status, attempts, best_score, used_hints_count,
                   won_at, finished_at, points, share_grid, streak_after
         """,
@@ -926,11 +933,13 @@ async def append_attempt_and_maybe_finish(
             points,
             share_grid,
             streak,
+            result.attempts,
+            result.used_hints_count,
         ),
     )
     if rows:
         return _row_to_result(rows[0])
-    return await get_or_create_result(user_id, puzzle_date, difficulty=difficulty)
+    raise DailyCrocConflict("progress_conflict")
 
 
 async def upsert_preference(

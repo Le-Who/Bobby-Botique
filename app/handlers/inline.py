@@ -1795,14 +1795,19 @@ async def _generate_and_edit_inline(
         )
     finally:
         progress_task.cancel()
-        _gen_success = bool(final_answer and not is_error_message(final_answer))
-        api_logger.log_response(
-            "gemini_inline",
-            _log_start,
-            success=_gen_success,
-            model=_response_model,
-            response_length=len(final_answer or ""),
-        )
+        from app.providers.stream_tasks import drain_provider_tasks
+
+        try:
+            await drain_provider_tasks((progress_task,))
+        finally:
+            _gen_success = bool(final_answer and not is_error_message(final_answer))
+            api_logger.log_response(
+                "gemini_inline",
+                _log_start,
+                success=_gen_success,
+                model=_response_model,
+                response_length=len(final_answer or ""),
+            )
 
     # Record metrics (we're already in a background task — awaiting is safe)
     if _gen_success:
@@ -2363,7 +2368,7 @@ async def _generate_tarot_response(
             return primary_result
 
         try:
-            lite_result = await lite_task
+            lite_result = await asyncio.shield(lite_task)
         except Exception as exc:
             logging.warning(
                 "Inline Tarot lite fallback failed for spread=%s: %s",
@@ -2388,11 +2393,12 @@ async def _generate_tarot_response(
             return primary_result
         return lite_result if lite_result is not None else primary_result
     finally:
+        from app.providers.stream_tasks import drain_provider_tasks
+
         for task in (primary_task, lite_task):
             if not task.done():
                 task.cancel()
-                with contextlib.suppress(BaseException):
-                    await task
+        await drain_provider_tasks((primary_task, lite_task))
 
 
 async def _generate_tarot_inline(

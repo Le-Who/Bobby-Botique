@@ -367,8 +367,6 @@ async def update_user_chat(
                     roles_to_insert.append(msg.get("role", "user"))
                     contents_to_insert.append(_extract_message_content(msg))
 
-            chat_state._original_length = current_length
-
             query = """
             WITH update_chats AS (
                 INSERT INTO public.chats (
@@ -446,13 +444,17 @@ async def update_user_chat(
                 ),
                 conn=conn,
             )
-            if rows:
-                chat_state.memory_epoch = int(rows[0]["memory_epoch"])
-                chat_state._has_persisted_chat = True
-                return True
-            return False
         finally:
             await clear_user_context(conn=conn)
+
+    if not rows:
+        return False
+    # Publish checkpoints only after the transaction acknowledges success.
+    # Failed or rejected writes must not consume the pending history suffix.
+    chat_state._original_length = current_length
+    chat_state.memory_epoch = int(rows[0]["memory_epoch"])
+    chat_state._has_persisted_chat = True
+    return True
 
 
 async def migrate_invalid_models(

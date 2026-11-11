@@ -26,6 +26,7 @@ provider API.  Generation happens *only* on draw:execute.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -143,6 +144,11 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     Parses action from callback_data and routes to the right sub-handler.
     """
     query = update.callback_query
+    from app.handlers.interaction_work import begin_text_input_intent
+
+    input_intent = None
+    if query.data == "draw:edit:prompt" and _get_draw_state(context).get("prompt"):
+        input_intent = begin_text_input_intent(query.from_user.id)
     await query.answer()
 
     user_id = query.from_user.id if query.from_user else 0
@@ -216,6 +222,15 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
             return
 
+        from app.handlers.interaction_work import bind_context_text_input, prepare_text_input
+        from app.state import begin_interaction
+
+        if not await prepare_text_input(
+            user_id, query.message, query.answer, context.user_data, input_intent=input_intent
+        ):
+            return
+        owner = begin_interaction(user_id, "draw")
+        bind_context_text_input(owner, context.user_data)
         _patch_draw_state(context, awaiting_prompt=True)
         safe_limit = 400
         short = current_prompt[:safe_limit].strip() + ("..." if len(current_prompt) > safe_limit else "")
@@ -250,80 +265,58 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _edit_caption_and_markup(query, caption, _main_keyboard(state))
         return
 
-    # ── Execute (trigger generation) ──────────────────────────────────────
-    if action == "execute":
+    # Current and legacy buttons share admission and owner-aware cleanup.
+    if action in {"execute", "regen"}:
         current_prompt = state.get("prompt", "")
         if not current_prompt:
             await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
             return
 
-        from app.state import get_user_lock, get_user_state
+        from app import state as request_state
+        from app.utils.background_tasks import try_submit_task
 
-        user_state = get_user_state(user_id)
-        if user_state.is_processing or get_user_lock(user_id).locked():
+        user_state = request_state.get_user_state(user_id)
+        if request_state.is_ordinary_request_busy(user_id):
             await query.answer(_BUSY_TOAST, show_alert=True)
             return
-
         user_state.is_processing = True
+        snapshot = dict(state)
 
-        async def _do_generate() -> None:
+        def release(owner: asyncio.Task) -> None:
+            if request_state.get_active_task(user_id) is owner:
+                user_state.is_processing = False
+                request_state.clear_active_task(user_id)
+
+        async def generate() -> None:
             try:
-                async with get_user_lock(user_id):
+                async with request_state.get_user_lock(user_id):
+                    await request_state.cancel_interaction(user_id)
                     from app.handlers.cmd_image import _run_generation
 
-                    async with MetricsMiddleware("draw_execute", user_id=user_id) as operation:
+                    async with MetricsMiddleware(f"draw_{action}", user_id=user_id) as operation:
                         operation.success = await _run_generation(
                             update=update,
                             context=context,
                             prompt=current_prompt,
-                            model=state.get("model", settings.POLLINATIONS_DEFAULT_IMAGE_MODEL),
-                            aspect_ratio=state.get("aspect_ratio", "1:1"),
-                            enhance=state.get("enhance_prompt", True),
+                            model=snapshot.get(
+                                "model", "flux" if action == "regen" else settings.POLLINATIONS_DEFAULT_IMAGE_MODEL
+                            ),
+                            aspect_ratio=snapshot.get("aspect_ratio", "1:1"),
+                            enhance=snapshot.get("enhance_prompt", True),
                         )
             finally:
-                user_state.is_processing = False
+                owner = asyncio.current_task()
+                if owner is not None:
+                    release(owner)
 
-        from app.utils.background_tasks import submit_task
-
-        submit_task(_do_generate())
-        return
-
-    # ── Legacy: regen / ar / model (backward compat with older inline buttons) ─
-    if action == "regen":
-        current_prompt = state.get("prompt", "")
-        if not current_prompt:
-            await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
+        task = try_submit_task(generate(), operation=f"draw.{action}")
+        if task is None:
+            user_state.is_processing = False
+            await query.answer("⏳ Сейчас не удалось запустить генерацию. Попробуйте ещё раз.", show_alert=True)
             return
-
-        from app.state import get_user_lock, get_user_state
-
-        user_state = get_user_state(user_id)
-        if user_state.is_processing or get_user_lock(user_id).locked():
-            await query.answer(_BUSY_TOAST, show_alert=True)
-            return
-
-        user_state.is_processing = True
-
-        async def _do_regen() -> None:
-            try:
-                async with get_user_lock(user_id):
-                    from app.handlers.cmd_image import _run_generation
-
-                    async with MetricsMiddleware("draw_regen", user_id=user_id) as operation:
-                        operation.success = await _run_generation(
-                            update=update,
-                            context=context,
-                            prompt=current_prompt,
-                            model=state.get("model", "flux"),
-                            aspect_ratio=state.get("aspect_ratio", "1:1"),
-                            enhance=state.get("enhance_prompt", True),
-                        )
-            finally:
-                user_state.is_processing = False
-
-        from app.utils.background_tasks import submit_task
-
-        submit_task(_do_regen())
+        request_state.register_active_task(user_id, task)
+        # A worker cancelled before its first step never enters its finally.
+        task.add_done_callback(release)
         return
 
     logger.warning("draw_callback: unknown action=%r data=%r", action, data)

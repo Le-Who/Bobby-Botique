@@ -164,6 +164,6 @@ async def test_rename_custom_role(mock_db_query):
     await rename_custom_role(role_id, user_id, new_title)
 
     mock_db_query.assert_called_once_with(
-        "UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3",
+        "UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3 RETURNING id",
         (new_title, role_id, user_id),
     )
