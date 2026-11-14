@@ -22,8 +22,8 @@ from google.genai import types
 
 from app.process_policies import resolve_process
 from app.prompt_registry import get_prompt_text, register_controlled_text
-from app.providers.base import _build_thinking_config
 from app.providers.gemini import get_cached_genai_client
+from app.providers.gemini_config import build_generate_content_config
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -189,9 +189,8 @@ async def _generate_with_resilience(
     if _is_transcription_only_model(model):
         config = types.GenerateContentConfig()
     else:
-        if thinking_config is not None and thinking_config.thinking_level is not None:
-            thinking_config = _build_thinking_config(model, thinking_config.thinking_level.value.lower())
-        config = types.GenerateContentConfig(
+        config = build_generate_content_config(
+            model,
             system_instruction=system_prompt,
             thinking_config=thinking_config,
         )

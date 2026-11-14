@@ -89,6 +89,39 @@ def request_for(model, **kwargs):
     )
 
 
+@pytest.mark.parametrize("model", ["kimi-k2.5", "kimi-k2.6", "deepseek-v4-pro", "deepseek-v4-flash"])
+@pytest.mark.parametrize("thinking", [ThinkingLevel.LOW, ThinkingLevel.MEDIUM, ThinkingLevel.HIGH])
+async def test_opencode_wire_uses_model_supported_reasoning_parameters(monkeypatch, model, thinking):
+    from app.providers.opencode import OpencodeGoProvider
+
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b'data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        )
+
+    model_id = f"opencode-go/{model}"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(openrouter, "_openrouter_http_client", client)
+        events = [
+            event
+            async for event in OpencodeGoProvider("synthetic-key").stream(
+                request_for(model_id, thinking_level=thinking), model_name=model_id
+            )
+        ]
+    assert isinstance(events[-1], StreamCompleted)
+    payload = requests[0]
+    if model.startswith("kimi-"):
+        assert "reasoning_effort" not in payload
+        assert "thinking" not in payload
+    else:
+        assert payload["reasoning_effort"] == ("high" if thinking is ThinkingLevel.MEDIUM else thinking.value)
+
+
 def text_frame(kind, text):
     if kind == "opencode":
         return [

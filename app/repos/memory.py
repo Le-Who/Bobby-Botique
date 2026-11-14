@@ -313,9 +313,12 @@ async def _get_embedding(
     """Generate an embedding for the given text or multimodal payload.
 
     Uses Gemini's gemini-embedding-2-preview model (768-dim, pre-normalized).
-    The task_type should be:
+    The logical task_type should be:
       - RETRIEVAL_DOCUMENT when storing content for later retrieval
       - RETRIEVAL_QUERY when searching for similar content
+
+    Embeddings 2 has no task_type request field. Preserve the original input
+    and vector profile; only legacy Embedding 001 receives that parameter.
 
     Returns None on failure (non-critical — memory just won't be stored).
     On 400 INVALID_ARGUMENT (revoked/invalid key), attempts one key rotation.
@@ -381,7 +384,9 @@ async def _get_embedding(
                 model=EMBEDDING_MODEL,
                 contents=payload,
                 config=types.EmbedContentConfig(
-                    task_type=task_type,
+                    task_type=None
+                    if EMBEDDING_MODEL.removeprefix("models/").startswith("gemini-embedding-2")
+                    else task_type,
                     output_dimensionality=EMBEDDING_DIMENSION,
                 ),
             )

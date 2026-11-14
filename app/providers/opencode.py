@@ -307,14 +307,12 @@ class OpencodeGoProvider(OpenRouterProvider):
         )
 
     # Models that support reasoning_effort (OpenAI-compatible extended thinking).
-    # DeepSeek V4 Pro/Flash: "low"/"medium"/"high"/"max"
-    # Kimi K2.5/K2.6: "low"/"high"
+    # DeepSeek V4 Pro/Flash: "low"/"high"/"max".
+    # Kimi K2 uses a thinking toggle, not a graded reasoning_effort ladder.
     _REASONING_EFFORT_MODELS = frozenset(
         {
             "deepseek-v4-pro",
             "deepseek-v4-flash",
-            "kimi-k2.5",
-            "kimi-k2.6",
         }
     )
 
@@ -342,7 +340,7 @@ class OpencodeGoProvider(OpenRouterProvider):
     # Map internal thinking_level labels -> API reasoning_effort values.
     _THINKING_TO_EFFORT: dict[str, str] = {
         "low": "low",
-        "medium": "medium",
+        "medium": "high",
         "high": "high",
         "max": "max",
     }
@@ -403,7 +401,7 @@ class OpencodeGoProvider(OpenRouterProvider):
         )
 
     def _extra_payload_params(self, model_name: str, thinking_level: str | None) -> dict:
-        """Inject reasoning_effort for DeepSeek V4 and Kimi K2 models.
+        """Inject supported reasoning_effort values for DeepSeek V4 models.
         Also injects tools/tool_choice when set via _pending_tools (from _execute_request
         or typed stream generation).
 

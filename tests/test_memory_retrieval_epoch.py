@@ -410,7 +410,8 @@ async def test_graph_reuses_one_successful_sdk_result_after_original_key_retry(
     assert triples == ["Example — USES → Python ★"]
     assert passages == {"Example — USES → Python": "Synthetic source passage"}
     assert len(calls) == (2 if rotate_key else 1)
-    assert all(call["config"].task_type == "RETRIEVAL_QUERY" for call in calls)
+    assert all(call["config"].task_type is None for call in calls)
+    assert all(call["config"].output_dimensionality == memory.EMBEDDING_DIMENSION for call in calls)
     assert resolver.await_count == int(rotate_key)
 
 

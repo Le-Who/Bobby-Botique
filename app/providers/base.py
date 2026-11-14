@@ -40,7 +40,7 @@ def _is_gemini3_model(model_name: str) -> bool:
 def _build_thinking_config(model_name: str, thinking_level: str | None) -> types.ThinkingConfig | None:
     """Build ThinkingConfig for the appropriate model family.
 
-    - Gemini 3.x → thinkingLevel (minimal/low/medium/high)
+    - Gemini 3.x/4 → thinkingLevel with model-specific supported levels
     - Gemini 2.5  → thinkingBudget (int: 0-24576)
     - Other models (OpenRouter, etc.) → None (not supported)
 
@@ -50,15 +50,23 @@ def _build_thinking_config(model_name: str, thinking_level: str | None) -> types
         return None
     # The Developer API also accepts the explicit models/ resource prefix.
     model_name = model_name.removeprefix("models/")
-    if is_openrouter_model(model_name):
+    if is_openrouter_model(model_name) or any(token in model_name for token in ("-transcribe", "-tts", "-live")):
         return None
-    if _is_gemini3_model(model_name):
+    if _is_gemini3_model(model_name) or model_name.startswith("gemini-4"):
         level = _THINKING_LEVEL_MAP[thinking_level]
-        if level == "minimal" and (model_name.startswith(("gemini-3.8-", "gemini-3.7-")) or "pro" in model_name):
+        if level == "minimal" and (
+            model_name.startswith(("gemini-3.8-", "gemini-3.7-", "gemini-4")) or "pro" in model_name
+        ):
             level = "low"
         if level == "medium" and model_name.startswith("gemini-3-pro"):
             level = "high"
+        if model_name.startswith("gemini-3-pro-image"):
+            level = "high"
+        elif model_name.startswith(("gemini-3.1-flash-image", "gemini-3.1-flash-lite-image")):
+            level = "minimal" if thinking_level == "off" else "high"
         return types.ThinkingConfig(thinking_level=level)  # type: ignore[arg-type]  # Pydantic coerces str→ThinkingLevel
+    if not model_name.startswith("gemini-2.5-"):
+        return None
     budget = _THINKING_BUDGET_MAP[thinking_level]
     if model_name.startswith("gemini-2.5-pro"):
         budget = max(128, budget)
