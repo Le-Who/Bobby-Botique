@@ -130,6 +130,31 @@ async def test_asr_explicit_plan_excludes_legacy_hidden_fallback(monkeypatch):
     assert attempted == ["gemini-admin-a", "gemini-admin-b"]
 
 
+@pytest.mark.parametrize("intent", ["search", "draw", None])
+async def test_dedicated_transcription_preserves_voice_intent_without_reupload(monkeypatch, intent):
+    from google.genai import types
+
+    from app.utils import multimodal_processor as media
+
+    transcript = "Synthetic voice request"
+    tagged = f"{transcript}\nINTENT:{intent.upper()}" if intent else None
+    if intent == "draw":
+        tagged = f"{transcript}\nDRAW_PROMPT: a green garden\nINTENT:DRAW"
+    generate = AsyncMock(return_value=transcript)
+    classify = AsyncMock(return_value=tagged)
+    monkeypatch.setattr(media, "_generate_with_resilience", generate)
+    monkeypatch.setattr(media, "_classify_intent_with_fallback", classify)
+    result = await media._transcribe_gemini_plan(
+        types.Part.from_bytes(data=b"synthetic audio", mime_type="audio/ogg"),
+        None,
+        ResolvedPolicy(("gemini-3.5-transcribe", "gemini-3.5-flash-lite"), "sequential", True, 1),
+    )
+    assert result == (transcript, intent or "conversational", "a green garden" if intent == "draw" else None)
+    generate.assert_awaited_once()
+    classify.assert_awaited_once()
+    assert all(part.inline_data is None for part in classify.await_args.kwargs["prompt_parts"])
+
+
 @pytest.mark.asyncio
 async def test_media_intent_uses_exact_explicit_chain(monkeypatch):
     from google.genai import types

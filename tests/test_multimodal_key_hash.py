@@ -84,3 +84,62 @@ async def test_direct_media_key_selection_does_not_expand_model_fallback(monkeyp
     assert await multimodal_processor._get_api_key_for_media("gemini-chosen", {"excluded"}) == (None, None)
     legacy.assert_not_awaited()
     select.assert_awaited_once_with("gemini-chosen", excluded_hashes={"excluded"})
+
+
+@pytest.mark.parametrize(
+    "model,level,budget",
+    [
+        ("gemini-3.5-transcribe", None, None),
+        ("models/gemini-3.5-transcribe", None, None),
+        ("gemini-2.5-flash", None, 24576),
+        ("gemini-3.5-flash-lite", "HIGH", None),
+    ],
+)
+async def test_media_generation_matches_model_thinking_capabilities(monkeypatch, model, level, budget):
+    from google.genai import types
+
+    status = SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
+    response = (
+        types.GenerateContentResponse.model_validate(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {"audio_transcription": {"text": "synthetic "}},
+                                {"audio_transcription": {"text": "transcript"}},
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+        if "transcribe" in model
+        else SimpleNamespace(text="synthetic transcript")
+    )
+    generate = AsyncMock(return_value=response)
+    client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: status)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", AsyncMock(return_value=True))
+    monkeypatch.setattr(multimodal_processor, "get_cached_genai_client", lambda _: client)
+
+    assert (
+        await multimodal_processor._generate_with_resilience(
+            parts=[],
+            model=model,
+            system_prompt="Transcribe",
+            thinking_config=multimodal_processor.THINKING_CONFIG_HIGH,
+            api_key="synthetic-key",
+        )
+        == "synthetic transcript"
+    )
+
+    config = generate.await_args.kwargs["config"]
+    if "transcribe" in model:
+        assert config.thinking_config is None
+        assert config.system_instruction is None
+    else:
+        assert config.thinking_config.thinking_level == level
+        assert config.thinking_config.thinking_budget == budget
+        assert config.system_instruction == "Transcribe"
+    status.suspend_key.assert_not_awaited()

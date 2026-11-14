@@ -22,6 +22,7 @@ from google.genai import types
 
 from app.process_policies import resolve_process
 from app.prompt_registry import get_prompt_text, register_controlled_text
+from app.providers.base import _build_thinking_config
 from app.providers.gemini import get_cached_genai_client
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
@@ -152,6 +153,10 @@ def _normalize_media_model(model: str | None, fallback: str) -> str:
     return normalize_gemini_chat_model(model, fallback=fallback)
 
 
+def _is_transcription_only_model(model: str) -> bool:
+    return model.removeprefix("models/") == "gemini-3.5-transcribe"
+
+
 async def _generate_with_resilience(
     *,
     parts: list[types.Part],
@@ -181,10 +186,15 @@ async def _generate_with_resilience(
     from app.repos.keys import get_key_status_manager
     from app.resilience_policy import is_retryable_exception
 
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        thinking_config=thinking_config,
-    )
+    if _is_transcription_only_model(model):
+        config = types.GenerateContentConfig()
+    else:
+        if thinking_config is not None and thinking_config.thinking_level is not None:
+            thinking_config = _build_thinking_config(model, thinking_config.thinking_level.value.lower())
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            thinking_config=thinking_config,
+        )
 
     tried_key_hashes: set[str] = set()
     last_error: Exception | None = None
@@ -241,9 +251,19 @@ async def _generate_with_resilience(
                 origin="multimodal_processor",
                 input_parts=len(parts),
             )
-            if response and response.text:
-                return response.text.strip()
-            return None
+            if not response:
+                return None
+            if _is_transcription_only_model(model):
+                candidates = response.candidates or []
+                content = candidates[0].content if candidates else None
+                response_parts = (content.parts or []) if content else []
+                text = "".join(
+                    (part.audio_transcription.text if part.audio_transcription else part.text) or ""
+                    for part in response_parts
+                )
+            else:
+                text = response.text
+            return text.strip() if text else None
 
         try:
             # Pre-create circuit breaker with media-specific config (60s monitor)
@@ -481,25 +501,25 @@ async def _transcribe_pollinations(audio_bytes: bytes, api_key: str | None) -> t
     raw_text = await pollinations_provider.transcribe_audio(audio_bytes, model="whisper")
 
     if raw_text:
-        # Whisper gives a clean transcript but no INTENT:/DRAW_PROMPT: tags.
-        # Run a cheap text-only call through the multi-provider intent chain
-        # (gemini-3.1-flash-lite → gemini-3.5-flash → opencode-go/big-pickle).
-        # This avoids re-uploading the audio while preserving DRAW/SEARCH routing.
-        from app.runtime_settings.additional_prompts import render_additional_prompt
-
-        intent_prompt = render_additional_prompt(
-            "media.intent.text", asr_instruction=get_prompt_text("media.asr"), raw_text=raw_text
-        )
-        tagged = await _classify_intent_with_fallback(
-            prompt_parts=[types.Part.from_text(text=intent_prompt)],
-            api_key=api_key,
-        )
-        if tagged:
-            return _parse_voice_intent(tagged)
-        # All intent models failed — return clean transcript with safe default
-        logging.warning("All intent models failed after Whisper ASR, defaulting to conversational")
-        return raw_text.strip(), "conversational", None
+        return await _classify_transcript_intent(raw_text, api_key)
     return None, "conversational", None
+
+
+async def _classify_transcript_intent(raw_text: str, api_key: str | None) -> tuple[str, str, str | None]:
+    """Tag a dedicated ASR transcript without uploading the audio a second time."""
+    from app.runtime_settings.additional_prompts import render_additional_prompt
+
+    intent_prompt = render_additional_prompt(
+        "media.intent.text", asr_instruction=get_prompt_text("media.asr"), raw_text=raw_text
+    )
+    tagged = await _classify_intent_with_fallback(
+        prompt_parts=[types.Part.from_text(text=intent_prompt)],
+        api_key=api_key,
+    )
+    if tagged:
+        return _parse_voice_intent(tagged)
+    logging.warning("Intent classification failed after dedicated ASR, defaulting to conversational")
+    return raw_text.strip(), "conversational", None
 
 
 async def _transcribe_gemini(
@@ -538,6 +558,8 @@ async def _transcribe_gemini_plan(
             api_key=None if policy.explicit else api_key,
         )
         if raw_text:
+            if _is_transcription_only_model(_model):
+                return await _classify_transcript_intent(raw_text, None if policy.explicit else api_key)
             break
         logging.info("Gemini ASR failed on %s, trying next model", _model)
 

@@ -109,8 +109,24 @@ process.stdin.on('end', async () => {
       return route.abort();
     });
     if (data.surface === 'dashboard') {
+      snapshot.errors = { available: true, count: 3, recent: [
+        { timestamp: '2026-11-14T19:36:11Z', type: 'synthetic', message: 'Current day' },
+        { timestamp: '2026-11-13T19:36:11Z', type: 'synthetic', message: 'Previous day' },
+        { timestamp: 'invalid <img src=x>', type: 'synthetic', message: 'Invalid date' },
+      ] };
       await page.goto('http://gemaibot.test/');
       await page.locator('#live-status').filter({ hasText: 'LIVE' }).waitFor();
+      const errorTimes = page.locator('#error-log .error-ts');
+      assert.match(await errorTimes.nth(0).textContent(), /14\.11\.2026.*21:36:11/s);
+      assert.match(await errorTimes.nth(1).textContent(), /13\.11\.2026.*21:36:11/s);
+      assert.equal(await errorTimes.nth(2).textContent(), '—');
+      assert.equal(await page.locator('#error-log img').count(), 0);
+      await page.locator('#tab-errors').click();
+      await page.screenshot({ path: path.join(data.screenshots, 'dashboard-errors-desktop.png'), fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: path.join(data.screenshots, 'dashboard-errors-mobile.png'), fullPage: true });
+      await page.setViewportSize({ width: 1366, height: 900 });
+      await page.locator('#tab-overview').click();
       assert.match(await page.locator('[data-source="queue"]').textContent(), /stale/);
       assert.match(await page.locator('[data-source="metrics"]').textContent(), /current/);
       for (const state of ['starting', 'ready', 'draining', 'stopped', 'failed']) {

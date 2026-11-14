@@ -776,7 +776,7 @@ class MetricsCollector:
                 "error_message": safe_message,
                 "message_fingerprint": message_fingerprint,
                 "request_id": current_request_id,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(time_utils.get_kyiv_tz()).isoformat(),
             }
         )
 

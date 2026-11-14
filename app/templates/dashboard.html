@@ -988,6 +988,14 @@
         }
       }
 
+      function formatErrorTimestamp(value) {
+        const date = value ? new Date(value) : null;
+        if (!date || !Number.isFinite(date.getTime())) return '—';
+        const timeZone = 'Europe/Kyiv';
+        return date.toLocaleDateString('ru-RU', { timeZone, day: '2-digit', month: '2-digit', year: 'numeric' }) + '\n' +
+          date.toLocaleTimeString('ru-RU', { timeZone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      }
+
       function renderErrors(d) {
         if (!d) return;
         const badge = $("error-badge");
@@ -1011,11 +1019,11 @@
           return;
         }
         logEl.innerHTML = recent.slice(0, 30).map(err => {
-          const ts = err.timestamp ? new Date(err.timestamp).toLocaleTimeString() : '';
+          const ts = formatErrorTimestamp(err.timestamp);
           const errType = err.type || err.error_type || 'unknown';
           const msg = err.message || err.error || String(err);
           return `<div class="error-row">
-            <span class="error-ts mono dim">${ts}</span>
+            <span class="error-ts mono dim" title="Europe/Kyiv">${escapeHtml(ts)}</span>
             <span class="error-type mono tag tag-err">${escapeHtml(errType)}</span>
             <span class="error-msg">${escapeHtml(msg)}</span>
           </div>`;

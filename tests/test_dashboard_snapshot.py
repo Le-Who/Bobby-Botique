@@ -1,10 +1,18 @@
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from app import web
 from app.metrics import MetricsCollector
+
+
+async def test_recorded_error_timestamp_includes_its_timezone():
+    collector = MetricsCollector()
+    await collector.record_error("synthetic", "Synthetic failure")
+    event = collector._events_queue.get_nowait()
+    assert datetime.fromisoformat(event["timestamp"]).utcoffset() is not None
 
 
 @pytest.mark.asyncio

@@ -678,7 +678,8 @@ body {
 
 .error-ts {
   flex-shrink: 0;
-  width: 60px;
+  width: 10ch;
+  white-space: pre-line;
 }
 
 .error-type {
