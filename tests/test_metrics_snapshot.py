@@ -29,6 +29,22 @@ def metrics_collector():
 class TestMetricsSnapshotAtomicity:
     """Test that snapshot-then-reset is atomic under the lock."""
 
+    @pytest.mark.parametrize("timestamp", ["2026-11-14T21:36:11+02:00", "2026-11-14T21:36:11"])
+    async def test_error_flush_preserves_occurrence_time(self, metrics_collector, timestamp):
+        occurred_at = datetime.fromisoformat("2026-11-14T21:36:11+02:00")
+        metrics_collector.error_log.append(
+            {"timestamp": timestamp, "type": "Synthetic", "message": "failure", "request_id": "test"}
+        )
+        with (
+            patch("app.metrics.db.db_query", new_callable=AsyncMock),
+            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock) as execute_many,
+        ):
+            await metrics_collector._save_metrics_day(occurred_at.date())
+        query, rows = execute_many.await_args.args
+        assert rows == [("Synthetic", "failure", "test", occurred_at)]
+        assert "created_at" in query
+        assert metrics_collector.error_log[-1]["saved"] is True
+
     @pytest.mark.asyncio
     async def test_events_during_db_write_are_preserved(self, metrics_collector):
         """Core race condition test: events arriving during DB I/O must survive."""

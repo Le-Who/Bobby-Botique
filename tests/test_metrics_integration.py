@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 import unittest
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.append(os.getcwd())
@@ -88,9 +89,13 @@ class TestMetricsIntegration(unittest.TestCase):
                 self.assertEqual(len(params_list), 2)
 
                 # Validate the contents of the parameter list matches the error logs
-                # params structure: (type, message, request_id)
-                self.assertEqual(params_list[0], ("TestError", "Simulated Error 1", "test_rid_123"))
-                self.assertEqual(params_list[1], ("AuthError", "Simulated Error 2", "test_rid_123"))
+                # params structure: (type, message, request_id, occurrence time)
+                self.assertIn("created_at", query)
+                for index, (error_type, message) in enumerate(
+                    [("TestError", "Simulated Error 1"), ("AuthError", "Simulated Error 2")]
+                ):
+                    occurred_at = datetime.fromisoformat(self.collector.error_log[index]["timestamp"])
+                    self.assertEqual(params_list[index], (error_type, message, "test_rid_123", occurred_at))
 
                 # Verify items are marked as saved
                 self.assertTrue(self.collector.error_log[0]["saved"])

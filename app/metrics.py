@@ -463,12 +463,17 @@ class MetricsCollector:
             if errors_to_process:
                 unsaved_errors = [e for e in errors_to_process if not e.get("saved", False)]
                 if unsaved_errors:
-                    error_params = [(e["type"], e["message"], e.get("request_id")) for e in unsaved_errors]
+                    error_params = []
+                    for error in unsaved_errors:
+                        occurred_at = datetime.fromisoformat(error["timestamp"])
+                        if occurred_at.tzinfo is None:
+                            occurred_at = occurred_at.replace(tzinfo=time_utils.get_kyiv_tz())
+                        error_params.append((error["type"], error["message"], error.get("request_id"), occurred_at))
 
                     await db.db_execute_many(
                         """
-                        INSERT INTO error_logs (error_type, error_message, request_id)
-                        VALUES ($1, $2, $3)
+                        INSERT INTO error_logs (error_type, error_message, request_id, created_at)
+                        VALUES ($1, $2, $3, $4)
                     """,
                         error_params,
                     )
