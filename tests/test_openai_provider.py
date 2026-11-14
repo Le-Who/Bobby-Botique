@@ -761,7 +761,7 @@ async def test_service_tier_never_changes_explicit_or_default_thinking(level, ef
 
 @pytest.mark.parametrize("status", [200, 429])
 @pytest.mark.parametrize("error_field", ["code", "type"])
-async def test_flex_capacity_failure_never_rotates_suspends_or_falls_back(transport, monkeypatch, status, error_field):
+async def test_flex_capacity_failure_preserves_key_for_standard_recovery(transport, monkeypatch, status, error_field):
     install, calls = transport
     chunks = (
         [frame("response.failed", response={"error": {"code": None, error_field: "resource_unavailable"}})]
@@ -782,7 +782,7 @@ async def test_flex_capacity_failure_never_rotates_suspends_or_falls_back(transp
         agent_use_cases, "get_available_gemini_key", AsyncMock(side_effect=AssertionError("Gemini fallback"))
     )
     before = dict(agent_use_cases._openai_key_health)
-    events = [event async for event in ProviderRouter().stream(request(service_tier=ServiceTier.FLEX))]
+    events = await collect(request(service_tier=ServiceTier.FLEX))
     assert len(events) == len(calls) == 1
     failure = events[0]
     assert failure.code is ErrorCode.OVERLOADED
@@ -824,7 +824,7 @@ async def test_router_uses_one_flex_deadline_despite_metadata(transport, monkeyp
 
     def accelerated_deadline(seconds):
         budgets.append(seconds)
-        return real_deadline(0.06 if seconds == 15.0 else seconds)
+        return real_deadline(0.06 if seconds in {15.0, 20.0} else seconds)
 
     monkeypatch.setattr(router_module, "_deadline_after", accelerated_deadline)
     monkeypatch.setattr(
@@ -834,8 +834,242 @@ async def test_router_uses_one_flex_deadline_despite_metadata(transport, monkeyp
     assert events[-1].code is ErrorCode.TIMEOUT
     assert events[-1].phase is FailurePhase.BEFORE_TEXT
     assert budgets.count(15.0) == 1
-    assert len(calls) == 1
+    assert budgets.count(20.0) == 1
+    assert len(calls) == 2
     assert stream.closed
+
+
+@pytest.fixture
+async def tier_transport(monkeypatch):
+    clients = []
+
+    def install(
+        flex_chunks, standard_chunks, *, flex_status=200, standard_status=200, flex_delay=0, standard_block=False
+    ):
+        calls, streams = [], []
+
+        async def handler(native_request):
+            payload = json.loads(native_request.content)
+            calls.append(payload)
+            is_flex = payload["service_tier"] == "flex"
+            if is_flex and isinstance(flex_chunks, Exception):
+                raise flex_chunks
+            stream = Stream(
+                flex_chunks if is_flex else standard_chunks,
+                delay=flex_delay if is_flex else 0,
+                block=standard_block and not is_flex,
+            )
+            streams.append(stream)
+            return httpx.Response(
+                flex_status if is_flex else standard_status,
+                stream=stream,
+                headers={"content-type": "text/event-stream"},
+            )
+
+        client = AsyncOpenAI(
+            api_key="synthetic", max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        )
+        clients.append(client)
+        monkeypatch.setattr(openai, "_get_sdk_client", lambda api_key: client.with_options(api_key=api_key))
+        monkeypatch.setattr(agent_use_cases, "settings", SimpleNamespace(OPENAI_API_KEYS=["synthetic-one"]))
+        monkeypatch.setattr(agent_use_cases, "_openai_key_health", {})
+        monkeypatch.setattr(
+            agent_use_cases, "get_available_gemini_key", AsyncMock(side_effect=AssertionError("Gemini fallback"))
+        )
+        return calls, streams
+
+    yield install
+    for client in clients:
+        await client.close()
+
+
+@pytest.mark.parametrize("workload", [Workload.INTERACTIVE, Workload.QUICK_SEARCH])
+@pytest.mark.parametrize("failure", ["resource_unavailable", "server_error", "http_503", "network", "timeout"])
+async def test_flex_transient_failure_recovers_once_on_standard(tier_transport, monkeypatch, workload, failure):
+    flex_chunks = [frame("response.failed", response={"error": {"code": failure}})]
+    flex_status, flex_delay = 200, 0
+    if failure == "http_503":
+        flex_status = 503
+        flex_chunks = [json.dumps({"error": {"code": "server_error", "message": "private body"}}).encode()]
+    elif failure == "network":
+        flex_chunks = httpx.ConnectError("synthetic connection failure")
+    elif failure == "timeout":
+        flex_chunks, flex_delay = [b": metadata\n\n"] * 20, 0.01
+        original = GenerationRequest.first_text_timeout_seconds.fget
+        monkeypatch.setattr(
+            GenerationRequest,
+            "first_text_timeout_seconds",
+            property(lambda self: 0.025 if self.service_tier is ServiceTier.FLEX else original(self)),
+        )
+    calls, streams = tier_transport(
+        flex_chunks,
+        [frame("response.output_text.delta", delta="Recovered"), completed(service_tier="default")],
+        flex_status=flex_status,
+        flex_delay=flex_delay,
+    )
+    suspend = Mock()
+    monkeypatch.setattr(agent_use_cases, "suspend_openai_key", suspend)
+    captured = []
+    monkeypatch.setattr("app.observability.events.emit", lambda event, **fields: captured.append((event, fields)))
+    req = request(service_tier=ServiceTier.FLEX, workload=workload, thinking_level=ThinkingLevel.LOW)
+    events = [event async for event in ProviderRouter().stream(req)]
+
+    assert [payload["service_tier"] for payload in calls] == ["flex", "default"]
+    assert calls[1] == {**calls[0], "service_tier": "default"}
+    assert events[0] == TextDelta("Recovered")
+    assert len(events) == 2 and isinstance(events[-1], StreamCompleted)
+    assert events[-1].route.requested_service_tier is ServiceTier.DEFAULT
+    assert events[-1].route.actual_service_tier == "default"
+    assert req.service_tier is ServiceTier.FLEX
+    assert all(stream.closed for stream in streams)
+    suspend.assert_not_called()
+    fallback_events = [fields for event, fields in captured if event == "provider.service_tier_fallback"]
+    assert len(fallback_events) == 1
+    assert fallback_events[0]["requested_service_tier"] == "flex"
+    assert fallback_events[0]["fallback_service_tier"] == "default"
+
+
+async def test_flex_recovery_makes_only_one_standard_attempt_and_one_admission(tier_transport, monkeypatch):
+    failed = [frame("response.failed", response={"error": {"code": "server_error"}})]
+    calls, streams = tier_transport(failed, failed)
+    monkeypatch.setattr(
+        agent_use_cases, "settings", SimpleNamespace(OPENAI_API_KEYS=["synthetic-one", "synthetic-two"])
+    )
+    router = ProviderRouter()
+    admission = AsyncMock(return_value=True)
+    monkeypatch.setattr(router._rate_limiter, "check_rate_limit", admission)
+    from app.providers.stream_types import RequestScope
+
+    req = request(service_tier=ServiceTier.FLEX, scope=RequestScope(user_id=7, chat_id=7))
+    events = [event async for event in router.stream(req)]
+
+    assert [payload["service_tier"] for payload in calls] == ["flex", "default"]
+    assert len(events) == 1 and isinstance(events[0], StreamFailed)
+    assert events[0].code is ErrorCode.OVERLOADED
+    assert events[0].route.requested_service_tier is ServiceTier.DEFAULT
+    admission.assert_awaited_once_with(7)
+    assert all(stream.closed for stream in streams)
+
+
+@pytest.mark.parametrize("code", ["invalid_api_key", "insufficient_quota", "rate_limit_exceeded"])
+async def test_flex_permanent_or_account_failure_does_not_retry_standard(tier_transport, code):
+    calls, _ = tier_transport(
+        [frame("response.failed", response={"error": {"code": code}})],
+        [frame("response.output_text.delta", delta="unexpected"), completed()],
+    )
+    events = [event async for event in ProviderRouter().stream(request(service_tier=ServiceTier.FLEX))]
+    assert len(events) == 1 and isinstance(events[0], StreamFailed)
+    assert [payload["service_tier"] for payload in calls] == ["flex"]
+
+
+async def test_flex_failure_after_text_does_not_restart_on_standard(tier_transport):
+    calls, streams = tier_transport(
+        [
+            frame("response.output_text.delta", delta="Partial"),
+            frame("response.failed", response={"error": {"code": "server_error"}}),
+        ],
+        [],
+    )
+    events = [event async for event in ProviderRouter().stream(request(service_tier=ServiceTier.FLEX))]
+    assert events[0] == TextDelta("Partial")
+    assert events[-1].phase is FailurePhase.AFTER_TEXT
+    assert [payload["service_tier"] for payload in calls] == ["flex"]
+    assert all(stream.closed for stream in streams)
+
+
+async def test_cancellation_during_standard_recovery_closes_both_attempts(tier_transport):
+    calls, streams = tier_transport(
+        [frame("response.failed", response={"error": {"code": "resource_unavailable"}})],
+        [],
+        standard_block=True,
+    )
+
+    async def consume():
+        return [event async for event in ProviderRouter().stream(request(service_tier=ServiceTier.FLEX))]
+
+    task = asyncio.create_task(consume())
+    try:
+        async with asyncio.timeout(1):
+            while len(streams) < 2 and not task.done():
+                await asyncio.sleep(0)
+            assert len(streams) == 2
+            await streams[1].waiting.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert [payload["service_tier"] for payload in calls] == ["flex", "default"]
+    assert all(stream.closed for stream in streams)
+
+
+async def test_standard_recovery_preserves_required_native_search(tier_transport):
+    calls, streams = tier_transport(
+        [frame("response.failed", response={"error": {"code": "resource_unavailable"}})],
+        [
+            frame("response.output_text.delta", delta="Search answer"),
+            completed(
+                service_tier="default",
+                output=[
+                    {
+                        "type": "web_search_call",
+                        "status": "completed",
+                        "action": {"type": "search", "query": "synthetic query"},
+                    }
+                ],
+            ),
+        ],
+    )
+    req = request(
+        service_tier=ServiceTier.FLEX,
+        workload=Workload.QUICK_SEARCH,
+        grounding=GroundingMode.PROVIDER_SEARCH_REQUIRED,
+        thinking_level=ThinkingLevel.LOW,
+    )
+    events = [event async for event in ProviderRouter().stream(req)]
+    assert isinstance(events[-1], StreamCompleted)
+    assert events[-1].grounding.search_queries == ("synthetic query",)
+    assert calls[1] == {**calls[0], "service_tier": "default"}
+    assert calls[1]["tools"] == [{"type": "web_search"}]
+    assert calls[1]["tool_choice"] == {"type": "web_search"}
+    assert calls[1]["max_tool_calls"] == 1
+    assert all(stream.closed for stream in streams)
+
+
+@pytest.mark.parametrize("success", [False, True])
+async def test_successful_flex_and_invalid_requests_never_start_standard(tier_transport, success):
+    chunks = (
+        [frame("response.output_text.delta", delta="Flex answer"), completed(service_tier="flex")]
+        if success
+        else [json.dumps({"error": {"message": "synthetic invalid request"}}).encode()]
+    )
+    calls, streams = tier_transport(chunks, [], flex_status=200 if success else 400)
+    events = [event async for event in ProviderRouter().stream(request(service_tier=ServiceTier.FLEX))]
+    assert isinstance(events[-1], StreamCompleted if success else StreamFailed)
+    if not success:
+        assert events[-1].code is ErrorCode.INVALID_REQUEST
+    assert [payload["service_tier"] for payload in calls] == ["flex"]
+    assert all(stream.closed for stream in streams)
+
+
+@pytest.mark.parametrize("native_code", ["resource_unavailable", "private synthetic error detail"])
+async def test_response_failure_event_contains_only_allowlisted_provider_evidence(transport, monkeypatch, native_code):
+    install, _ = transport
+    install([frame("response.failed", response={"error": {"code": native_code, "message": "private response body"}})])
+    captured = []
+    monkeypatch.setattr(openai, "emit", lambda event, **fields: captured.append((event, fields)))
+    await collect(request(service_tier=ServiceTier.FLEX))
+    assert len(captured) == 1 and captured[0][0] == "provider.response_failed"
+    evidence = captured[0][1]
+    assert evidence["provider_error_code"] == (
+        "resource_unavailable" if native_code == "resource_unavailable" else "unclassified"
+    )
+    assert evidence["key_suffix"] == "-key"
+    assert evidence["requested_service_tier"] == "flex"
+    assert "fake-openai-test-key" not in repr(captured)
+    assert "private" not in repr(captured)
 
 
 async def test_flex_unsupported_model_rejected_before_transport(transport):

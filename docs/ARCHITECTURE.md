@@ -152,8 +152,15 @@ Typed internal administrator requests retain their explicit reasoning.
 Inline and Crocodile judgement
 use Luna Standard without reasoning; other OpenAI routes use Standard.
 Saved 22-process profiles remain valid when the complex-chat route is added.
-Flex capacity failures preserve key health and offer manual retry,
-without an automatic Standard fallback. For direct GPT-6 search, the shared
+Direct interactive/quick-search Flex routes make one API attempt. An overload,
+timeout or transport failure before text preserves key health and starts one
+Standard attempt on the same model, with a fresh first-text deadline, unchanged
+input/reasoning/search settings, and no repeated user admission. The immutable
+process policy stays Flex; each attempt and the final route report their own
+requested/actual tiers. Cancellation, failures after text and account/request
+errors do not trigger this transition. Standard failure is terminal and offers
+manual retry; neither tier starts another model or deferred job.
+For direct GPT-6 search, the shared
 15-second budget includes native `web_search` before the first answer text.
 Gateways, mixed plans and legacy models keep their separate Jina retrieval step.
 SDK metadata and reasoning do not extend the model-text budget.

@@ -14,7 +14,9 @@ from openai.types.responses import Response
 from app.config import SUPPORTED_OPENAI_CHAT_MODELS, SUPPORTED_OPENAI_FLEX_MODELS
 from app.errors import ErrorCode, tag_error
 from app.metrics import metrics_collector
+from app.observability.events import emit
 from app.observability.provider_events import record_provider_exception
+from app.observability.redaction import provider_key_fields
 from app.providers.base import AIResponse, BaseAIProvider, is_openai_model
 from app.providers.request_factory import generation_request_from_history
 from app.providers.stream_types import (
@@ -165,6 +167,12 @@ class OpenAIProvider(BaseAIProvider):
         buffer = VisibleTextBuffer()
 
         def failed(code: ErrorCode, diagnostic: str, key=KeyDisposition.UNCHANGED, retry=RetryDisposition.DO_NOT_RETRY):
+            if (
+                not visible
+                and request.service_tier is ServiceTier.FLEX
+                and code in {ErrorCode.OVERLOADED, ErrorCode.TIMEOUT, ErrorCode.NETWORK}
+            ):
+                key, retry = KeyDisposition.UNCHANGED, RetryDisposition.RETRY_LATER
             return StreamFailed(
                 code=code,
                 phase=FailurePhase.AFTER_TEXT if visible else FailurePhase.BEFORE_TEXT,
@@ -173,6 +181,33 @@ class OpenAIProvider(BaseAIProvider):
                 diagnostic=diagnostic,
                 route=route,
             )
+
+        def provider_failure(status: int, native_code: str | None) -> StreamFailed:
+            code, key, retry = self._error_disposition(status, native_code)
+            emit(
+                "provider.response_failed",
+                level="warning",
+                operation="provider.request",
+                provider=self.provider_name,
+                actual_model=model_name,
+                requested_service_tier=request.service_tier.value,
+                actual_service_tier=route.actual_service_tier,
+                status_code=status or None,
+                reason_code=code.value,
+                provider_error_code=native_code
+                if native_code
+                in {
+                    "resource_unavailable",
+                    "server_error",
+                    "invalid_api_key",
+                    "insufficient_quota",
+                    "rate_limit_exceeded",
+                }
+                else "unclassified",
+                failure_phase=(FailurePhase.AFTER_TEXT if visible else FailurePhase.BEFORE_TEXT).value,
+                **provider_key_fields(self.provider_name, self.api_key),
+            )
+            return failed(code, "Responses API reported failure", key, retry)
 
         try:
             async with asyncio.timeout(request.provider_timeout_seconds):
@@ -227,8 +262,7 @@ class OpenAIProvider(BaseAIProvider):
                                 or getattr(error, "type", None)
                                 or getattr(native_event, "code", None)
                             )
-                            code, key, retry = self._error_disposition(0, error_code)
-                            terminal = failed(code, "Responses API reported failure", key, retry)
+                            terminal = provider_failure(0, error_code)
                             break
                         elif kind in {"response.completed", "response.incomplete"}:
                             result = getattr(native_event, "response", None)
@@ -277,8 +311,7 @@ class OpenAIProvider(BaseAIProvider):
             )
         except APIStatusError as exc:
             error_code = exc.code if isinstance(exc.code, str) else exc.type if isinstance(exc.type, str) else None
-            code, key, retry = self._error_disposition(exc.status_code, error_code)
-            yield failed(code, f"Responses HTTP {exc.status_code}", key, retry)
+            yield provider_failure(exc.status_code, error_code)
         except UnsupportedResponsesRequest:
             yield failed(ErrorCode.INVALID_REQUEST, "Unsupported Responses request")
         except ValueError, TypeError, KeyError, RuntimeError, AttributeError, IndexError, AssertionError:
@@ -308,8 +341,7 @@ class OpenAIProvider(BaseAIProvider):
             )
         except APIError as exc:
             error_code = exc.code if isinstance(exc.code, str) else exc.type if isinstance(exc.type, str) else None
-            code, key, retry = self._error_disposition(0, error_code)
-            yield failed(code, "OpenAI SDK reported Responses failure", key, retry)
+            yield provider_failure(0, error_code)
 
     @staticmethod
     def _error_disposition(status: int, code: str | None):

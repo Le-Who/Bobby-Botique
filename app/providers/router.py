@@ -13,6 +13,7 @@ import math
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from contextlib import aclosing
+from dataclasses import replace
 from enum import Enum, auto
 from typing import Any, TypeVar
 
@@ -52,6 +53,7 @@ from app.providers.stream_types import (
     KeyDisposition,
     ProviderStreamProtocolError,
     RetryDisposition,
+    ServiceTier,
     StreamCompleted,
     StreamDeferred,
     StreamFailed,
@@ -857,6 +859,15 @@ class ProviderRouter:
     @observe_generation
     async def stream(self, request: GenerationRequest):
         """Own one logical response, including recovery before its first text."""
+        if (
+            request.service_tier is ServiceTier.FLEX
+            and request.workload in {Workload.INTERACTIVE, Workload.QUICK_SEARCH}
+            and is_openai_model(request.models[0])
+        ):
+            async with aclosing(self._stream_flex_with_standard_recovery(request)) as events:
+                async for event in events:
+                    yield event
+            return
         first_text_deadline = _deadline_after(request.first_text_timeout_seconds)
         hedge_models = self._interactive_hedge_models(request)
         recovery_round = 0
@@ -901,6 +912,54 @@ class ProviderRouter:
                 reason_code=retry_failure.code.value,
             )
             await asyncio.sleep(delay)
+
+    async def _stream_flex_with_standard_recovery(self, request: GenerationRequest):
+        """Try Flex once, then the same model once on Standard before any text."""
+        from app.observability.events import emit
+
+        for tier in (ServiceTier.FLEX, ServiceTier.DEFAULT):
+            attempt = replace(
+                request,
+                models=(request.models[0],),
+                service_tier=tier,
+                allow_deferred=False,
+                allow_model_fallback=False,
+                allow_key_race=False,
+            )
+            recoverable_failure: StreamFailed | None = None
+            source = self._stream_serial(
+                attempt,
+                check_rate_limit=tier is ServiceTier.FLEX,
+                enable_model_fallback=False,
+                first_text_deadline=_deadline_after(attempt.first_text_timeout_seconds),
+                primary_key_race=False,
+                allow_key_hedge=False,
+                max_key_attempts=1,
+            )
+            async with aclosing(source) as events:
+                async for event in events:
+                    if (
+                        tier is ServiceTier.FLEX
+                        and isinstance(event, StreamFailed)
+                        and event.phase is FailurePhase.BEFORE_TEXT
+                        and event.code in {ErrorCode.OVERLOADED, ErrorCode.TIMEOUT, ErrorCode.NETWORK}
+                    ):
+                        recoverable_failure = event
+                        break
+                    yield event
+            if recoverable_failure is None:
+                return
+            emit(
+                "provider.service_tier_fallback",
+                operation="provider.request",
+                provider="openai",
+                actual_model=request.models[0],
+                workload=request.workload.value,
+                requested_service_tier=ServiceTier.FLEX.value,
+                fallback_service_tier=ServiceTier.DEFAULT.value,
+                reason_code=recoverable_failure.code.value,
+                upstream_error_id=recoverable_failure.error_id,
+            )
 
     @staticmethod
     def _interactive_hedge_models(request: GenerationRequest) -> list[str]:

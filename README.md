@@ -49,8 +49,10 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
   the model default, and saved user thinking cannot change OpenAI requests.
   User preferences remain available for Gemini. Flex waits up
   to 15 seconds for model text, including native GPT-6 web search. Telegram
-  delivery has a separate budget. A Flex
-  capacity error offers a manual retry without switching to Standard.
+  delivery has a separate budget. A Flex overload, timeout or transport failure
+  before text starts triggers one Standard attempt on the same model, with its
+  own first-text budget. Standard uses its normal pricing; failed Standard
+  attempts offer manual retry. Responses that have started are never replayed.
 - Quick search (`?`), bounded agentic research (`??`), URL/document/photo
   understanding and deterministic weather/currency/crypto shortcuts.
 - Document Q&A preserves the file explicitly selected in `/documents`; an
