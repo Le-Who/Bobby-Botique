@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from app.config import DEFAULT_ELEVENLABS_MODEL
 from app.providers.stream_types import ServiceTier, ThinkingLevel
 
 TTS_DEFAULT_MODELS = ("gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts")
@@ -97,7 +98,7 @@ PROCESSES: dict[str, ProcessSpec] = {
         "Озвучивание ответа: ElevenLabs",
         "Аудио",
         "",
-        "eleven_multilingual_v2",
+        DEFAULT_ELEVENLABS_MODEL,
         ("audio_output",),
         note="Цепочка полных сообщений; не смешивает части аудио разных моделей.",
     ),

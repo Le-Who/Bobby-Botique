@@ -32,6 +32,23 @@ def test_role_defaults_match_effective_loader_and_keep_overrides(monkeypatch, na
     assert getattr(load_settings(), name) == "opencode-go/explicit-choice"
 
 
+@pytest.mark.parametrize("empty", [None, "  "])
+def test_elevenlabs_model_and_voice_defaults_and_overrides(monkeypatch, empty):
+    for name in ("ELEVENLABS_MODEL", "ELEVENLABS_VOICE_ID"):
+        if empty is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, empty)
+    baseline = load_settings()
+    assert baseline.ELEVENLABS_MODEL == "eleven_v4"
+    assert baseline.ELEVENLABS_VOICE_ID == "OZ0L6eISlOejga3XjDFt"
+    monkeypatch.setenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "workspace-voice")
+    configured = load_settings()
+    assert configured.ELEVENLABS_MODEL == "eleven_flash_v2_5"
+    assert configured.ELEVENLABS_VOICE_ID == "workspace-voice"
+
+
 # ── get_model_hash ───────────────────────────────────────────────────────────
 
 

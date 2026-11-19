@@ -16,6 +16,9 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from app.utils.json_compat import json
 from app.webhook_security import validate_webhook_secret_token
 
+DEFAULT_ELEVENLABS_MODEL = "eleven_v4"
+DEFAULT_ELEVENLABS_VOICE_ID = "OZ0L6eISlOejga3XjDFt"  # Talia
+
 # Single source of truth for default Gemini models.
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
 GEMINI_PRIMARY_MODEL: str = "gemini-3.6-flash"
@@ -335,9 +338,9 @@ class Settings(BaseModel):
     TAVILY_API_KEYS: list[str]
     OPENROUTER_API_KEYS: list[str] = []  # Optional, by default empty list
     OPENAI_API_KEYS: list[str] = []  # Direct OpenAI API; separate from OpenRouter
-    ELEVENLABS_API_KEYS: list[str] = []  # Optional, free-tier ElevenLabs keys
-    ELEVENLABS_VOICE_ID: str = "XB0fDUnXU5powFXDhCwa"  # Charlotte — conversational
-    ELEVENLABS_MODEL: str = "eleven_multilingual_v2"
+    ELEVENLABS_API_KEYS: list[str] = []  # Optional ElevenLabs workspace keys
+    ELEVENLABS_VOICE_ID: str = DEFAULT_ELEVENLABS_VOICE_ID
+    ELEVENLABS_MODEL: str = DEFAULT_ELEVENLABS_MODEL
     # Imagen image generation — uses same GEMINI_API_KEYS pool.
     # A separate per-key RPD counter is maintained in ImagenProvider so that
     # image quota exhaustion does NOT suspend keys for LLM / audio traffic.
@@ -621,8 +624,8 @@ def load_settings() -> Settings:
             "OPENAI_API_KEYS": _load_and_clean_keys("OPENAI_API_KEYS", required=False)
             or _load_and_clean_keys("OPENAI_API_KEY", required=False),
             "ELEVENLABS_API_KEYS": _load_and_clean_keys("ELEVENLABS_API_KEYS", required=False),
-            "ELEVENLABS_VOICE_ID": os.getenv("ELEVENLABS_VOICE_ID", "XB0fDUnXU5powFXDhCwa"),
-            "ELEVENLABS_MODEL": os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
+            "ELEVENLABS_VOICE_ID": (os.getenv("ELEVENLABS_VOICE_ID") or "").strip() or DEFAULT_ELEVENLABS_VOICE_ID,
+            "ELEVENLABS_MODEL": _load_single_model("ELEVENLABS_MODEL", DEFAULT_ELEVENLABS_MODEL),
             # Pollinations image generation
             "POLLINATIONS_IMAGE_MODELS": _load_and_clean_keys("IMAGE_MODELS", required=False)
             or DEFAULT_POLLINATIONS_IMAGE_MODELS.copy(),

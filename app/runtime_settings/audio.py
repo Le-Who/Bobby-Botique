@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from app.config import DEFAULT_ELEVENLABS_VOICE_ID
 from app.runtime_settings import store
 from app.runtime_settings.lifecycle import operation_snapshot, runtime_settings_scope
 from app.runtime_settings.store import SettingsSnapshot
@@ -39,13 +40,13 @@ _GEMINI_VOICES = (
     ),
 )
 _ELEVENLABS_VOICES = (
-    ("XB0fDUnXU5powFXDhCwa", "Charlotte (разговорный)"),
-    ("21m00Tcm4TlvDq8ikWAM", "Rachel (спокойный)"),
-    ("pNInz6obpgDQGcFmaJgB", "Adam (глубокий)"),
-    ("ErXwobaYiN019PkySvjV", "Antoni (дружелюбный)"),
-    ("nPczCjzI2devNBz1zQrb", "Brian (профессиональный)"),
-    ("TX3LPaxmHKxFdv7VOQHJ", "Liam (энергичный)"),
-    ("EXAVITQu4vr4xnSDxMaL", "Bella (мягкий)"),
+    (DEFAULT_ELEVENLABS_VOICE_ID, "Talia (тёплый, мягкий)"),
+    ("g7LVvkPWALzPxOQbF6OE", "Jade (живой, естественный)"),
+    ("6WwXjDDEMyNmFG95zycZ", "Eldrin (британский баритон)"),
+    ("AaOhDHYJ1XLZk74lXhdE", "Caleb (уверенный)"),
+    ("8dEUmyPMdDdK91vboYih", "Sawyer (рассказчик)"),
+    ("ktkP7Nsj67dw2zcplQYt", "Lawrence (бодрый, ясный)"),
+    ("22N9cF8z0o7y23njdyaY", "Florence (атмосферное повествование)"),
 )
 
 

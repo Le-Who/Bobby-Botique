@@ -15,7 +15,7 @@ def test_empty_optional_elevenlabs_voice_uses_valid_baseline(monkeypatch, config
 
     monkeypatch.setattr(settings, "ELEVENLABS_VOICE_ID", configured)
     config = audio.validate_config("elevenlabs", audio.baseline_config("elevenlabs"))
-    assert config["default_voice"] == "XB0fDUnXU5powFXDhCwa"
+    assert config["default_voice"] == "OZ0L6eISlOejga3XjDFt"
     assert len(config["voices"]) == 7
 
 
@@ -182,7 +182,18 @@ async def test_gemini_payload_uses_pinned_voice_prompt_and_admin_parameters(audi
 
 
 @pytest.mark.asyncio
-async def test_elevenlabs_payload_uses_admin_voice_parameters(audio_runtime, monkeypatch):
+@pytest.mark.parametrize(
+    ("model", "expected_settings"),
+    [
+        (
+            "eleven_multilingual_v2",
+            {"stability": 0.1, "similarity_boost": 0.6, "style": 0.9, "use_speaker_boost": False},
+        ),
+        ("eleven_v4", {"stability": 0.1, "similarity_boost": 0.6}),
+        ("eleven_v3", {"stability": 0.0}),
+    ],
+)
+async def test_elevenlabs_payload_uses_admin_voice_parameters(audio_runtime, monkeypatch, model, expected_settings):
     from app.providers import elevenlabs_tts
     from app.runtime_settings import audio
 
@@ -204,13 +215,17 @@ async def test_elevenlabs_payload_uses_admin_voice_parameters(audio_runtime, mon
         base_url="https://api.elevenlabs.io", transport=httpx.MockTransport(respond)
     ) as client:
         monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
-        assert await elevenlabs_tts.generate_speech_elevenlabs("Hello", "fake-key", voice_id=config["default_voice"])
-    assert sent[0]["voice_settings"] == {
-        "stability": 0.1,
-        "similarity_boost": 0.6,
-        "style": 0.9,
-        "use_speaker_boost": False,
-    }
+        assert await elevenlabs_tts.generate_speech_elevenlabs(
+            "Hello",
+            "fake-key",
+            voice_id=config["default_voice"],
+            model_id=model,
+            previous_text="One",
+            next_text="Three",
+        )
+    assert sent[0]["voice_settings"] == expected_settings
+    assert sent[0].get("previous_text") == (None if model == "eleven_v3" else "One")
+    assert sent[0].get("next_text") == (None if model == "eleven_v3" else "Three")
     assert sent[0]["apply_text_normalization"] == "off"
 
 

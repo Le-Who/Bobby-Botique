@@ -1,5 +1,5 @@
 # /tests/test_elevenlabs_tts.py
-"""Unit tests for the ElevenLabs TTS provider HTTP layer, key rotation router, and voice fetcher."""
+"""Unit tests for the ElevenLabs TTS provider HTTP layer and key rotation router."""
 
 import asyncio
 import json
@@ -82,8 +82,7 @@ async def test_audio_read_stops_at_bound_and_closes_stream(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("catalog", [False, True])
-async def test_cancelled_request_finishes_attempt_and_closes_stream(monkeypatch, catalog):
+async def test_cancelled_request_finishes_attempt_and_closes_stream(monkeypatch):
     stream = TrackedStream(wait_after_chunks=True)
     events = []
     monkeypatch.setattr(
@@ -95,12 +94,7 @@ async def test_cancelled_request_finishes_attempt_and_closes_stream(monkeypatch,
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
         monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
-        coroutine = (
-            elevenlabs_tts.fetch_voices("fake-key")
-            if catalog
-            else generate_speech_elevenlabs("Hello", "fake-key", voice_id="voice")
-        )
-        task = asyncio.create_task(coroutine)
+        task = asyncio.create_task(generate_speech_elevenlabs("Hello", "fake-key", voice_id="voice"))
         await asyncio.wait_for(stream.waiting.wait(), 1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -188,7 +182,7 @@ async def test_request_deadline_and_terminal_cover_configuration(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_catalog_cancel_during_error_response_close_has_one_terminal(monkeypatch):
+async def test_cancel_during_error_response_close_has_one_terminal(monkeypatch):
     closing = asyncio.Event()
     events = []
     monkeypatch.setattr(
@@ -208,7 +202,7 @@ async def test_catalog_cancel_during_error_response_close_has_one_terminal(monke
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
         monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
-        task = asyncio.create_task(elevenlabs_tts.fetch_voices("key"))
+        task = asyncio.create_task(generate_speech_elevenlabs("Hello", "fake-key", voice_id="voice"))
         await asyncio.wait_for(closing.wait(), 1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -244,6 +238,8 @@ async def test_generate_speech_elevenlabs_success_and_request_payload(monkeypatc
     payload = json.loads(request.content)
     assert request.url.path == "/v1/text-to-speech/voice/stream"
     assert dict(request.url.params) == {"output_format": "pcm_24000"}
+    assert payload["model_id"] == "eleven_v4"
+    assert payload["voice_settings"] == {"stability": 0.5, "similarity_boost": 0.8}
     assert payload["text"] == "Hello"
     assert payload["previous_text"] == "Prev"
     assert "next_text" not in payload
@@ -270,6 +266,24 @@ async def test_generate_speech_http_failure_closes_without_reading_private_body(
     assert "private-upstream-body" not in str(error.value)
     assert stream.reads == 0
     assert stream.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [402, 404])
+async def test_workspace_voice_access_failure_rotates_to_paid_key(monkeypatch, status):
+    calls = []
+    pcm = b"\x01\x00" * 75
+
+    async def handler(request):
+        key = request.headers["xi-api-key"]
+        calls.append((key, json.loads(request.content)["text"]))
+        return httpx.Response(status) if key == "limited" else httpx.Response(200, content=pcm)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        result = await generate_speech_with_key_rotation(["one", "two"], ["limited", "creator"], voice_id="voice")
+    assert result == [pcm, pcm]
+    assert calls == [("limited", "one"), ("creator", "one"), ("creator", "two")]
 
 
 @pytest.mark.asyncio
@@ -370,72 +384,3 @@ async def test_generate_speech_with_key_rotation_skips_empty_chunks():
         res = await generate_speech_with_key_rotation(["C1", "  ", "", "C2"], ["key1"], voice_id="voice")
         assert res == [b"audio_bytes", b"audio_bytes"]
         assert mock_gen.call_count == 2
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Group 3: bounded voice catalog reads and parsing.
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("payload", "want"),
-    [
-        (
-            {
-                "voices": [
-                    {"voice_id": "v1", "name": "Charlotte", "category": "premade", "labels": {"accent": "american"}},
-                    {"voice_id": "v2", "name": "ClonedVoice", "category": "cloned", "labels": {}},
-                ]
-            },
-            ["v1", "v2"],
-        ),
-        (
-            {
-                "voices": [
-                    {"voice_id": "v1", "name": "Premade", "category": "premade"},
-                    {"voice_id": "v2", "name": "Generated", "category": "generated"},
-                    {"name": "MissingID", "category": "premade"},
-                ]
-            },
-            ["v1"],
-        ),
-        (["unexpected"], []),
-        ({"voices": "unexpected"}, []),
-    ],
-)
-async def test_fetch_voices_parses_only_valid_catalog_rows(monkeypatch, payload, want):
-    async def handler(request):
-        assert request.method == "GET"
-        assert request.url.path == "/v1/voices"
-        return httpx.Response(200, json=payload)
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
-        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
-        result = await elevenlabs_tts.fetch_voices("key")
-    assert [row["id"] for row in result] == want
-
-
-@pytest.mark.asyncio
-async def test_fetch_voices_transport_error_is_sanitized(monkeypatch, caplog):
-    async def handler(request):
-        raise httpx.ConnectError("private-transport-detail")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
-        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
-        with caplog.at_level(logging.INFO):
-            assert await elevenlabs_tts.fetch_voices("key") == []
-    assert "private-transport-detail" not in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_fetch_voices_http_failure_returns_empty_without_reading_body(monkeypatch):
-    stream = TrackedStream([b"do-not-read"])
-
-    async def handler(request):
-        return httpx.Response(401, stream=stream)
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
-        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
-        assert await elevenlabs_tts.fetch_voices("key") == []
-    assert stream.reads == 0
-    assert stream.closed

@@ -134,7 +134,7 @@
     "readers": [
       "app/config.py"
     ],
-    "deploy": false,
+    "deploy": true,
     "compose": false
   },
   "ELEVENLABS_VOICE_ID": {

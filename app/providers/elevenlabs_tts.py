@@ -1,7 +1,7 @@
 # /app/providers/elevenlabs_tts.py
 """ElevenLabs TTS provider — text-to-speech via REST API.
 
-Uses the ElevenLabs v1 API to generate speech audio.
+Uses the ElevenLabs Stream speech endpoint to generate speech audio.
 Returns raw PCM 24kHz 16-bit mono bytes — identical contract to providers/tts.py.
 
 NO new package dependencies: uses the existing httpx AsyncClient from the venv.
@@ -10,7 +10,7 @@ Key design decisions:
   - Output format: pcm_24000 — byte-identical to Gemini TTS output so the
     shared ffmpeg transcoding pipeline (pcm_to_ogg_opus) needs zero changes.
   - Key rotation: simple sequential iteration over the ELEVENLABS_API_KEYS pool.
-    On 401/403 (key invalid) or 429 (quota/rate) the caller tries the next key.
+    Try the next key if its workspace cannot access the voice/model or hits quota.
   - Text cleaning: strips Markdown/code/URLs but does NOT inject Director's Notes
     (ElevenLabs would read them aloud — they are plain text to the model).
   - Chunking: only when a transcript exceeds the selected model's character
@@ -24,6 +24,7 @@ from typing import Final
 
 import httpx
 
+from app.config import DEFAULT_ELEVENLABS_MODEL
 from app.observability.workload_events import start_workload_attempt
 from app.providers.tts_audio import (
     MAX_TTS_AUDIO_BYTES,
@@ -39,10 +40,7 @@ from app.runtime_settings.lifecycle import runtime_settings_scope
 
 
 class ElevenLabsQuotaError(Exception):
-    """Raised when all ElevenLabs API keys are quota-exhausted (HTTP 429/401).
-
-    The voice_engine's Atomic Router catches this to fall back to Gemini TTS.
-    """
+    """This key lacks access, credit or capacity for the requested synthesis."""
 
 
 class ElevenLabsAPIError(Exception):
@@ -58,11 +56,13 @@ _TTS_ENDPOINT: Final = "/v1/text-to-speech/{voice_id}/stream"
 # This eliminates all audio-format concerns when concatenating chunks or
 # when pcm_to_ogg_opus() processes the final buffer.
 _OUTPUT_FORMAT: Final = "pcm_24000"
-
-# Model: eleven_multilingual_v2 is the recommended high-quality model for
-# non-English languages (Russian, Ukrainian, etc.).  Available on all tiers.
-_DEFAULT_MODEL: Final = "eleven_multilingual_v2"
-_FLASH_MODEL: Final = "eleven_flash_v2_5"
+_KEY_FAILURE_REASONS: Final = {
+    401: "auth_error",
+    402: "payment_required",
+    403: "auth_error",
+    404: "resource_unavailable",
+    429: "rate_limited",
+}
 
 # HTTP timeouts: connect fast, allow up to 90 s for speech generation.
 _HTTP_TIMEOUT: Final = httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)
@@ -80,7 +80,6 @@ _MODEL_CHARACTER_LIMITS: Final = {
     "eleven_v4": 10000,
 }
 _STITCH_CONTEXT_CHARS: Final = 500
-_VOICE_CATALOG_MAX_BYTES: Final = 1024 * 1024
 
 
 # ─── Shared async HTTP client ─────────────────────────────────────────────────
@@ -165,7 +164,7 @@ async def generate_speech_elevenlabs(
     api_key: str,
     *,
     voice_id: str,
-    model_id: str = _DEFAULT_MODEL,
+    model_id: str = DEFAULT_ELEVENLABS_MODEL,
     timeout: float = 90.0,
     previous_text: str | None = None,
     next_text: str | None = None,
@@ -176,7 +175,7 @@ async def generate_speech_elevenlabs(
         text:          Pre-cleaned text to synthesise (raw, no Director's Notes).
         api_key:       ElevenLabs API key (xi-api-key header).
         voice_id:      ElevenLabs voice ID. Callers pass settings.ELEVENLABS_VOICE_ID.
-        model_id:      ElevenLabs model. Defaults to eleven_multilingual_v2.
+        model_id:      ElevenLabs model. Defaults to Eleven v4.
         timeout:       Maximum seconds to wait for the API response.
         previous_text: Preceding chunk text for Request Stitching — helps the model
                        carry forward the right prosodic context from the last sentence.
@@ -189,13 +188,16 @@ async def generate_speech_elevenlabs(
         Validated PCM 24kHz 16-bit mono bytes, or None for empty input.
 
     Raises:
-        ElevenLabsQuotaError: On HTTP 401 (key invalid / expired) or 429 (quota).
+        ElevenLabsQuotaError: If another workspace key can retry access, payment or rate limits.
         ElevenLabsAPIError:   On unexpected HTTP/server errors.
         TTSContractError:     On an invalid request or incompatible/incomplete audio.
         TimeoutError:         On the absolute request deadline; transport errors retain their type.
     """
     if not text or not text.strip():
         return None
+
+    if model_id == "eleven_v3":
+        previous_text = next_text = None  # v3 has no request stitching.
 
     attempt = start_workload_attempt(
         workload="tts",
@@ -214,10 +216,17 @@ async def generate_speech_elevenlabs(
     try:
         async with asyncio.timeout(timeout):
             audio_config = await get_config("elevenlabs")
+            voice_settings = audio_config["voice_settings"]
+            if model_id == "eleven_v4":
+                voice_settings = {key: voice_settings[key] for key in ("stability", "similarity_boost")}
+            elif model_id == "eleven_v3":
+                # v3 exposes the Creative, Natural and Robust stability presets.
+                stability = voice_settings["stability"]
+                voice_settings = {"stability": min((0.5, 0.0, 1.0), key=lambda value: abs(value - stability))}
             payload: dict[str, object] = {
                 "text": text,
                 "model_id": model_id,
-                "voice_settings": audio_config["voice_settings"],
+                "voice_settings": voice_settings,
                 "apply_text_normalization": audio_config["apply_text_normalization"],
             }
             if previous_text:
@@ -235,8 +244,9 @@ async def generate_speech_elevenlabs(
                 status_code = response.status_code
                 # No upstream error body is needed for classification. Do not
                 # read it at all; the context closes the stream on every exit.
-                if status_code in (401, 403, 429):
-                    reason = "rate_limited" if status_code == 429 else "auth_error"
+                key_failure = _KEY_FAILURE_REASONS.get(status_code)
+                if key_failure:
+                    reason = key_failure
                     raise ElevenLabsQuotaError(f"HTTP {status_code}")
                 if 400 <= status_code < 500:
                     raise TTSRequestError("provider_request_rejected")
@@ -279,7 +289,7 @@ async def generate_speech_with_key_rotation(
     api_keys: list[str],
     *,
     voice_id: str,
-    model_id: str = _DEFAULT_MODEL,
+    model_id: str = DEFAULT_ELEVENLABS_MODEL,
     timeout: float = 90.0,
     on_chunk_complete=None,
 ) -> list[bytes] | None:
@@ -338,19 +348,15 @@ async def _generate_message_with_key_rotation(
     api_keys: list[str],
     *,
     voice_id: str,
-    model_id: str = _DEFAULT_MODEL,
+    model_id: str = DEFAULT_ELEVENLABS_MODEL,
     timeout: float = 90.0,
     on_chunk_complete=None,
 ) -> list[bytes] | None:
-    """Generate PCM audio for all text chunks using key rotation on quota errors.
+    """Generate the chunks in order with one voice and model.
 
-    This is the Atomic Router's ElevenLabs pipeline:
-      - Runs all chunks sequentially (free tier has rate-limit constraints).
-      - If any chunk hits a quota error, the function immediately returns None
-        so the caller can fall back to Gemini TTS for the ENTIRE message.
-        This guarantees voice consistency — the user never hears two different
-        TTS systems spliced together in one message.
-      - Key rotation happens transparently within a single chunk attempt.
+    A key that cannot serve a chunk is skipped for the rest of this message.
+    If generation fails, the caller can retry the entire transcript with its
+    next configured model or provider.
 
     Args:
         text_chunks: Pre-cleaned, pre-split text chunks.
@@ -417,7 +423,7 @@ async def _generate_message_with_key_rotation(
 
             except ElevenLabsQuotaError:
                 logging.warning(
-                    "ElevenLabs key quota exhausted (chunk %d/%d), rotating key",
+                    "ElevenLabs key unavailable (chunk %d/%d), rotating key",
                     pos + 1,
                     len(non_empty),
                 )
@@ -460,74 +466,3 @@ async def _generate_message_with_key_rotation(
         return None
 
     return pcm_parts
-
-
-async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
-    """Fetch available voices from ElevenLabs GET /v1/voices.
-
-    Returns list of {id, name, category, labels} dicts, or [] on error.
-    """
-    if not api_key:
-        return []
-
-    attempt = start_workload_attempt(
-        workload="voice_catalog",
-        provider="elevenlabs",
-        model="voices",
-        api_key=api_key,
-        origin="elevenlabs_voice_catalog",
-    )
-    reason = "request_failed"
-    try:
-        async with asyncio.timeout(timeout):
-            attempt.record_dispatch()
-            async with _get_client().stream(
-                "GET",
-                "/v1/voices",
-                headers={"xi-api-key": api_key, "Accept": "application/json", "Accept-Encoding": "identity"},
-            ) as response:
-                status_code = response.status_code
-                body = await _read_bounded(response, _VOICE_CATALOG_MAX_BYTES) if status_code == 200 else b""
-        # Closing the response is part of the attempt; cancellation during
-        # close must not produce a second terminal after an HTTP failure.
-        if status_code != 200:
-            attempt.finish(outcome="failed", level="warning", reason_code="http_error", status_code=status_code)
-            return []
-        reason = "invalid_response"
-        from app.utils.json_compat import json
-
-        data = json.loads(body)
-        if not isinstance(data, dict):
-            raise TypeError("ElevenLabs voices response must be an object")
-        voices_list = data.get("voices", [])
-        if not isinstance(voices_list, list):
-            raise TypeError("ElevenLabs voices field must be a list")
-    except asyncio.CancelledError:
-        attempt.finish(outcome="cancelled", level="warning", reason_code="cancelled")
-        raise
-    except Exception as exc:
-        logging.warning("Failed to fetch ElevenLabs voices (%s)", type(exc).__name__)
-        attempt.fail(exc, reason_code=reason)
-        return []
-
-    result = []
-    for v in voices_list:
-        if not isinstance(v, dict):
-            continue
-        voice_id = v.get("voice_id")
-        name = v.get("name")
-        category = v.get("category")
-        if not voice_id or not name:
-            continue
-        if category not in ("premade", "cloned"):
-            continue
-        result.append(
-            {
-                "id": voice_id,
-                "name": name,
-                "category": category,
-                "labels": v.get("labels", {}),
-            }
-        )
-    attempt.finish(outcome="succeeded", result_count=len(result))
-    return result

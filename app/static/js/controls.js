@@ -801,7 +801,7 @@
       label.append(select);
       parameters.append(label);
       fields.apply_text_normalization = select;
-      node.append(element("p", "muted", "ElevenLabs использует ID голоса и параметры синтеза; отдельного промпта для голоса в этом API нет."));
+      node.append(element("p", "muted", "Eleven v4 использует стабильность и сходство с голосом. Для v3 выбирается ближайший из трёх уровней стабильности. Выразительность и усиление сходства доступны для Multilingual v2."));
     }
     node.append(parameters, element("h4", "voice-heading", "Каталог голосов — порядок выбора сверху вниз"));
     const voices = element("div", "voice-catalog");

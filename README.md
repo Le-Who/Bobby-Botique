@@ -506,8 +506,8 @@ provider-routed chat/search and specialized research execution have distinct pat
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
 | `ELEVENLABS_API_KEYS` | ⚙️ | `sk_abc,sk_xyz` | `[]` | Comma-separated outbound TTS keys, tried in order; failed/exhausted keys are skipped for remaining chunks of that synthesis. If the pipeline cannot finish, the voice engine can fall back to Gemini TTS for the entire response. Provider-side quotas are not defined by this repository. |
-| `ELEVENLABS_VOICE_ID` | ⚙️ | `XB0fDUnXU5powFXDhCwa` | `XB0fDUnXU5powFXDhCwa` | Baseline ElevenLabs voice; the admin catalog and an active user preference take precedence. Default is Charlotte. Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library). |
-| `ELEVENLABS_MODEL` | ⚙️ | `eleven_multilingual_v2` | `eleven_multilingual_v2` | Model passed to the ElevenLabs synthesis path. |
+| `ELEVENLABS_VOICE_ID` | ⚙️ | `OZ0L6eISlOejga3XjDFt` | `OZ0L6eISlOejga3XjDFt` | Baseline ElevenLabs voice; the admin catalog and an active user preference take precedence. Default is Talia. Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library). |
+| `ELEVENLABS_MODEL` | ⚙️ | `eleven_flash_v2_5` | `eleven_v4` | Baseline for completed voice messages. The VPS workflow forwards this optional setting. An explicit `tts.elevenlabs` route takes precedence. |
 | `GEMINI_TTS_RPM_PER_KEY` | ⚙️ | Positive integer | `3` | Local rolling 60-second TTS request budget per key and model. Redis coordinates replicas; without Redis the window is process-local. Set against the independent projects' AI Studio quotas. Forwarded by the VPS workflow; restart required. |
 
 The admin dashboard's **Voices and TTS** section (`/controls#audio`) manages voice
@@ -543,9 +543,9 @@ Key rotation is sequential; duplicate key races are disabled.
 Explicitly incomplete or token-limited output is discarded and retried with
 smaller pieces within bounded limits. A failed source never delivers partial audio.
 ElevenLabs also sends a whole transcript when it fits the selected model, splitting
-only at known model character limits (10,000 for Multilingual v2, 40,000 for Flash
-v2.5). Separate requests can differ in prosody; those necessary long-form joins
-retain neighbouring text context in ElevenLabs. The queue's 64 KiB UTF-8 source
+only at known model character limits (10,000 for Eleven v4 and Multilingual v2,
+5,000 for v3, 40,000 for Flash v2.5). Models supporting request stitching receive
+neighbouring text for smoother joins. The queue's 64 KiB UTF-8 source
 limit is separate from Gemini's per-call token budget. Audio validation detects
 reported truncation and malformed data; it does not verify every spoken word.
 
@@ -559,7 +559,7 @@ of provider account limits; missing caps rely on provider quota errors and rotat
 
 These tables cover supported operator settings, not every environment read in the
 repository. A runtime setting is not automatically forwarded by the VPS workflow:
-for example, `INLINE_MODEL`, `OPENCODE_URL_SELECTION_MODEL`, `ELEVENLABS_MODEL`,
+for example, `INLINE_MODEL`, `OPENCODE_URL_SELECTION_MODEL`,
 `WEBHOOK_MAX_CONNECTIONS` and `UPDATE_QUEUE_MAXSIZE` are loaded by code but are not
 currently passed through that workflow. Adding a GitHub Secret alone does not
 activate them. Conversely, legacy `USE_OPENROUTER` and
