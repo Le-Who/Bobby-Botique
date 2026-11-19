@@ -142,9 +142,11 @@ async def refresh_catalogs(
 
 async def list_catalogs(*, snapshot: SettingsSnapshot | None = None) -> list[dict[str, Any]]:
     from app.config import SUPPORTED_OPENAI_CHAT_MODELS, SUPPORTED_OPENAI_FLEX_MODELS, settings
+    from app.process_policies import openai_reasoning_efforts
     from app.repos.models_repo import _catalog_sources
 
     await refresh_catalogs(snapshot=snapshot)
+    direct_openai_models = [f"openai-direct/{model}" for model in sorted(SUPPORTED_OPENAI_CHAT_MODELS)]
     return [
         {
             "provider": provider,
@@ -152,8 +154,12 @@ async def list_catalogs(*, snapshot: SettingsSnapshot | None = None) -> list[dic
             "source": _catalog_sources[provider].value,
             **(
                 {
-                    "supported_models": [f"openai-direct/{model}" for model in sorted(SUPPORTED_OPENAI_CHAT_MODELS)],
+                    "supported_models": direct_openai_models,
                     "flex_models": [f"openai-direct/{model}" for model in sorted(SUPPORTED_OPENAI_FLEX_MODELS)],
+                    "reasoning_efforts_by_model": {
+                        model: [effort.value for effort in openai_reasoning_efforts(model)]
+                        for model in direct_openai_models
+                    },
                 }
                 if provider == "openai"
                 else {}

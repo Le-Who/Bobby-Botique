@@ -883,6 +883,94 @@ async def tier_transport(monkeypatch):
         await client.close()
 
 
+@pytest.mark.parametrize("tier,effort", [("default", "high"), ("flex", "medium")])
+async def test_inline_settings_reach_openai_wire(tier_transport, monkeypatch, tier, effort):
+    from app.handlers import inline
+    from app.runtime_settings.lifecycle import runtime_settings_scope
+    from app.runtime_settings.store import SettingsSnapshot
+
+    chunks = [frame("response.output_text.delta", delta="Fast answer"), completed()]
+    calls, _ = tier_transport(chunks, chunks)
+    monkeypatch.setattr("app.providers.router.get_provider_router", ProviderRouter)
+    monkeypatch.setattr(inline, "get_global_setting", AsyncMock(return_value="off"))
+    policy = {"models": [MODEL], "service_tier": tier, "reasoning_effort": effort}
+    async with runtime_settings_scope(SettingsSnapshot(19, {"process:inline": policy})):
+        text, _ = await inline._stream_inline_fast("gemini-user-model", [{"parts": ["Prompt"]}], None, 42)
+
+    assert text == "Fast answer"
+    assert len(calls) == 1
+    assert calls[0]["model"] == MODEL.removeprefix("openai-direct/")
+    assert calls[0]["service_tier"] == tier
+    assert calls[0]["reasoning"] == {"effort": effort}
+
+
+@pytest.mark.parametrize("process_id", ["roles.generate", "roles.edit"])
+@pytest.mark.parametrize("tier,effort", [("default", None), ("flex", "high")])
+async def test_role_instruction_settings_reach_openai_wire(tier_transport, monkeypatch, process_id, tier, effort):
+    from app import state
+    from app.handlers import msg_roles
+    from app.runtime_settings.lifecycle import runtime_settings_scope
+    from app.runtime_settings.store import SettingsSnapshot
+    from tests.interaction_fakes import install_private_interaction_fakes
+
+    install_private_interaction_fakes(monkeypatch)
+    monkeypatch.setattr("app.providers.get_provider_router", ProviderRouter)
+    monkeypatch.setattr("app.state._schedule_persist", lambda _: None)
+    monkeypatch.setattr(msg_roles, "get_user_chat", AsyncMock(return_value=SimpleNamespace(model="gemini-user-model")))
+    user_id = 42
+    user_state = state.get_user_state(user_id)
+    user_state._loaded_from_db = True
+    user_state.awaiting_custom_role_input = True
+    text = "Build a science teacher"
+    progress = SimpleNamespace(edit_text=AsyncMock())
+    update = SimpleNamespace(message=SimpleNamespace(text=text, reply_text=AsyncMock(return_value=progress)))
+    context = SimpleNamespace(user_data={"edit_prompt_ai_role_id": 17, "edit_prompt_ai_current": "Old instruction"})
+    answer = (
+        '{"title":"Science Teacher","purpose":"Teach science","prompt":"Use experiments","style":[]}'
+        if process_id == "roles.generate"
+        else "Use experiments to teach science"
+    )
+    chunks = [frame("response.output_text.delta", delta=answer), completed()]
+    calls, _ = tier_transport(chunks, chunks)
+    policy = {"models": [MODEL], "service_tier": tier, "reasoning_effort": effort}
+
+    async with runtime_settings_scope(SettingsSnapshot(19, {f"process:{process_id}": policy})):
+        if process_id == "roles.generate":
+            assert await msg_roles.handle_custom_role_generation(update, context, user_id, user_id, text)
+            assert state.get_generated_role(user_id)["prompt"] == "Use experiments"
+        else:
+            assert await msg_roles.handle_edit_prompt(update, context, user_id)
+            assert context.user_data["edit_prompt_ai_preview"] == answer
+
+    assert len(calls) == 1
+    assert calls[0]["model"] == MODEL.removeprefix("openai-direct/")
+    assert calls[0]["service_tier"] == tier
+    assert calls[0]["reasoning"] == {"effort": effort or "none"}
+
+
+async def test_role_flex_uses_configured_models_without_switching_tiers(tier_transport):
+    from app.process_policies import execute_text_process
+    from app.runtime_settings.lifecycle import runtime_settings_scope
+    from app.runtime_settings.store import SettingsSnapshot
+
+    calls, _ = tier_transport(
+        [frame("response.failed", response={"error": {"code": "resource_unavailable"}})],
+        [frame("response.output_text.delta", delta="Unexpected Standard answer"), completed()],
+    )
+    backup = "openai-direct/gpt-6-luna"
+    policy = {"models": [MODEL, backup], "service_tier": "flex", "reasoning_effort": "medium"}
+    async with runtime_settings_scope(SettingsSnapshot(19, {"process:roles.generate": policy})):
+        with pytest.raises(RuntimeError, match="Configured model plan did not complete"):
+            await execute_text_process(
+                "roles.generate", ("gemini-user-model",), [{"parts": ["Prompt"]}], router=ProviderRouter()
+            )
+
+    assert [(call["model"], call["service_tier"], call["reasoning"]["effort"]) for call in calls] == [
+        ("gpt-6.1-terra", "flex", "medium"),
+        ("gpt-6-luna", "flex", "medium"),
+    ]
+
+
 @pytest.mark.parametrize("workload", [Workload.INTERACTIVE, Workload.QUICK_SEARCH])
 @pytest.mark.parametrize("failure", ["resource_unavailable", "server_error", "http_503", "network", "timeout"])
 async def test_flex_transient_failure_recovers_once_on_standard(tier_transport, monkeypatch, workload, failure):

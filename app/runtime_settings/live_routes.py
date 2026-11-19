@@ -63,7 +63,7 @@ def active_provider(snapshot: store.SettingsSnapshot | None = None) -> str:
 def default_policy(process_id: str, provider: str) -> dict[str, Any]:
     """A provider-pinned reset default, independent of stored user selection."""
     from app.config import GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL, settings
-    from app.process_policies import PROCESSES, validate_policy
+    from app.process_policies import PROCESSES, ReasoningEffort, openai_reasoning_efforts, validate_policy
 
     if process_id not in LIVE_PROCESS_IDS or provider not in {"gemini", "openai"}:
         raise ValueError("Профиль не управляет этим процессом")
@@ -77,8 +77,14 @@ def default_policy(process_id: str, provider: str) -> dict[str, Any]:
     value = {"models": [model], "strategy": "sequential", "inherit_user_model": False}
     if provider == "openai" and process_id in {"chat", "chat.complex", "search"}:
         value["service_tier"] = "flex"
-    if provider == "openai" and process_id in {"chat", "chat.complex", "search", "inline", "crocodile.judge"}:
-        value["reasoning_effort"] = "low" if process_id == "chat.complex" else "none"
+    if provider == "openai" and process_id == "chat.complex":
+        value["reasoning_effort"] = ReasoningEffort.LOW.value
+    if (
+        provider == "openai"
+        and process_id in {"chat", "search", "inline", "crocodile.judge"}
+        and ReasoningEffort.NONE in openai_reasoning_efforts(model)
+    ):
+        value["reasoning_effort"] = ReasoningEffort.NONE.value
     return validate_policy(process_id, value)
 
 

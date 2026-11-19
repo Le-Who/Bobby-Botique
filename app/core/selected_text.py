@@ -43,6 +43,9 @@ async def generate_selected_text(
         allow_key_race=False,
         policy_revision=policy.revision,
         response_schema=response_schema,
+        service_tier=policy.service_tier,
+        openai_uses_model_default=policy.reasoning_effort is None,
+        allow_standard_recovery=False,
     )
     chunks: list[str] = []
     async with asyncio.timeout(timeout):

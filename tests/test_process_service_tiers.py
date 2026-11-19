@@ -6,6 +6,7 @@ import pytest
 
 from app.process_policies import resolve_policy_value, validate_policy
 from app.runtime_settings import store
+from app.runtime_settings.live_routes import LIVE_PROCESS_IDS
 from tests.test_runtime_settings_store import Database
 
 LUNA = "openai-direct/gpt-6-luna"
@@ -18,8 +19,8 @@ def test_legacy_policy_shape_and_default_tier_are_preserved():
     assert resolve_policy_value("chat", None, ("gemini-test",)).service_tier.value == "default"
 
 
-@pytest.mark.parametrize("process", ["chat", "chat.complex", "search"])
-def test_supported_live_process_can_choose_flex_independently_of_model(process):
+@pytest.mark.parametrize("process", [*LIVE_PROCESS_IDS, "summary"])
+def test_supported_openai_process_can_choose_flex_independently_of_model(process):
     value = validate_policy(process, {"models": [LUNA], "service_tier": "flex"})
     assert value["models"] == [LUNA]
     assert value["service_tier"] == "flex"
@@ -29,8 +30,8 @@ def test_supported_live_process_can_choose_flex_independently_of_model(process):
 @pytest.mark.parametrize(
     "process,models,tier",
     [
-        ("inline", [LUNA], "flex"),
-        ("crocodile.judge", [LUNA], "flex"),
+        ("research", [LUNA], "flex"),
+        ("image.pollinations", [LUNA], "flex"),
         ("chat", ["gemini-test"], "flex"),
         ("chat", ["openai-direct/gpt-4.1-mini"], "flex"),
         ("search", [LUNA, "gemini-test"], "flex"),
@@ -91,7 +92,7 @@ async def test_primary_writer_preserves_flex_and_rejects_incompatible_model(tier
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("process_id", ["chat", "search"])
+@pytest.mark.parametrize("process_id", ["chat", "search", "roles.generate"])
 async def test_dashboard_save_preview_conflict_and_restore_include_tier(tiers, monkeypatch, process_id):
     from app import web_controls
     from app.web import quart_app
@@ -102,7 +103,7 @@ async def test_dashboard_save_preview_conflict_and_restore_include_tier(tiers, m
     async with client.session_transaction() as session:
         session.update(authenticated=True, controls_csrf="tier-csrf")
     headers = {"X-CSRF-Token": "tier-csrf"}
-    value = {"models": [LUNA], "service_tier": "flex", "inherit_user_model": False}
+    value = {"models": [LUNA], "service_tier": "flex", "reasoning_effort": "low", "inherit_user_model": False}
     payload = {"section": "process", "id": process_id, "value": value, "expected_revision": 0}
     saved = await client.post("/api/admin/controls", json=payload, headers=headers)
     assert saved.status_code == 200
@@ -112,7 +113,9 @@ async def test_dashboard_save_preview_conflict_and_restore_include_tier(tiers, m
         "/api/admin/controls/preview", json={**payload, "expected_revision": 1}, headers=headers
     )
     assert preview.status_code == 200
-    assert (await preview.get_json())["service_tier"] == "flex"
+    plan = await preview.get_json()
+    assert plan["service_tier"] == "flex"
+    assert plan["reasoning_effort"] == "low"
     invalid = {**payload, "expected_revision": 1, "value": {**value, "models": ["openai-direct/gpt-4o-mini"]}}
     assert (await client.post("/api/admin/controls", json=invalid, headers=headers)).status_code == 400
     assert (await tiers.get_snapshot()).revision == 1
@@ -123,6 +126,34 @@ async def test_dashboard_save_preview_conflict_and_restore_include_tier(tiers, m
         1, expected_revision=2, actor="test", validate=web_controls._validate_restored_values
     )
     assert restored.values[f"process:{process_id}"]["service_tier"] == "flex"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_process_capabilities_show_registered_choices_only_for_direct_openai_routes(tiers, monkeypatch):
+    from app.process_policies import list_processes
+    from app.runtime_settings import models
+    from app.runtime_settings.lifecycle import runtime_settings_scope
+
+    monkeypatch.setattr(models, "refresh_catalogs", AsyncMock())
+    async with runtime_settings_scope(await tiers.get_snapshot()):
+        by_id = {row["id"]: row for row in await list_processes()}
+        catalog = next(row for row in await models.list_catalogs() if row["provider"] == "openai")
+
+    roles = by_id["roles.generate"]
+    assert roles["openai_model_choices"] == catalog["supported_models"]
+    assert LUNA in roles["openai_model_choices"]
+    assert "openai-direct/gpt-6.1-luna" not in roles["openai_model_choices"]
+    assert roles["service_tiers"] == ["default", "flex"]
+    assert roles["flex_standard_recovery"] is False
+    assert by_id["chat"]["flex_standard_recovery"] is True
+    assert roles["reasoning_efforts"] == ["none", "low", "medium", "high"]
+    assert catalog["reasoning_efforts_by_model"][LUNA] == roles["reasoning_efforts"]
+    assert catalog["reasoning_efforts_by_model"]["openai-direct/gpt-6.1-sol"] == ["low", "medium", "high"]
+    assert catalog["reasoning_efforts_by_model"]["openai-direct/gpt-4.1-mini"] == []
+    for process in ("research", "daily.trivia", "image.pollinations", "live"):
+        assert by_id[process]["openai_model_choices"] == []
+        assert by_id[process]["service_tiers"] == ["default"]
+        assert by_id[process]["reasoning_efforts"] == []
 
 
 @pytest.mark.asyncio

@@ -1450,7 +1450,7 @@ async def _stream_inline_fast(
         allow_deferred=False,
         allow_key_race=False,
     )
-    if any(model.startswith("openai-direct/") for model in request.models):
+    if request.openai_uses_model_default and all(model.startswith("openai-direct/") for model in request.models):
         from dataclasses import replace
 
         from app.providers.stream_types import ThinkingLevel

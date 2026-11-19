@@ -159,6 +159,8 @@ class GenerationRequest:
     # History factories carry user preferences; direct OpenAI accepts reasoning
     # only from an explicit admin policy or an internal typed request.
     openai_uses_model_default: bool = False
+    # Process request factories opt in only where Standard recovery is part of the route.
+    allow_standard_recovery: bool = True
 
     def __post_init__(self) -> None:
         if type(self.openai_uses_model_default) is not bool:

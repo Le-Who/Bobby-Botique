@@ -27,6 +27,10 @@ class ProcessSpec:
     connected: bool = True
     note: str = ""
 
+    @property
+    def supports_openai(self) -> bool:
+        return self.connected and not self.gemini_only and ("text" in self.capabilities or "json" in self.capabilities)
+
 
 PROCESSES: dict[str, ProcessSpec] = {
     "media.memory_voice": ProcessSpec(
@@ -226,11 +230,24 @@ PROCESSES["crocodile.judge"] = _replace(
 )
 
 
+OPENAI_FLEX_RECOVERY_PROCESSES = frozenset({"chat", "chat.complex", "search"})
+
+
 class ReasoningEffort(StrEnum):
     NONE = "none"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+def openai_reasoning_efforts(model: str) -> tuple[ReasoningEffort, ...]:
+    from app.config import is_openai_chat_model_id
+
+    if not model.startswith("openai-direct/gpt-6") or not is_openai_chat_model_id(model):
+        return ()
+    if model == "openai-direct/gpt-6.1-sol":
+        return (ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH)
+    return tuple(ReasoningEffort)
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +269,12 @@ def policy_thinking_level(policy: ResolvedPolicy, fallback: ThinkingLevel | None
 
 
 def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
-    from app.config import SUPPORTED_OPENAI_FLEX_MODELS, is_freetheai_chat_model_id, is_openai_chat_model_id
+    from app.config import (
+        OPENAI_FAST_MODEL,
+        SUPPORTED_OPENAI_FLEX_MODELS,
+        is_freetheai_chat_model_id,
+        is_openai_chat_model_id,
+    )
 
     spec = PROCESSES[process_id]
     if not spec.connected:
@@ -276,8 +298,13 @@ def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
             raise ValueError("Некорректный model ID")
         if model in clean:
             raise ValueError("Модели в цепочке не должны повторяться")
-        if model.startswith("openai-direct/") and not is_openai_chat_model_id(model):
-            raise ValueError("Эта модель не поддерживается прямым OpenAI API")
+        if model.startswith("openai-direct/"):
+            if not is_openai_chat_model_id(model):
+                raise ValueError(
+                    f"Неизвестный ID прямой модели OpenAI. Выберите модель из списка, например {OPENAI_FAST_MODEL}."
+                )
+            if not spec.supports_openai:
+                raise ValueError("Этот исполнитель не поддерживает прямой OpenAI API")
         if spec.gemini_only and not model.startswith("gemini-"):
             raise ValueError("Этот исполнитель поддерживает только Gemini")
         if process_id in {
@@ -344,7 +371,7 @@ def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
     if not isinstance(tier, str) or tier not in {item.value for item in ServiceTier}:
         raise ValueError("Неизвестный тариф: выберите Standard или Flex")
     if tier == ServiceTier.FLEX.value and (
-        process_id not in {"chat", "chat.complex", "search"}
+        not spec.supports_openai
         or inherit
         or not all(
             model.startswith("openai-direct/") and model.removeprefix("openai-direct/") in SUPPORTED_OPENAI_FLEX_MODELS
@@ -352,17 +379,18 @@ def validate_policy(process_id: str, value: Any) -> dict[str, Any]:
         )
     ):
         raise ValueError(
-            "Flex доступен только для chat/chat.complex/search с поддерживаемыми моделями OpenAI без наследования модели пользователя"
+            "Для Flex выберите поддерживаемые прямые модели OpenAI во всех строках и отключите наследование модели пользователя"
         )
     reasoning = value.get("reasoning_effort")
     if reasoning is not None:
         if not isinstance(reasoning, str) or reasoning not in {item.value for item in ReasoningEffort}:
             raise ValueError("Неизвестный reasoning effort: выберите none, low, medium или high")
-        if not all(is_openai_chat_model_id(model) and model.startswith("openai-direct/gpt-6") for model in clean):
+        allowed_efforts = [openai_reasoning_efforts(model) for model in clean]
+        if not spec.supports_openai or not all(allowed_efforts):
             raise ValueError(
                 "Reasoning override поддерживается только планом из зарегистрированных прямых OpenAI GPT-6 моделей"
             )
-        if reasoning == ReasoningEffort.NONE.value and "openai-direct/gpt-6.1-sol" in clean:
+        if not all(reasoning in efforts for efforts in allowed_efforts):
             raise ValueError("GPT-6.1 Sol не поддерживает reasoning none; выберите low или уберите переопределение")
     result = {"models": clean, "strategy": strategy, "inherit_user_model": inherit}
     if "service_tier" in value:
@@ -396,7 +424,13 @@ def resolve_policy_value(
         return ResolvedPolicy(baseline, revision=revision)
     value = validate_policy(process_id, raw)
     models = tuple(value["models"])
-    if value["inherit_user_model"] and baseline and allow_user_model:
+    reasoning = value.get("reasoning_effort")
+    if (
+        value["inherit_user_model"]
+        and baseline
+        and allow_user_model
+        and (reasoning is None or reasoning in openai_reasoning_efforts(baseline[0]))
+    ):
         models = tuple(dict.fromkeys((baseline[0], *models)))
         validate_policy(process_id, {**value, "models": models})
     return ResolvedPolicy(
@@ -405,11 +439,12 @@ def resolve_policy_value(
         True,
         revision,
         ServiceTier(value.get("service_tier", "default")),
-        ReasoningEffort(value["reasoning_effort"]) if value.get("reasoning_effort") is not None else None,
+        ReasoningEffort(reasoning) if reasoning is not None else None,
     )
 
 
 async def list_processes() -> list[dict[str, Any]]:
+    from app.config import SUPPORTED_OPENAI_CHAT_MODELS
     from app.runtime_settings.lifecycle import operation_snapshot
     from app.runtime_settings.live_routes import LIVE_PROCESS_IDS, active_provider, effective_policy_value
     from app.runtime_settings.process_evidence import process_evidence
@@ -417,6 +452,7 @@ async def list_processes() -> list[dict[str, Any]]:
 
     snapshot = await operation_snapshot()
     inventory = get_source_inventory()
+    openai_models = [f"openai-direct/{model}" for model in sorted(SUPPORTED_OPENAI_CHAT_MODELS)]
     rows = []
     for process_id, spec in PROCESSES.items():
         baseline = list(await baseline_models(process_id))
@@ -431,12 +467,13 @@ async def list_processes() -> list[dict[str, Any]]:
                 "source": "admin" if value else "baseline",
                 "execution": value.get("strategy", "legacy") if isinstance(value, Mapping) else "legacy",
                 "strategy": value.get("strategy", "legacy") if isinstance(value, Mapping) else "legacy",
+                "openai_model_choices": openai_models if spec.supports_openai else [],
                 "service_tier": value.get("service_tier", "default") if isinstance(value, Mapping) else "default",
-                "service_tiers": ["default", "flex"]
-                if process_id in {"chat", "chat.complex", "search"}
-                else ["default"],
+                "service_tiers": [tier.value for tier in ServiceTier] if spec.supports_openai else ["default"],
+                "flex_standard_recovery": process_id in OPENAI_FLEX_RECOVERY_PROCESSES,
                 "service_tier_explicit": isinstance(value, Mapping) and "service_tier" in value,
                 "reasoning_effort": value.get("reasoning_effort") if isinstance(value, Mapping) else None,
+                "reasoning_efforts": [effort.value for effort in ReasoningEffort] if spec.supports_openai else [],
                 "reasoning_effort_explicit": isinstance(value, Mapping) and "reasoning_effort" in value,
                 "inherit_user_model": value.get("inherit_user_model", False) if isinstance(value, Mapping) else False,
                 "user_model_allowed": active_provider(snapshot) == "baseline" or process_id not in LIVE_PROCESS_IDS,
@@ -587,6 +624,7 @@ async def execute_text_process(
         route_strategy=policy.strategy,
         policy_revision=policy.revision,
         service_tier=policy.service_tier,
+        allow_standard_recovery=process_id in OPENAI_FLEX_RECOVERY_PROCESSES,
         thinking_level=policy_thinking_level(policy, request.thinking_level),
         openai_uses_model_default=getattr(policy, "reasoning_effort", None) is None,
     )

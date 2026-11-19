@@ -149,17 +149,19 @@ model call. OpenAI reasoning is administrator-owned: history-derived requests
 without an explicit process override use the model default. Saved user thinking
 remains available to Gemini, including the Gemini member of a mixed chain.
 Typed internal administrator requests retain their explicit reasoning.
-Inline and Crocodile judgement
-use Luna Standard without reasoning; other OpenAI routes use Standard.
+The initial profile uses Luna Standard without reasoning for inline and Crocodile
+judgement and Standard for other OpenAI routes. Direct OpenAI process cards allow
+administrators to choose Flex for a compatible model plan.
 Saved 22-process profiles remain valid when the complex-chat route is added.
-Direct interactive/quick-search Flex routes make one API attempt. An overload,
-timeout or transport failure before text preserves key health and starts one
-Standard attempt on the same model, with a fresh first-text deadline, unchanged
-input/reasoning/search settings, and no repeated user admission. The immutable
-process policy stays Flex; each attempt and the final route report their own
+The `chat`, `chat.complex` and `search` Flex routes make one API attempt on the
+primary model. An overload, timeout or transport failure before text preserves key
+health and starts one Standard attempt on that model, with a fresh first-text
+deadline, unchanged input/reasoning/search settings, and no repeated user admission.
+The immutable process policy stays Flex; each attempt and the final route report their own
 requested/actual tiers. Cancellation, failures after text and account/request
 errors do not trigger this transition. Standard failure is terminal and offers
 manual retry; neither tier starts another model or deferred job.
+Other OpenAI processes run their configured tier and retain their operation deadlines.
 For direct GPT-6 search, the shared
 15-second budget includes native `web_search` before the first answer text.
 Gateways, mixed plans and legacy models keep their separate Jina retrieval step.

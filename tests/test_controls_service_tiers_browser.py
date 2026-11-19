@@ -46,12 +46,19 @@ process.stdin.on('end',async()=>{
   const page=await browser.newPage({viewport:{width:1366,height:900}});page.setDefaultTimeout(3500);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
   const luna='openai-direct/gpt-6-luna',terra='openai-direct/gpt-6.1-terra',sol='openai-direct/gpt-6.1-sol',mini='openai-direct/gpt-4o-mini';
-  let revision=1,conflict=false,provider='openai',loads=0,catalog=[luna,terra];const writes=[];
-  const routes={chat:{models:[luna],strategy:'sequential',inherit_user_model:false,service_tier:'default'},search:{models:[luna],strategy:'sequential',inherit_user_model:false,service_tier:'default'},'chat.complex':{models:[terra],strategy:'sequential',inherit_user_model:false,service_tier:'flex',reasoning_effort:'low'}};
+  let revision=1,conflict=false,provider='openai',loads=0,catalog=[luna,mini,terra];const writes=[];
+  const routes={chat:{models:[luna],strategy:'sequential',inherit_user_model:false,service_tier:'default'},search:{models:[luna],strategy:'sequential',inherit_user_model:false,service_tier:'default'},'chat.complex':{models:[terra],strategy:'sequential',inherit_user_model:false,service_tier:'flex',reasoning_effort:'low'},'roles.generate':{models:[terra],strategy:'sequential',inherit_user_model:false}};
+  const badLuna='openai-direct/gpt-6.1-luna';
+  const modelError='Эта модель не поддерживается прямым OpenAI API. Выберите openai-direct/gpt-6-luna.';
+  const allEfforts=['none','low','medium','high'];
   let savedOpenAI;
   const snapshot=()=>({revision,degraded:false,prompts:[],limits:[],audio:[],history:[],commands:{available:false,commands:[]},
-   catalogs:[{provider:'openai',models:catalog,supported_models:[luna,terra,sol,mini],flex_models:[luna,terra,sol]}],
-   processes:Object.entries(routes).map(([id,value])=>({id,title:id==='chat'?'Диалог':'Ответ с поиском',group:'Общение',editable:true,user_model_allowed:false,service_tier_explicit:true,service_tiers:['default','flex'],...value})),
+   catalogs:[{provider:'openai',models:catalog,supported_models:[luna,terra,sol,mini],flex_models:[luna,terra,sol],
+    reasoning_efforts_by_model:{[luna]:allEfforts,[terra]:allEfforts,[sol]:['low','medium','high'],[mini]:[]}}],
+   processes:[...Object.entries(routes).map(([id,value])=>({id,title:id==='chat'?'Диалог':'Ответ с поиском',group:'Общение',editable:true,user_model_allowed:false,service_tier_explicit:true,service_tiers:['default','flex'],...value,
+    ...(id==='roles.generate'?{title:'Роли: создание инструкции',user_model_allowed:true,service_tier_explicit:false,openai_model_choices:[sol,terra,luna],reasoning_efforts:allEfforts,flex_standard_recovery:false}:{}),
+   })),
+    {id:'research',title:'Agentic research',models:['gemini-test'],editable:true,openai_model_choices:[],reasoning_efforts:[],service_tiers:['default']}],
    live_routes:{provider,process_ids:['chat','search'],readiness:{openai:{configured:true},gemini:{configured:true}},can_restore_baseline:true,openai_defaults:{chat:luna,search:luna},note:'Только наличие ключей.'}});
   await page.route('**/*',async route=>{
    const path=new URL(route.request().url()).pathname;
@@ -63,8 +70,13 @@ process.stdin.on('end',async()=>{
     const body=route.request().postDataJSON();writes.push(body);assert.equal(route.request().headers()['x-csrf-token'],'tier-csrf');
     if(conflict){conflict=false;revision++;return route.fulfill({status:409,json:{error:'changed'}});}
     assert.equal(body.expected_revision,revision);
+    if(body.value.models?.includes(badLuna))return route.fulfill({status:400,json:{error:modelError}});
     if(body.section==='process')routes[body.id]=structuredClone(body.value);else if(body.section==='catalog')catalog=body.value;
     revision++;return route.fulfill({json:{revision}});
+   }
+   if(path==='/api/admin/controls/preview'){
+    assert.deepEqual(route.request().postDataJSON().value.models,[badLuna]);
+    return route.fulfill({status:400,json:{error:modelError}});
    }
    if(path==='/api/admin/controls/live-provider'){
     const body=route.request().postDataJSON();assert.equal(body.expected_revision,revision);
@@ -87,7 +99,8 @@ process.stdin.on('end',async()=>{
   assert.equal(routes.chat.models[0],terra);assert.equal(routes.chat.service_tier,'flex');assert.equal(routes.chat.reasoning_effort,'none');
   await picker.selectOption(sol);await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();
   assert.equal(writes.length,1);assert.equal(await reasoning.inputValue(),'none');
-  assert.match(await chat.locator('.feedback').textContent(),/Sol не поддерживает reasoning none/);
+  assert.equal(await reasoning.locator('option[value="none"]').evaluate(option=>option.disabled),true);
+  assert.match(await chat.locator('.feedback').textContent(),/Sol поддерживает уровни Low, Medium и High/);
   await picker.selectOption(mini);assert.equal(await tier.inputValue(),'flex');
   await chat.getByRole('button',{name:'Сохранить маршрут',exact:true}).click();assert.equal(writes.length,1);
   assert.match(await chat.locator('.feedback').textContent(),/Flex требует/);
@@ -109,6 +122,7 @@ process.stdin.on('end',async()=>{
   await profile.getByRole('button',{name:'Включить Gemini',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('6'));
   assert.equal(await reasoning.isVisible(),false);
+  assert.equal(await tier.isVisible(),false);
   await profile.getByRole('button',{name:'Включить OpenAI напрямую',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('7'));
   assert.equal(await reasoning.isVisible(),true);
@@ -125,6 +139,52 @@ process.stdin.on('end',async()=>{
   await catalogCard.getByRole('button',{name:'Сохранить каталог',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('8'));
   assert.ok(catalog.includes(sol));assert.equal(loads,1);assert.deepEqual(errors,[]);
+  await page.selectOption('#section-select','processes');
+  const role=page.locator('article[data-id="roles.generate"]');
+  const search=page.locator('#process-search');
+  await role.waitFor();
+  await search.fill('/gpt-6.1-terra ');
+  const roleModel=role.getByRole('textbox',{name:'Модель 1',exact:true});
+  await roleModel.fill(badLuna);
+  const roleError=role.locator('.feedback.error').filter({hasText:modelError});
+  await role.getByRole('button',{name:'Проверить маршрут',exact:true}).click();
+  await roleError.waitFor();
+  const roleSave=role.getByRole('button',{name:'Сохранить маршрут',exact:true});
+  await roleSave.click();
+  await roleError.waitFor();
+  assert.equal(await roleModel.inputValue(),badLuna);
+  assert.equal(writes.at(-1).id,'roles.generate');
+  assert.equal(revision,8);
+  await page.getByRole('button',{name:'Обновить данные',exact:true}).click();
+  await page.locator('#notice').filter({hasText:'Данные обновлены · ревизия 8'}).waitFor();
+  assert.equal(await role.isVisible(),true);
+  assert.equal(await roleModel.inputValue(),badLuna);
+  const roleTier=role.getByLabel('Тариф обработки',{exact:true});
+  const roleFlex=roleTier.locator('option[value="flex"]');
+  assert.equal(await roleFlex.evaluate(option=>option.disabled),true);
+  const rolePicker=role.getByLabel('Выбрать модель OpenAI 1');
+  assert.deepEqual(await rolePicker.locator('option').evaluateAll(options=>options.map(option=>option.value)),['',luna,terra,sol]);
+  await rolePicker.selectOption(luna);
+  const inherit=role.getByRole('checkbox',{name:'Учитывать модель пользователя'});
+  await inherit.check();
+  assert.equal(await roleFlex.evaluate(option=>option.disabled),true);
+  await inherit.uncheck();
+  await roleTier.selectOption('flex');
+  assert.ok(await role.getByText('Маршрут сохраняет выбранный тариф при переходе к резерву.',{exact:false}).isVisible());
+  await role.getByLabel('Reasoning effort',{exact:true}).selectOption('high');
+  await roleSave.click();
+  await page.waitForFunction(()=>document.querySelector('#revision').textContent.includes('9'));
+  assert.equal(await search.inputValue(),'/gpt-6.1-terra ');
+  assert.equal(await role.isVisible(),false);
+  await search.clear();
+  assert.equal(await roleModel.inputValue(),luna);
+  assert.equal(await roleTier.inputValue(),'flex');
+  assert.equal(await role.getByLabel('Reasoning effort',{exact:true}).inputValue(),'high');
+  const research=page.locator('article[data-id="research"]');
+  assert.equal(await research.locator('.model-picker').count(),0);
+  assert.equal(await research.getByLabel('Тариф обработки',{exact:true}).isVisible(),false);
+  assert.equal(await research.getByLabel('Reasoning effort',{exact:true}).isVisible(),false);
+  assert.deepEqual(errors,[]);
   process.stdout.write('Model/tier save, incompatible combination, CAS conflict, profile round-trip, catalog addition and mobile passed.\n');
  }finally{await browser.close();}
 });

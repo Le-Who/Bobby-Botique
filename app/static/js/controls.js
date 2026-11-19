@@ -73,6 +73,7 @@
   let minimumRevision = 0;
   const pendingSaves = [];
   let commandsSnapshot = { available: false, commands: [], note: "Получаем зарегистрированные команды…" };
+  const reasoningLabels = {none:"None — без рассуждений", low:"Low", medium:"Medium", high:"High"};
 
   function element(tag, className, value) {
     const node = document.createElement(tag);
@@ -106,7 +107,20 @@
     if (error.status === 409) return "Конфигурация изменилась после начала редактирования. Ваш текст сохранён на странице. Обновите данные и перенесите правку в новую ревизию.";
     if (error.status === 401) return "Сессия истекла. Войдите снова перед сохранением.";
     if (error.status === 403) return "Доступ запрещён. Обновите страницу перед сохранением.";
+    if (error.status === 400 && typeof error.data?.error === "string" && error.data.error.trim()) return error.data.error;
     return `${error.message || "Запрос не выполнен."}${error.retryAfter ? ` Повторите через ${error.retryAfter} с.` : ""}`;
+  }
+
+  function reasoningEffortsFor(models, catalog, efforts = Object.keys(reasoningLabels)) {
+    if (!models.length) return [];
+    return efforts.filter(effort => models.every(model => {
+      if (catalog?.reasoning_efforts_by_model) {
+        const modelEfforts = catalog.reasoning_efforts_by_model[model];
+        return Array.isArray(modelEfforts) && modelEfforts.includes(effort);
+      }
+      return model.startsWith("openai-direct/gpt-6") && catalog?.supported_models?.includes(model) &&
+        !(effort === "none" && model === "openai-direct/gpt-6.1-sol");
+    }));
   }
 
   function setBusy(value) {
@@ -269,8 +283,7 @@
     if (!draft && !reset) { message(status, "Изменений для сохранения нет."); return; }
     const payload = { section, id, expected_revision: draft ? draft.expected_revision : drafts.getSnapshot().revision };
     if (reset) payload.reset = true;
-    else payload.value = section === "process" && ["chat", "chat.complex", "search"].includes(id)
-      ? {...draft.value, service_tier:draft.value.service_tier || "default"} : draft.value;
+    else payload.value = draft.value;
     if (!reset && (section === "process" || section === "catalog")) {
       const models = section === "process" ? payload.value.models : payload.value;
       if (!Array.isArray(models) || (section === "process" && models.length === 0) || models.some((model) => !model)) {
@@ -285,13 +298,15 @@
         }
       }
       if (section === "process" && payload.value.reasoning_effort != null) {
-        const supported = drafts.getSnapshot().catalogs.find(item => item.provider === "openai")?.supported_models || [];
-        if (!models.every(model => model.startsWith("openai-direct/gpt-6") && supported.includes(model))) {
-          message(status, "Reasoning override требует зарегистрированные прямые модели OpenAI GPT-6 в каждой строке. Уберите переопределение или выберите совместимые модели; значение не сброшено автоматически.", true);
+        if (payload.value.reasoning_effort === "none" && models.includes("openai-direct/gpt-6.1-sol")) {
+          message(status, "GPT-6.1 Sol поддерживает уровни Low, Medium и High. Для этой модели выберите уровень рассуждений или настройку по умолчанию.", true);
           return;
         }
-        if (payload.value.reasoning_effort === "none" && models.includes("openai-direct/gpt-6.1-sol")) {
-          message(status, "GPT-6.1 Sol не поддерживает reasoning none. Выберите low или уберите переопределение; значение не изменено автоматически.", true);
+        const {processes, catalogs} = drafts.getSnapshot();
+        const process = processes.find(item => item.id === id);
+        const catalog = catalogs.find(item => item.provider === "openai");
+        if (!reasoningEffortsFor(models, catalog, process?.reasoning_efforts).includes(payload.value.reasoning_effort)) {
+          message(status, "Reasoning override требует поддержки выбранного уровня каждой моделью маршрута. Уберите переопределение или выберите совместимые модели.", true);
           return;
         }
       }
@@ -357,6 +372,7 @@
         picker.addEventListener("change", () => {
           if (!picker.value) return;
           input.value = picker.value;
+          picker.value = "";
           changed();
         });
         row.append(picker);
@@ -390,8 +406,9 @@
     const id = String(item.id);
     const node = card("process", id);
     node.dataset.group = item.group || "";
-    node.dataset.searchIdentity = [id, item.title].join(" ");
-    node.dataset.search = [node.dataset.searchIdentity, ...(drafts.getDraft("process", id)?.value.models || item.models || [])].join(" ").toLocaleLowerCase("ru");
+    const draft = drafts.getDraft("process", id);
+    node.dataset.searchIdentity = [id, item.title, ...(item.models || [])].join(" ");
+    node.dataset.search = [node.dataset.searchIdentity, ...(draft?.value.models || [])].join(" ").toLocaleLowerCase("ru");
     node.append(header(item, id), meta(item));
     if (item.note) node.append(element("p", item.editable ? "muted" : "readonly", item.note));
     if (item.scope) node.append(element("p", "control-note", item.scope));
@@ -408,14 +425,17 @@
         : "Этот процесс пока не подключён к управлению. Настройка здесь недоступна."));
       return node;
     }
-    const draft = drafts.getDraft("process", id);
-    const current = {...{
+    const legacyOpenAIRoute = ["chat", "chat.complex", "search"].includes(id);
+    const standardRecovery = item.flex_standard_recovery ?? legacyOpenAIRoute;
+    const supportsFlex = item.service_tiers?.includes("flex") ?? legacyOpenAIRoute;
+    const current = {
       models: item.models || [], strategy: item.strategy || "sequential",
       inherit_user_model: !!item.inherit_user_model,
-      ...(item.service_tier_explicit || ["chat", "chat.complex", "search"].includes(id) ? {service_tier:item.service_tier || "default"} : {}),
+      ...(item.service_tier_explicit || supportsFlex ? {service_tier:item.service_tier || "default"} : {}),
       ...(item.reasoning_effort_explicit || item.reasoning_effort != null ? {reasoning_effort:item.reasoning_effort ?? null} : {}),
-    }, ...(draft?.value || {})};
-    if (draft && ["chat", "chat.complex", "search"].includes(id) && !Object.hasOwn(draft.value, "service_tier")) current.service_tier = "default";
+      ...draft?.value,
+    };
+    if (draft && supportsFlex && !Object.hasOwn(draft.value, "service_tier")) current.service_tier = "default";
     if (draft && !Object.hasOwn(draft.value, "reasoning_effort")) current.reasoning_effort = null;
     const chain = element("div", "model-chain");
     const strategyField = element("label", "field", "Порядок выполнения");
@@ -438,32 +458,54 @@
     if (checkbox.disabled) inherit.append(element("span", "muted", "Активный профиль задаёт модель ответа; выбор пользователя не применяется."));
     const options = element("div", "options");
     options.append(strategyField, inherit);
+    const catalog = drafts.getSnapshot().catalogs.find(item => item.provider === "openai");
     const tier = element("select", "service-tier");
     tier.setAttribute("aria-label", "Тариф обработки");
     [["default", "Standard"], ["flex", "Flex"]].forEach(([value, label]) => {
-      const option = element("option", "", label); option.value = value; tier.append(option);
+      const option = element("option", "", label);
+      option.value = value;
+      tier.append(option);
     });
     tier.value = current.service_tier || "default";
-    const tierNote = element("p", "muted", "Flex дешевле, но задержка и доступность переменные. Локальный предел ожидания первого текста — 15 секунд. При нехватке ресурсов запрос может завершиться ошибкой; автоматического перехода на Standard нет.");
+    const flexOption = tier.options[1];
+    const tierField = element("label", "field", "Тариф обработки OpenAI");
+    tierField.append(tier);
+    const tierNote = element("p", "muted", standardRecovery
+      ? "Flex использует первую модель цепочки и ждёт первый текст до 15 секунд. При перегрузке, таймауте или сетевой ошибке до первого текста возможна одна попытка на той же модели по тарифу Standard с отдельным сроком ожидания до 20 секунд."
+      : "Flex применяется к поддерживаемым моделям цепочки в пределах времени этого процесса. Для интерактивных запросов ожидание первого текста ограничено 15 секундами. Маршрут сохраняет выбранный тариф при переходе к резерву.");
     if (id === "search") tierNote.textContent += " Встроенный веб-поиск OpenAI входит в эти 15 секунд.";
-    tierNote.hidden = tier.value !== "flex";
-    if (["chat", "chat.complex", "search"].includes(id)) {
-      const field = element("label", "field", "Тариф обработки OpenAI"); field.append(tier); options.append(field);
-      options.append(tierNote);
-    }
-    const catalog = drafts.getSnapshot().catalogs.find(item => item.provider === "openai");
-    const choices = ["chat", "chat.complex", "search"].includes(id) ? [...new Set([...(catalog?.models || []), ...(catalog?.supported_models || [])])] : [];
+    const updateTierControl = models => {
+      const flexModels = catalog?.flex_models || [];
+      flexOption.disabled = !supportsFlex || checkbox.checked || !models.length || !models.every(model => flexModels.includes(model));
+      tierField.hidden = tier.value !== "flex" && !(supportsFlex && models.some(model => model.startsWith("openai-direct/")));
+      tierNote.hidden = tier.value !== "flex";
+    };
+    updateTierControl(current.models);
+    if (supportsFlex || current.service_tier === "flex") options.append(tierField, tierNote);
+    const configuredModels = catalog?.models || [];
+    const eligibleModels = item.openai_model_choices ?? (legacyOpenAIRoute ? [...configuredModels, ...(catalog?.supported_models || [])] : []);
+    const choices = [...new Set([...configuredModels.filter(model => eligibleModels.includes(model)), ...eligibleModels])];
     const reasoning = element("select", "reasoning-effort");
     reasoning.setAttribute("aria-label", "Reasoning effort");
-    [["", "По умолчанию модели"], ["none", "None — без рассуждений"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]].forEach(([value, label]) => {
-      const option = element("option", "", label); option.value = value; reasoning.append(option);
+    const reasoningEfforts = item.reasoning_efforts ?? Object.keys(reasoningLabels);
+    const storedEffort = current.reasoning_effort ?? "";
+    [...new Set(["", ...reasoningEfforts, storedEffort])].forEach(value => {
+      const option = element("option", "", value ? reasoningLabels[value] || value : "По умолчанию модели");
+      option.value = value;
+      reasoning.append(option);
     });
-    reasoning.value = current.reasoning_effort ?? "";
+    reasoning.value = storedEffort;
     const reasoningField = element("label", "field", "Рассуждения OpenAI");
-    reasoningField.append(reasoning, element("span", "muted", "Уровень рассуждений задаёт администратор. По умолчанию модели используется базовый режим выбранной модели. Более высокий уровень может увеличить задержку и расход токенов."));
+    const reasoningNote = element("span", "muted", "Уровень рассуждений задаёт администратор. По умолчанию модели используется базовый режим выбранной модели. Более высокий уровень может увеличить задержку и расход токенов.");
+    if (!checkbox.disabled && !inherit.hidden) reasoningNote.textContent += " При наследовании учитывается только модель пользователя, которая поддерживает заданный уровень.";
+    reasoningField.append(reasoning, reasoningNote);
     options.append(reasoningField);
-    const compatibleReasoning = models => models.length > 0 && models.every(model => model.startsWith("openai-direct/gpt-6") && (catalog?.supported_models || []).includes(model));
-    reasoningField.hidden = !compatibleReasoning(current.models) && !reasoning.value;
+    const updateReasoningControl = models => {
+      const allowedEfforts = reasoningEffortsFor(models, catalog, reasoningEfforts);
+      for (const option of reasoning.options) option.disabled = option.value !== "" && !allowedEfforts.includes(option.value);
+      reasoningField.hidden = !allowedEfforts.length && !reasoning.value;
+    };
+    updateReasoningControl(current.models);
     const status = feedback(node);
     const readValue = () => ({
       models: [...chain.querySelectorAll(".model-input")].map((input) => input.value.trim()),
@@ -473,14 +515,14 @@
     });
     const changed = () => {
       const value = readValue();
-      tierNote.hidden = tier.value !== "flex";
-      reasoningField.hidden = !compatibleReasoning(value.models) && !reasoning.value;
+      updateTierControl(value.models);
+      updateReasoningControl(value.models);
       markDraft("process", id, value, node, status);
-      if (value.service_tier === "flex" && (value.inherit_user_model || !value.models.every(model => (catalog?.flex_models || []).includes(model)))) {
+      if (value.service_tier === "flex" && flexOption.disabled) {
         message(status, "Несовместимая комбинация Flex и модели. Тариф сохранён в черновике; выберите Standard или совместимую модель OpenAI.", true);
       }
-      if (value.reasoning_effort != null && !compatibleReasoning(value.models)) message(status, "Reasoning override несовместим с моделью. Значение сохранено в черновике; уберите переопределение или выберите OpenAI GPT-6.", true);
-      if (value.reasoning_effort === "none" && value.models.includes("openai-direct/gpt-6.1-sol")) message(status, "GPT-6.1 Sol не поддерживает reasoning none; выберите low или уберите переопределение.", true);
+      if (value.reasoning_effort != null && reasoning.selectedOptions[0]?.disabled) message(status, "Reasoning override несовместим с маршрутом. Значение осталось в черновике. Уберите переопределение или выберите совместимые модели.", true);
+      if (value.reasoning_effort === "none" && value.models.includes("openai-direct/gpt-6.1-sol")) message(status, "Для GPT-6.1 Sol выберите Low, Medium, High или настройку по умолчанию.", true);
     };
     modelRows(chain, Array.isArray(current.models) ? current.models : [], changed, choices);
     strategy.addEventListener("change", changed);

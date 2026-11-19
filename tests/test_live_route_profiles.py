@@ -115,6 +115,19 @@ def test_direct_openai_catalog_accepts_supported_namespace():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["openai-direct/gpt-6.1-sol", "openai-direct/gpt-4.1-mini"])
+async def test_openai_profile_accepts_inline_model_without_reasoning_none(profiles, monkeypatch, model):
+    from app.config import settings
+
+    routes, _, _ = profiles
+    monkeypatch.setattr(settings, "OPENAI_INLINE_MODEL", model)
+    active = await routes.switch_provider("openai", expected_revision=0, actor="test")
+    plan = active.values["process:inline"]
+    assert plan["models"] == (model,)
+    assert plan.get("reasoning_effort") is None
+
+
+@pytest.mark.asyncio
 async def test_process_save_rejects_unsupported_direct_models_and_keeps_legacy_openrouter(profiles):
     from app.process_policies import validate_policy
     from app.web import quart_app
@@ -128,13 +141,14 @@ async def test_process_save_rejects_unsupported_direct_models_and_keeps_legacy_o
         "/api/admin/controls",
         json={
             "section": "process",
-            "id": "chat",
-            "value": {"models": ["openai-direct/gpt-5.4-mini"]},
+            "id": "roles.generate",
+            "value": {"models": ["openai-direct/gpt-6.1-luna"]},
             "expected_revision": 0,
         },
         headers={"X-CSRF-Token": "test-profile-csrf"},
     )
     assert response.status_code == 400
+    assert "openai-direct/gpt-6-luna" in (await response.get_json())["error"]
     assert database.writes == 0
 
 

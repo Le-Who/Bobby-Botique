@@ -172,7 +172,12 @@ class OpenAIProvider(BaseAIProvider):
                 and request.service_tier is ServiceTier.FLEX
                 and code in {ErrorCode.OVERLOADED, ErrorCode.TIMEOUT, ErrorCode.NETWORK}
             ):
-                key, retry = KeyDisposition.UNCHANGED, RetryDisposition.RETRY_LATER
+                key = KeyDisposition.UNCHANGED
+                retry = (
+                    RetryDisposition.TRY_NEXT_MODEL
+                    if not request.allow_standard_recovery and len(request.models) > 1
+                    else RetryDisposition.RETRY_LATER
+                )
             return StreamFailed(
                 code=code,
                 phase=FailurePhase.AFTER_TEXT if visible else FailurePhase.BEFORE_TEXT,

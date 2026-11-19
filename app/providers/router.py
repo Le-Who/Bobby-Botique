@@ -860,7 +860,8 @@ class ProviderRouter:
     async def stream(self, request: GenerationRequest):
         """Own one logical response, including recovery before its first text."""
         if (
-            request.service_tier is ServiceTier.FLEX
+            request.allow_standard_recovery
+            and request.service_tier is ServiceTier.FLEX
             and request.workload in {Workload.INTERACTIVE, Workload.QUICK_SEARCH}
             and is_openai_model(request.models[0])
         ):

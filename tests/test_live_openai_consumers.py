@@ -15,6 +15,7 @@ from app.providers.stream_types import (
     GroundingReport,
     ProviderKind,
     RouteUsed,
+    ServiceTier,
     StreamCompleted,
     TextDelta,
     TokenUsage,
@@ -80,15 +81,24 @@ async def test_selected_text_deadline_cancels_owned_stream(routed):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("effort,expected", [(None, "off"), ("none", "off"), ("low", "low"), ("high", "high")])
-async def test_selected_text_honors_optional_process_reasoning_override(routed, effort, expected):
+@pytest.mark.parametrize("effort", [None, "none", "low", "high"])
+@pytest.mark.parametrize("tier", [ServiceTier.DEFAULT, ServiceTier.FLEX])
+async def test_selected_text_honors_process_tier_and_reasoning(routed, effort, tier):
     from app.process_policies import ReasoningEffort
+    from app.providers.openai import responses_payload
 
     policy = ResolvedPolicy(
-        (MODEL,), "sequential", True, 42, reasoning_effort=ReasoningEffort(effort) if effort is not None else None
+        (MODEL,),
+        "sequential",
+        True,
+        42,
+        service_tier=tier,
+        reasoning_effort=ReasoningEffort(effort) if effort is not None else None,
     )
     assert await generate_selected_text(policy, "prompt", timeout=1.0) == JUDGEMENT
-    assert routed.requests[0].thinking_level.value == expected
+    payload = await responses_payload(routed.requests[0], MODEL)
+    assert payload["service_tier"] == tier.value
+    assert payload["reasoning"]["effort"] == (effort or "none")
 
 
 @pytest.mark.asyncio
@@ -356,6 +366,43 @@ async def test_inline_selected_direct_model_disables_old_gemini_thinking_default
     assert text == "fast answer"
     assert routed.requests[0].models == (MODEL,)
     assert routed.requests[0].thinking_level is ThinkingLevel.OFF
+
+
+@pytest.mark.asyncio
+async def test_mixed_inline_plan_keeps_gemini_preference_and_openai_default(monkeypatch):
+    from app.handlers import inline
+    from app.providers import gemini, openai
+
+    gemini_model = "gemini-3.6-flash"
+    openai_model = "openai-direct/gpt-6.1-sol"
+    requests = []
+
+    async def gemini_chunks():
+        yield SimpleNamespace(text="Gemini answer")
+
+    generate_content_stream = AsyncMock(return_value=gemini_chunks())
+    client = SimpleNamespace(
+        aio=SimpleNamespace(models=SimpleNamespace(generate_content_stream=generate_content_stream))
+    )
+    monkeypatch.setattr(gemini, "get_cached_genai_client", lambda _: client)
+    monkeypatch.setattr(inline, "get_global_setting", AsyncMock(return_value="high"))
+
+    class Router:
+        def stream(self, request):
+            requests.append(request)
+            return gemini.GeminiProvider("synthetic-key").stream(request, model_name=gemini_model)
+
+    monkeypatch.setattr("app.providers.router.get_provider_router", Router)
+    snapshot = SettingsSnapshot(42, {"process:inline": {"models": [gemini_model, openai_model]}})
+    async with lifecycle.runtime_settings_scope(snapshot):
+        text, _ = await inline._stream_inline_fast(gemini_model, [{"parts": ["Synthetic prompt"]}], None, 42)
+
+    assert text == "Gemini answer"
+    assert requests[0].models == (gemini_model, openai_model)
+    config = generate_content_stream.await_args.kwargs["config"]
+    assert config.thinking_config.thinking_level.value.lower() == "high"
+    openai_payload = await openai.responses_payload(requests[0], openai_model)
+    assert openai_payload["reasoning"] == {"effort": "low"}
 
 
 @pytest.mark.asyncio

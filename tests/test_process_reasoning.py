@@ -61,6 +61,22 @@ def test_known_reasoning_is_typed_for_direct_gpt6(process_id, effort):
     assert policy.reasoning_effort is effort
 
 
+@pytest.mark.parametrize(
+    "user_model,inherited",
+    [
+        ("gemini-test", False),
+        ("openai-direct/gpt-4.1-mini", False),
+        ("openai-direct/gpt-6.1-sol", False),
+        ("openai-direct/gpt-6.1-terra", True),
+    ],
+)
+def test_reasoning_keeps_saved_policy_and_only_inherits_compatible_user_model(user_model, inherited):
+    value = {"models": [LUNA], "reasoning_effort": "none", "inherit_user_model": True}
+    policy = resolve_policy_value("roles.generate", value, (user_model,))
+    assert policy.models == ((user_model, LUNA) if inherited else (LUNA,))
+    assert policy.reasoning_effort is ReasoningEffort.NONE
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "override,expected", [("none", "none"), ("low", "low"), ("medium", "medium"), ("high", "high"), (None, "none")]

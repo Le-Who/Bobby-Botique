@@ -129,13 +129,15 @@ async def generation_request_from_history(
     explicit = False
     revision = 0
     admin_reasoning = False
+    allow_standard_recovery = True
     if process_id is not None:
-        from app.process_policies import policy_thinking_level, resolve_process
+        from app.process_policies import OPENAI_FLEX_RECOVERY_PROCESSES, policy_thinking_level, resolve_process
 
         policy = await resolve_process(process_id, tuple(models))
         models = policy.models
         route_strategy, explicit, revision = policy.strategy, policy.explicit, policy.revision
         service_tier = ServiceTier(getattr(policy, "service_tier", ServiceTier.DEFAULT))
+        allow_standard_recovery = process_id in OPENAI_FLEX_RECOVERY_PROCESSES
         admin_reasoning = getattr(policy, "reasoning_effort", None) is not None
         if not admin_reasoning and all(is_openai_model(model) for model in models):
             typed_thinking = None
@@ -160,6 +162,7 @@ async def generation_request_from_history(
         policy_revision=revision,
         service_tier=service_tier,
         openai_uses_model_default=not admin_reasoning,
+        allow_standard_recovery=allow_standard_recovery,
     )
 
 
