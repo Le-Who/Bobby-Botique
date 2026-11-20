@@ -1,5 +1,3 @@
--- 040_daily_crocodile_preparation_assets.sql
--- Extend daily Crocodile puzzles with pre-generated completion assets/readiness.
 
 ALTER TABLE public.crocodile_daily_puzzles
     ADD COLUMN IF NOT EXISTS image_prompt TEXT NOT NULL DEFAULT '',

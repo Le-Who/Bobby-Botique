@@ -18,21 +18,21 @@ from app.errors import CircuitBreakerOpenError
 class CircuitState(Enum):
     """Circuit breaker states."""
 
-    CLOSED = "closed"  # Normal operation
-    OPEN = "open"  # Failing, rejecting requests
-    HALF_OPEN = "half_open"  # Testing if service recovered
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
 
 
 @dataclass
 class CircuitBreakerConfig:
     """Configuration for circuit breaker."""
 
-    failure_threshold: int = 5  # Number of failures before opening
-    recovery_timeout: float = 60.0  # Time to wait before half-open (seconds)
-    expected_exception: type = Exception  # Exception type to consider as failure
-    ignored_exceptions: tuple[type[Exception], ...] = ()  # Local admission failures are not provider outages.
-    monitor_interval: float = 10.0  # Interval for monitoring (seconds)
-    max_failures: int = 100  # Maximum failures to track
+    failure_threshold: int = 5
+    recovery_timeout: float = 60.0
+    expected_exception: type = Exception
+    ignored_exceptions: tuple[type[Exception], ...] = ()
+    monitor_interval: float = 10.0
+    max_failures: int = 100
 
 
 class CircuitBreaker:
@@ -49,7 +49,6 @@ class CircuitBreaker:
         self.name = name
         self.config = config or CircuitBreakerConfig()
 
-        # State management
         self._state = CircuitState.CLOSED
         self._generation = 0
         self._stats_generation = 0
@@ -57,24 +56,20 @@ class CircuitBreaker:
         self._last_failure_time = 0.0
         self._last_success_time = time.time()
 
-        # Monitoring
         self._total_requests = 0
         self._total_failures = 0
         self._total_successes = 0
 
-        # Async lock for thread safety
         self._lock = asyncio.Lock()
 
-        # HALF_OPEN probing: only one probe request at a time (Audit Fix 3)
         self._half_open_probe_active = False
 
-        # Start monitoring task (deferred if no event loop is running)
         self._monitor_task: asyncio.Task | None = None
         try:
             asyncio.get_running_loop()
             self._start_monitoring()
         except RuntimeError:
-            pass  # No running event loop — monitoring deferred to first call()
+            pass
 
         logging.info("Circuit Breaker '%s' initialized with config: %s", name, self.config)
 
@@ -98,7 +93,6 @@ class CircuitBreaker:
                 raise CircuitBreakerOpenError(
                     f"Circuit Breaker '{self.name}' is HALF_OPEN and probe already in flight."
                 )
-            # Check if circuit is open
             if self._state == CircuitState.OPEN:
                 if self._should_attempt_reset():
                     if self._half_open_probe_active:
@@ -119,11 +113,9 @@ class CircuitBreaker:
             generation = self._generation
             stats_generation = self._stats_generation
 
-        # Execute function outside lock to allow concurrency
         try:
             result = await func(*args, **kwargs)
         except (Exception, asyncio.CancelledError) as e:
-            # Reacquire lock to record failure
             async with self._lock:
                 expected_failure = (
                     isinstance(e, Exception)
@@ -132,8 +124,6 @@ class CircuitBreaker:
                 )
                 if expected_failure and stats_generation == self._stats_generation:
                     self._total_failures += 1
-                # Calls admitted before a transition or manual reset cannot
-                # change the state now owned by a newer recovery attempt.
                 if generation != self._generation:
                     raise
                 self._half_open_probe_active = False
@@ -141,8 +131,6 @@ class CircuitBreaker:
                     await self._on_failure(e)
                 else:
                     if self._state == CircuitState.HALF_OPEN:
-                        # Cancellation and local admission failures say nothing
-                        # about provider recovery. Retain the previous cooldown.
                         await self._set_state(CircuitState.OPEN)
                     if not isinstance(e, (asyncio.CancelledError, *self.config.ignored_exceptions)):
                         logging.warning(
@@ -152,7 +140,6 @@ class CircuitBreaker:
                         )
                 raise
 
-        # Reacquire lock to record success
         async with self._lock:
             if stats_generation == self._stats_generation:
                 self._last_success_time = time.time()
@@ -181,7 +168,6 @@ class CircuitBreaker:
             exception,
         )
 
-        # Check if we should open the circuit
         if self._failure_count >= self.config.failure_threshold and self._state != CircuitState.OPEN:
             await self._set_state(CircuitState.OPEN)
             logging.error(
@@ -227,7 +213,6 @@ class CircuitBreaker:
             try:
                 await asyncio.sleep(self.config.monitor_interval)
 
-                # Log periodic status
                 if self._total_requests > 0:
                     success_rate = (self._total_successes / self._total_requests) * 100
                     status_msg = (
@@ -237,7 +222,6 @@ class CircuitBreaker:
                         f"Total Requests={self._total_requests}, "
                         f"Failures={self._total_failures}"
                     )
-                    # Log at INFO only on state change or new failures
                     if self._state != _last_logged_state or self._total_failures > _last_logged_failures:
                         logging.info(status_msg)
                         _last_logged_state = self._state
@@ -245,7 +229,6 @@ class CircuitBreaker:
                     else:
                         logging.debug(status_msg)
 
-                # Clean up old failure data if too many
                 if self._failure_count > self.config.max_failures:
                     self._failure_count = min(self._failure_count, self.config.max_failures)
 
@@ -315,7 +298,6 @@ class CircuitBreaker:
                 await self._monitor_task
 
 
-# Global circuit breaker instances
 _circuit_breakers: dict[str, CircuitBreaker] = {}
 
 
@@ -344,10 +326,9 @@ async def shutdown_all_circuit_breakers() -> None:
     logging.info("All circuit breakers shut down")
 
 
-# Predefined configurations for common use cases
 GEMINI_API_CONFIG = CircuitBreakerConfig(
-    failure_threshold=15,  # was 3 — allows key rotation to exhaust options before tripping
-    recovery_timeout=45.0,  # was 30s — gives Gemini 503 overload windows time to clear
+    failure_threshold=15,
+    recovery_timeout=45.0,
     expected_exception=Exception,
     monitor_interval=5.0,
 )

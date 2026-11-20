@@ -105,8 +105,6 @@ def _is_typo_equivalent(left: str, right: str) -> bool:
     right_norm = normalize_fact_text(right)
     if not left_norm or not right_norm:
         return False
-    # A changed year, quantity, ordinal or version is usually a different fact,
-    # never a harmless typo.
     if re.findall(r"\d+", left_norm) != re.findall(r"\d+", right_norm):
         return False
     return _damerau_levenshtein(left_norm, right_norm) <= _allowed_edits(max(len(left_norm), len(right_norm)))
@@ -175,10 +173,6 @@ async def compare_facts(
 
     score = 0.30 * subject_score + 0.30 * answer_score + 0.25 * relation_score + 0.15 * question_score
 
-    # Character similarity is only a shortlist signal.  Treating it as a
-    # semantic verdict makes numbered facts such as "объект 1" and "объект 2"
-    # collide.  This intentionally follows Crocodile's judge design: local
-    # metrics handle exact identity, while meaning is decided by the judge.
     ambiguous = subject_score >= 0.60 or answer_score >= 0.60 or question_score >= 0.70
     if ambiguous and semantic_judge is not None:
         duplicate, semantic_score, reason = await semantic_judge(first.canonical_claim, second.canonical_claim)

@@ -15,8 +15,6 @@ from app.context.token_budget import (
 )
 from app.prompt_registry import estimate_tokens_cyrillic
 
-# ── TokenBudget dataclass ────────────────────────────────────────────────────
-
 
 class TestTokenBudget:
     def test_defaults(self):
@@ -36,7 +34,6 @@ class TestTokenBudget:
             user_message=1000,
             response_reserve=3000,
         )
-        # 10000 - 2000 - 500 - 1000 - 3000 = 3500
         assert budget.available_for_history == 3500
 
     def test_available_never_negative(self):
@@ -74,9 +71,6 @@ def test_utf8_truncation_respects_estimator_for_cyrillic_and_emoji():
     assert estimate_tokens_cyrillic(result) <= 400
 
 
-# ── AssembledContext dataclass ───────────────────────────────────────────────
-
-
 class TestAssembledContext:
     def test_defaults(self):
         ctx = AssembledContext(
@@ -101,9 +95,6 @@ class TestAssembledContext:
         assert ctx.was_truncated is True
         assert ctx.messages_dropped == 5
         assert ctx.summary == "Dropped context summary"
-
-
-# ── Constants consistency ────────────────────────────────────────────────────
 
 
 class TestConstantsConsistency:

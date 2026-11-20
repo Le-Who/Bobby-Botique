@@ -1,4 +1,3 @@
-# app/middleware/debounce.py
 """Message debounce — merges rapid-fire messages from the same user into a single
 AI request.
 
@@ -46,7 +45,6 @@ from app.utils.tg_file import get_file_bytes
 
 logger = logging.getLogger(__name__)
 
-# ── Timing constants ─────────────────────────────────────────────────────────
 _DEFAULT_WINDOW_S = 1.0
 _FORWARD_WINDOW_S = 3.5
 _SPEECH_WINDOW_S = 15.0
@@ -55,14 +53,8 @@ _SPEECH_MAX_PARTS = 32
 _SPEECH_MAX_BYTES = 256 * 1024
 _SPEECH_MAX_SLOTS = 128
 
-# Maximum time we will wait for a pending STT future beyond the debounce window.
-# If STT finishes before this, transcript is included; otherwise a placeholder
-# stub is inserted and STT continues independently.
 _STT_GRACE_S = 8.0
 
-# Performance: hoisted from _format_fwd_prefix() — eliminates a 13-element list
-# allocation on every forwarded message entry rendered in build_llm_context().
-# Index 0 is a dummy empty string so months map 1-based (Jan=1 … Dec=12).
 _MONTHS_RU: tuple[str, ...] = (
     "",
     "Янв",
@@ -78,8 +70,6 @@ _MONTHS_RU: tuple[str, ...] = (
     "Ноя",
     "Дек",
 )
-
-# ── Data structures ──────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -120,8 +110,6 @@ class DebounceResult:
     speech_epoch: int | None = None
     speech_error: str = ""
 
-    # ── Convenience accessors ────────────────────────────────────────────────
-
     @property
     def has_forwarded_content(self) -> bool:
         """True when the batch contains at least one forwarded message."""
@@ -160,12 +148,10 @@ class DebounceResult:
         """
         parts: list[str] = []
 
-        # 1. User's own instruction (if any) — verbatim, no author prefix
         user_texts = [e.text for e in self.user_entries if e.text.strip()]
         if user_texts:
             parts.append("\n".join(user_texts))
 
-        # 2. Forwarded block (sorted by original date when available)
         fwd = sorted(
             self.forwarded_entries,
             key=lambda e: e.forwarded_date or datetime.min.replace(tzinfo=UTC),
@@ -175,10 +161,8 @@ class DebounceResult:
             fwd_lines: list[str] = []
             for e in fwd:
                 prefix = _format_fwd_prefix(e.author_label, e.forwarded_date)
-                # Handle multi-line texts gracefully
                 text_body = e.text.strip()
                 if "\n" in text_body:
-                    # Indent continuation lines with quote marker
                     indented = "\n".join(f"> {line}" for line in text_body.splitlines())
                     fwd_lines.append(f"{prefix}\n{indented}")
                 else:
@@ -186,7 +170,6 @@ class DebounceResult:
             parts.append("\n".join(fwd_lines))
             parts.append("</forwarded_dialogue>")
 
-            # Improvement 2: If the user sent NO instructions, add a fallback intent
             if not user_texts:
                 parts.append(
                     "\n<task>\n"
@@ -198,9 +181,6 @@ class DebounceResult:
                 )
 
         return "\n\n".join(parts)
-
-
-# ── Internal slot ─────────────────────────────────────────────────────────────
 
 
 class _DebounceSlot:
@@ -216,7 +196,6 @@ class _DebounceSlot:
         self.is_forward_burst: bool = entry.is_forwarded
 
 
-# ── Per-user slot map ─────────────────────────────────────────────────────────
 _debounce_slots: dict[int, _DebounceSlot] = {}
 
 
@@ -339,8 +318,6 @@ def reject_speech_reservation(reservation: SpeechIngressReservation) -> None:
 
 
 def _near_telegram_limit(text: str) -> bool:
-    # Desktop can choose a preferred word/newline cut anywhere after half the
-    # scalar limit; some clients instead enforce the UTF-16 representation.
     return 2049 <= len(text) <= 4096 or 4094 <= len(text.encode("utf-16-le")) // 2 <= 4096
 
 
@@ -382,8 +359,6 @@ def accepts_speech_message(user_id: int, message: Message) -> bool:
         if not has_open_speech_slot(user_id, getattr(message, "chat_id", 0)):
             return False
         tail = max(slot.entries, key=lambda entry: entry.message.message_id)
-        # Concurrent admission may deliver an earlier source after its short
-        # terminal source. Keep that earlier ID inside the open window.
         if message.message_id < min(entry.message.message_id for entry in slot.entries):
             return False
         if not _near_telegram_limit(tail.text) and message.message_id > tail.message.message_id:
@@ -396,8 +371,6 @@ def accepts_speech_message(user_id: int, message: Message) -> bool:
     ):
         return False
     text = message.text or ""
-    # Bare commands are an explicit control escape. Preserve account erasure's
-    # confirmation as well; slash-prefixed prose with payload remains source data.
     if re.fullmatch(r"/[a-z0-9_]+(?:@[a-z0-9_]+)?\s*", text, re.IGNORECASE) or re.fullmatch(
         r"/deleteme(?:@[a-z0-9_]+)?\s+CONFIRM\s*", text, re.IGNORECASE
     ):
@@ -459,8 +432,6 @@ async def _collect_speech_message(
             entry = await _build_entry(message, bot=bot)
             size = len(entry.text.encode("utf-8"))
             if len(slot.entries) >= _SPEECH_MAX_PARTS or slot.retained_bytes + size > _SPEECH_MAX_BYTES:
-                # Include the rejected source identity so the terminal error
-                # explicitly covers every submitted physical part.
                 slot.entries.append(entry)
                 slot.error = "collection_capacity"
                 slot.finished = True
@@ -490,9 +461,6 @@ async def _collect_speech_message(
         hint.ready.set()
     cancellation = None
     try:
-        # Reservation precedes the snapshot read. Concurrent physical sources
-        # can be captured while the epoch is still provisional; no provider job
-        # is admitted until the owner's exact epoch has been pinned here.
         if load_speech_epoch is not None:
             slot.epoch = await load_speech_epoch()
         slot.notices.append(
@@ -505,8 +473,6 @@ async def _collect_speech_message(
         )
         idle_notice_sent = False
         while not slot.finished:
-            # Clear before reading state. A Telegram notice can await network
-            # I/O while another admitted physical source sets this event.
             slot.changed.clear()
             remaining_total = _SPEECH_TOTAL_S - (time.monotonic() - slot.first_ts)
             if remaining_total <= 0:
@@ -576,9 +542,6 @@ async def _retire_speech_notices(notices: list[Message], *, cancellation: asynci
         raise cancellation
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
-
-
 def has_open_slot(user_id: int) -> bool:
     """Return True when user_id has an active debounce window that hasn't fired yet.
 
@@ -622,7 +585,7 @@ async def debounce_message(
     user_id: int,
     message: Message,
     *,
-    bot=None,  # telegram.Bot — used for reaction feedback; optional
+    bot=None,
     speech_epoch: int | None = None,
     load_speech_epoch: Callable[[], Awaitable[int | None]] | None = None,
 ) -> DebounceResult | None:
@@ -646,7 +609,6 @@ async def debounce_message(
             slot.ready_event.set()
 
     if slot is not None and not slot.ready_event.is_set():
-        # Window still open — absorb
         slot.entries.append(entry)
         if entry.is_forwarded:
             slot.is_forward_burst = True
@@ -658,14 +620,12 @@ async def debounce_message(
             entry.is_forwarded,
         )
 
-        # Restart the trailing timer with the appropriate window
         current_timeout = _FORWARD_WINDOW_S if slot.is_forward_burst else _DEFAULT_WINDOW_S
         if slot.timer_task is not None:
             slot.timer_task.cancel()
         slot.timer_task = asyncio.create_task(_timer(current_timeout))
         return None
 
-    # First message — open a new slot
     slot = _DebounceSlot(entry)
     _debounce_slots[user_id] = slot
 
@@ -675,7 +635,6 @@ async def debounce_message(
     completed = False
     cancellation = None
     try:
-        # Block until window fires, then resolve voice entries within the grace budget.
         await slot.ready_event.wait()
         await _resolve_stt_futures(slot.entries)
         result = DebounceResult(entries=list(slot.entries))
@@ -696,9 +655,6 @@ async def debounce_message(
         )
 
     return result
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 async def _release_slot(
@@ -727,8 +683,6 @@ async def _release_slot(
             try:
                 await asyncio.shield(completion)
             except asyncio.CancelledError as error:
-                # Keep the cancelled transcription owned until its async
-                # cleanup finishes, including another shutdown cancellation.
                 cancellation = cancellation or error
         completion.result()
     if cancellation is not None:
@@ -737,15 +691,12 @@ async def _release_slot(
 
 async def _build_entry(message: Message, *, bot=None) -> _MessageEntry:
     """Extract structured metadata from a telegram.Message into a _MessageEntry."""
-    # Performance: `datetime` is already imported at module level — no inline import needed.
     forward_origin = getattr(message, "forward_origin", None)
     is_forwarded = forward_origin is not None
     is_user_authored = not is_forwarded
 
-    # ── Author label ─────────────────────────────────────────────────────────
     author_label = _extract_author_label(forward_origin)
 
-    # ── Forwarded date ───────────────────────────────────────────────────────
     forwarded_date: datetime | None = None
     if forward_origin is not None:
         raw_date = getattr(forward_origin, "date", None)
@@ -753,21 +704,16 @@ async def _build_entry(message: Message, *, bot=None) -> _MessageEntry:
             if isinstance(raw_date, datetime):
                 forwarded_date = raw_date.replace(tzinfo=UTC) if raw_date.tzinfo is None else raw_date
             else:
-                # Integer UNIX timestamp
                 forwarded_date = datetime.fromtimestamp(int(raw_date), tz=UTC)
 
-    # ── Text resolution ──────────────────────────────────────────────────────
     text = message.text or message.caption or ""
 
-    # ── Voice STT (fire-and-forget future, resolved after window closes) ─────
     stt_future: asyncio.Future[str] | None = None
     stt_task: asyncio.Task | None = None
     if is_forwarded and message.voice:
         stt_future = asyncio.get_event_loop().create_future()
         stt_task = submit_task(_transcribe_forwarded_voice(message, stt_future))
 
-    # ── Reaction feedback ────────────────────────────────────────────────────
-    # Put 👀 on the message to confirm the bot received it into the debounce slot
     if bot is not None:
         submit_task(_set_absorbed_reaction(message, bot))
 
@@ -830,7 +776,6 @@ def _extract_author_label(forward_origin) -> str:
 
 def _format_fwd_prefix(author_label: str, forwarded_date: datetime | None) -> str:
     """Format the blockquote prefix for a forwarded message line."""
-    # Performance: _MONTHS_RU is a module-level tuple — no per-call list allocation.
     if forwarded_date is not None:
         date_str = f"{forwarded_date.day} {_MONTHS_RU[forwarded_date.month]}, {forwarded_date.hour:02d}:{forwarded_date.minute:02d}"
         if author_label:
@@ -853,7 +798,6 @@ async def _set_absorbed_reaction(message: Message, bot) -> None:
             is_big=False,
         )
     except Exception as exc:
-        # Reactions are non-critical; swallow all errors silently
         logger.debug("Could not set absorbed reaction: %s", exc)
 
 
@@ -879,7 +823,7 @@ async def _transcribe_forwarded_voice(message: Message, future: asyncio.Future[s
     except Exception as exc:
         logger.warning("STT for forwarded voice failed: %s", exc)
         if not future.done():
-            future.set_result("")  # resolve with empty — caller inserts stub
+            future.set_result("")
 
 
 async def _resolve_stt_futures(entries: list[_MessageEntry]) -> None:
@@ -911,4 +855,3 @@ async def _resolve_stt_futures(entries: list[_MessageEntry]) -> None:
         except TimeoutError:
             logger.warning("STT grace period exhausted for forwarded voice, inserting stub")
             entry.text = "[Голосовое сообщение — расшифровка обрабатывается]"
-            # Don't cancel the future — the background task will finish eventually

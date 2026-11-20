@@ -1,4 +1,3 @@
-# /app/handlers/cmd_keys.py
 """Unified /keys wizard — admin-only inline keyboard for managing all API provider keys.
 
 Flow:
@@ -38,7 +37,6 @@ from app.utils.formatting import TelegramFormatter
 
 logger = logging.getLogger(__name__)
 
-# ── Provider Registry ────────────────────────────────────────────────────────
 
 _PROVIDERS: dict[str, str] = {
     "weather": "🌤 Weather",
@@ -47,18 +45,13 @@ _PROVIDERS: dict[str, str] = {
     "jina": "📄 Jina",
 }
 
-# ConversationHandler states
 AWAITING_KEY = 0
 
-# ── Health check endpoints ───────────────────────────────────────────────────
 
 _HEALTH_CHECKS: dict[str, str] = {
     "weather": "https://api.weatherapi.com/v1/current.json?key={key}&q=London&aqi=no",
     "exchange": "https://v6.exchangerate-api.com/v6/{key}/pair/USD/EUR",
 }
-
-
-# ── /keys entrypoint ─────────────────────────────────────────────────────────
 
 
 @admin_only
@@ -79,9 +72,6 @@ def _build_provider_grid() -> InlineKeyboardMarkup:
         rows.append(row)
     rows.append([InlineKeyboardButton("🔄 Общий статус", callback_data="keys:status_all")])
     return InlineKeyboardMarkup(rows)
-
-
-# ── Callback Handlers ────────────────────────────────────────────────────────
 
 
 @admin_only
@@ -217,9 +207,6 @@ async def _show_all_statuses(query) -> int:
     return ConversationHandler.END
 
 
-# ── Key Receive Handler ──────────────────────────────────────────────────────
-
-
 @admin_only
 async def receive_key_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the user's new API key message — store + delete the message."""
@@ -232,10 +219,8 @@ async def receive_key_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Ключ слишком короткий. Попробуйте ещё раз или /keys")
         return ConversationHandler.END
 
-    # Store the key
     await set_provider_key(provider, new_key)
 
-    # Delete the user's message containing the key (security)
     deleted = False
     try:
         await update.message.delete()
@@ -256,16 +241,13 @@ async def receive_key_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
-# ── Health Check Engine ──────────────────────────────────────────────────────
-
-
 async def check_single_provider_health(provider: str) -> bool | None:
     """Check if a provider's API is responding. Returns True/False/None (no check available)."""
     template = _HEALTH_CHECKS.get(provider)
     key = await get_provider_key(provider)
 
     if not template:
-        return None  # No check available
+        return None
 
     if not key:
         return False

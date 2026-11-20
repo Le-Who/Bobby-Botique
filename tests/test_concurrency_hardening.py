@@ -276,7 +276,6 @@ async def test_lease_loss_racing_body_failure_preserves_provider_exception(monke
     task = asyncio.create_task(holder())
     try:
         await asyncio.wait_for(renewal_started.wait(), 1)
-        # Schedule the body first, then renewal, so cancellation lands in exit.
         fail_body.set()
         finish_renewal.set()
         with pytest.raises(ValueError, match="synthetic provider failure"):
@@ -340,7 +339,6 @@ async def test_transient_renewal_errors_recover_inside_confirmed_lease(monkeypat
     semaphore._renew_interval = 0.01
 
     async with semaphore:
-        # Ten intervals exceed the original lease and require fresh confirmations.
         await asyncio.wait_for(recovered.wait(), 1)
         assert asyncio.current_task().cancelling() == 0
     assert semaphore._local_semaphore._value == 1
@@ -386,33 +384,25 @@ def test_role_custom_retry_registered_once():
 
 
 def test_heavy_callback_semaphore_present_and_used():
-    # Semaphore is defined in callbacks.py (shared helpers hub)
     hub_source = Path("app/handlers/callbacks.py").read_text(encoding="utf-8")
     assert "_HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore" in hub_source
 
-    # Semaphore is used in cb_ai_actions.py (heavy callbacks)
     actions_source = Path("app/handlers/cb_ai_actions.py").read_text(encoding="utf-8")
     async_with_count = actions_source.count("async with _HEAVY_CALLBACK_SEMAPHORE")
     assert async_with_count >= 2
 
 
 def test_heavy_message_semaphore_present_and_used():
-    # Multi-tier semaphore: both tiers exported from concurrency.py
     concurrency_source = Path("app/adapters/concurrency.py").read_text(encoding="utf-8")
     assert "heavy_request_semaphore = _LazyGlobalLLMSemaphore" in concurrency_source
     assert "ultra_heavy_semaphore = _LazyGlobalLLMSemaphore" in concurrency_source
 
-    # Semaphores are acquired inside agent.py's process_long_request
     agent_source = Path("app/handlers/agent.py").read_text(encoding="utf-8")
     assert "ultra_heavy_semaphore" in agent_source
     assert "heavy_request_semaphore" in agent_source
 
-    # media-group heavy path still has its own semaphore
     media_source = Path("app/handlers/msg_media.py").read_text(encoding="utf-8")
     assert "async with _HEAVY_REQUEST_SEMAPHORE" in media_source
-
-
-# ── Streaming lock guard tests ───────────────────────────────────────────────
 
 
 def test_is_user_busy_helper_exists():

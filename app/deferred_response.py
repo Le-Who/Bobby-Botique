@@ -1,4 +1,3 @@
-# /app/deferred_response.py
 """Deferred AI Response — Redis queue worker for retrying failed generations.
 
 When all API keys AND the cascade fallback model fail (total service outage),
@@ -76,13 +75,11 @@ def _truncate_history(history: list, max_entries: int = 10) -> list:
     clean = []
     for entry in truncated:
         if isinstance(entry, dict):
-            # Strip binary payloads from parts
             parts = entry.get("parts", [])
             text_parts = []
             for part in parts:
                 if (isinstance(part, dict) and "text" in part) or isinstance(part, str):
                     text_parts.append(part)
-                # Skip inline_data (images, audio) — too large for Redis
             clean.append({**entry, "parts": text_parts})
         else:
             clean.append(entry)
@@ -132,7 +129,6 @@ async def handle_deferred_ai_response(**kwargs) -> JobResult:
         logging.error("Deferred request preparation failed (%s)", type(error).__name__)
         return JobResult(JobOutcome.RETRYABLE_FAILURE, "request_preparation_failed")
 
-    # Cooldown belongs to the delayed index and occupies no worker.
     from telegram import Bot
 
     from app.config import settings

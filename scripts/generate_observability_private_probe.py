@@ -18,7 +18,6 @@ if str(ROOT) not in sys.path:
 
 
 def generate_private_probe(output: Path) -> None:
-    # Logging resolution reads this synthetic mapping, without application .env.
     os.environ.update(
         PYTHON_DOTENV_DISABLED="1",
         LOG_FORMAT="json",

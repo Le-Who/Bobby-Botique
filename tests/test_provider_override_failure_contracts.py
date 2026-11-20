@@ -85,7 +85,6 @@ def unreadable_override(request, provider_database, monkeypatch):
 async def test_unreadable_db_override_does_not_fall_back_to_nonempty_env(
     provider_database, unreadable_override, provider
 ):
-    # Break caught: decryption failure returns the environment credential.
     provider_database.rows[f"provider_key:{provider}"] = unreadable_override
 
     assert await provider_keys.get_provider_key(provider) == ""
@@ -102,7 +101,6 @@ async def test_unreadable_db_override_does_not_fall_back_to_nonempty_env(
     [("weather", "synt…0001"), ("exchange", "synt…0002"), ("pollinations", "synt…0003"), ("jina", "synt…0004")],
 )
 async def test_absent_override_uses_environment_credential_and_status(provider_database, provider, preview):
-    # Break caught: treating an absent row as an unreadable override.
     assert await provider_keys.get_provider_key(provider) == ENV_KEYS[provider]
     assert await provider_keys.get_provider_status(provider) == {"source": "env", "preview": preview}
     assert provider_database.rows == {}
@@ -110,7 +108,6 @@ async def test_absent_override_uses_environment_credential_and_status(provider_d
 
 @pytest.mark.asyncio
 async def test_real_set_replaces_cached_absence_and_cached_encrypted_override(provider_database):
-    # Break caught: dropping set_global_setting's cache invalidation or encryption.
     assert await provider_keys.get_provider_key("weather") == "synthetic-env-weather-0001"
 
     await provider_keys.set_provider_key("weather", "synthetic-db-weather-first-1001")
@@ -129,7 +126,6 @@ async def test_real_set_replaces_cached_absence_and_cached_encrypted_override(pr
 
 @pytest.mark.asyncio
 async def test_real_clear_removes_override_and_invalidates_cached_value(provider_database):
-    # Break caught: deleting the row without evicting the previous override.
     await provider_keys.set_provider_key("jina", "synthetic-db-jina-2001")
     assert await provider_keys.get_provider_key("jina") == "synthetic-db-jina-2001"
 
@@ -142,7 +138,6 @@ async def test_real_clear_removes_override_and_invalidates_cached_value(provider
 
 @pytest.mark.asyncio
 async def test_encrypted_empty_override_blocks_environment_until_explicit_clear(provider_database):
-    # Break caught: using a decrypted empty value as permission for env fallback.
     await provider_keys.set_provider_key("exchange", "")
 
     stored = provider_database.rows["provider_key:exchange"]
@@ -156,7 +151,6 @@ async def test_encrypted_empty_override_blocks_environment_until_explicit_clear(
 
 @pytest.mark.asyncio
 async def test_unknown_provider_is_missing_and_rejects_set_and_clear(provider_database):
-    # Break caught: accepting arbitrary provider names as writable settings keys.
     assert await provider_keys.get_provider_key("synthetic-unknown-provider") == ""
     assert await provider_keys.get_provider_status("synthetic-unknown-provider") == {
         "source": "missing",
@@ -174,7 +168,6 @@ async def test_unknown_provider_is_missing_and_rejects_set_and_clear(provider_da
 async def test_pollinations_unreadable_override_stops_before_http(
     provider_database, unreadable_override, monkeypatch, consumer
 ):
-    # Break caught: a consumer uses settings directly or submits without a key.
     from app.providers import pollinations
 
     provider_database.rows["provider_key:pollinations"] = unreadable_override

@@ -302,7 +302,6 @@ async def test_override_callbacks_do_not_reserve_a_second_time(baseline_call, mo
     )
 
     async def reserved_override(process_id, baseline, execute, **kwargs):
-        # The real helper owns this reservation; simulate that ownership boundary.
         case.events.append(("helper_reserve",))
         return await execute("gemini-3.8-flash", "test-key")
 

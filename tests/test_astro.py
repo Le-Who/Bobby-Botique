@@ -15,8 +15,6 @@ from app import astro
     ],
 )
 def test_astro_context_sun_sign_follows_equinox_of_date(timestamp, expected_sign):
-    # NWS/USNO: March equinoxes at 2023-03-20 21:24Z and 2025-03-20 09:01Z.
-    # https://www.weather.gov/fwd/astrodata (CDT is UTC-5).
     context = astro.get_astro_context(datetime.fromisoformat(timestamp))
 
     assert f"- Солнце в знаке: {expected_sign}\n" in context
@@ -24,7 +22,6 @@ def test_astro_context_sun_sign_follows_equinox_of_date(timestamp, expected_sign
 
 @pytest.mark.parametrize("timestamp", ["2023-03-20T21:24:00+00:00", "2025-03-20T09:01:00+00:00"])
 def test_ecliptic_longitude_is_zero_at_published_march_equinox(timestamp):
-    # Independent equinox times above; allow rounding to a minute and local engine error.
     longitude = astro.ecliptic_longitude(ephem.Sun, datetime.fromisoformat(timestamp))
     distance_from_equinox = min(longitude, 360.0 - longitude)
 

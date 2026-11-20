@@ -24,7 +24,6 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
-    # Игнорируем клики на разделитель
     if query.data == "model_none":
         return
     user_id = query.from_user.id
@@ -36,10 +35,8 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Модель выбрана администратором для всех пользователей.", show_alert=True)
         return
 
-    # Get model from индекса (new формат с хэшем) or from полного имени (old формат for совместимости)
     model_name: str | None = None
     if query.data.startswith("model:"):
-        # Новый формат: model:index:hash or model:index (old формат without хэша)
         try:
             parts = query.data.split(":")
             model_index = int(parts[1])
@@ -53,11 +50,9 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             if 0 <= model_index < len(all_models):
                 model_name = all_models[model_index]
 
-                # If есть хэш, проверяем валидность
                 if expected_hash:
                     actual_hash = get_model_hash(model_name)
                     if actual_hash != expected_hash:
-                        # Модель fromменилась (удалена/добавлена), просим выбрать заново
                         from app.utils.keyboards import error_with_back_keyboard
 
                         await query.edit_message_text(
@@ -110,14 +105,11 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             return
     await leave_tarot_for_chat(user_id, query.message)
 
-    # Update menu с новой выбранной modelю
     formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(chat_state, context)
 
-    # Определяем имя for тоста
     if model_name.startswith("opencode-go/"):
         display_name = model_name.replace("opencode-go/", "").replace("-", " ").title()
     elif "/" in model_name:
-        # Covers both OpenRouter (org/model) and FreeTheAI (prefix/model)
         display_name = model_name.split("/")[-1].replace("_", " ").replace("-", " ").title()
     else:
         display_name = model_name
@@ -149,7 +141,6 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if not model_name:
         return
 
-    # Verify model is available
     all_models = menus.get_visible_model_list(settings, get_openrouter_keys())
 
     if model_name not in all_models:

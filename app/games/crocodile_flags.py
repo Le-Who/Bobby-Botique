@@ -28,8 +28,6 @@ async def is_daily_dual_track_enabled() -> bool:
 
 
 async def get_crocodile_runtime_switches() -> dict[str, bool]:
-    # ⚡ Bolt Optimization: gather 3 independent DB flag reads concurrently.
-    # Previously sequential: ~3× DB round-trips. Now: max(3 RTTs) instead of sum.
     live_audio, hint_prewarm, dual_track = await asyncio.gather(
         _is_enabled(LIVE_AUDIO_ENABLED_KEY, default="on"),
         _is_enabled(HINT_PREWARM_ENABLED_KEY, default="on"),

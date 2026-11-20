@@ -18,11 +18,6 @@ from app.repos.users import is_admin
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# DUPLICATE CHECK
-# ============================================================================
-
-
 async def _find_duplicate_document(user_id: int, file_hash: str, *, conn=None) -> dict[str, Any] | None:
     result = await database.db_query(
         """
@@ -48,11 +43,6 @@ async def check_duplicate_file(
             raise
         logger.error("Error checking duplicate file: %s", e, exc_info=True)
         return None
-
-
-# ============================================================================
-# CRUD
-# ============================================================================
 
 
 async def save_document_content(
@@ -238,11 +228,6 @@ async def cleanup_old_documents(days_old: int = 3) -> int:
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logger.error("Error cleaning up old documents: %s", e, exc_info=True)
         return 0
-
-
-# ============================================================================
-# STATS
-# ============================================================================
 
 
 async def get_document_stats() -> dict[str, Any]:

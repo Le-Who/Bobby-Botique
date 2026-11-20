@@ -76,8 +76,6 @@ async def save_conversation(
         if not db_manager.is_connected:
             await reconnect_database()
 
-        # The header and transcript are one save. A supplied connection keeps
-        # failed statements out of the pooled query helper's independent retries.
         async with db_manager.pool.acquire() as conn, conn.transaction():
             result = await db_query(
                 """INSERT INTO public.conversations (user_id, title, role_type, role_id, summary, token_budget, created_at)
@@ -92,7 +90,6 @@ async def save_conversation(
                     (user_id, conv_id),
                     conn=conn,
                 )
-        # Transaction exit can fail too; success is visible only after it returns.
         return conv_id
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.error("Error in save_conversation: %s", e, exc_info=True)
@@ -165,7 +162,6 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             await reconnect_database()
 
         async with db_manager.pool.acquire() as conn, conn.transaction():
-            # ⚡ Bolt Optimization: Use LEFT JOIN to fetch conversation and its optional role prompt in 1 query instead of 3.
             query = """
                 SELECT c.role_type, c.role_id, c.summary,
                        COALESCE(r.prompt, ur.prompt) as role_prompt
@@ -198,7 +194,6 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                     conn=conn,
                 )
 
-            # ⚡ Bolt Optimization: Combine token_count and system_prompt updates into 1 query
             if role_prompt is not None:
                 await db_query(
                     "UPDATE public.chats SET token_count = 0, system_prompt = $1 WHERE user_id = $2",
@@ -234,8 +229,6 @@ async def delete_conversation(user_id: int, conversation_id: int) -> bool:
             await reconnect_database()
 
         async with db_manager.pool.acquire() as conn, conn.transaction():
-            # Single atomic operation: delete messages then conversation
-            # No TOCTOU — if the conversation doesn't exist, no harm done
             await db_query(
                 "DELETE FROM conversation_messages WHERE conversation_id IN "
                 "(SELECT id FROM public.conversations WHERE id = $1 AND user_id = $2)",

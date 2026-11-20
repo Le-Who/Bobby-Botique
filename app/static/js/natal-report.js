@@ -5,9 +5,6 @@
   const navigationLinks = Array.from(navigation?.querySelectorAll('a[href^="#"]') || []);
 
   function updateNavigation() {
-    // Anchor scrolling honors the document's scroll padding. The dark tab bar
-    // is shorter than that offset, so its height alone can leave the section
-    // just below the activation threshold after a successful anchor jump.
     const scrollPadding = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
     const threshold = Math.max(scrollPadding, (navigation?.getBoundingClientRect().bottom || 0) + 30) + 2;
     let current = '#overview';

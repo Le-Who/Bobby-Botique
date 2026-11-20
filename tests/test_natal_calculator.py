@@ -192,7 +192,6 @@ async def test_odesa_november_1997_keeps_sun_in_scorpio_not_virgo():
     ],
 )
 async def test_chart_sun_sign_crosses_published_march_equinox(utc_datetime, expected_sign):
-    # NWS/USNO equinox at 2023-03-20 21:24Z, https://www.weather.gov/fwd/astrodata.
     resolved = ResolvedBirthData(
         birth_input=BirthInput(
             birth_date="2023-03-20",

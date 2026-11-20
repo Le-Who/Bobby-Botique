@@ -105,7 +105,6 @@ def render_synastry(data: SynastryData, value: PairInput, *, lang: str) -> Birth
         limitations.append(t("compat.stable_only", lang))
     parts.append(t("compat.symbolic", lang))
     limitations.append(t("compat.symbolic", lang))
-    # All inputs to this body are derived chart data and fixed translations.
     body = "\n".join(parts)
     context = t("compat.tarot_from_dates", lang) + "\n" + strip_formatting(body)
     return BirthDateCompatibility(html=body, tarot_context=context, limitations=tuple(limitations))

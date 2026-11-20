@@ -257,7 +257,7 @@ process.stdin.on('end', async () => {
     assert.equal(await card.evaluate(node => node.classList.contains('dirty')), false);
 
     await editor.fill('/paint\n/retry');
-    revision = 4; // Another administrator has saved since this draft started.
+    revision = 4;
     aliases = ['/elsewhere'];
     await card.getByRole('button', { name: 'Сохранить алиасы', exact: true }).click();
     await card.locator('.feedback').filter({ hasText: 'Конфигурация изменилась' }).waitFor();

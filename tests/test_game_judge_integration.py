@@ -1,4 +1,3 @@
-# tests/test_game_judge_integration.py
 """Integration tests for the judge_guess() 4-stage pipeline.
 
 Everything external is mocked:
@@ -19,14 +18,9 @@ import app.games.judge as judge_module
 from app.games.ai_budget import reset_budget_state_for_tests
 from app.games.judge import GuessJudgement, _race_generate, judge_guess
 
-# ── Shared stubs ──────────────────────────────────────────────────────────────
-
 _COLD = GuessJudgement(status="cold", score=0.1, hint="Холодно ❄️")
 _WARM = GuessJudgement(status="warm", score=0.55, hint="Теплее 🌡️")
 _HOT = GuessJudgement(status="hot", score=0.85, hint="Горячо 🔥")
-
-
-# ── judge_guess pipeline ──────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -70,7 +64,6 @@ class TestJudgeGuessPipeline:
     async def test_typo_exact_match_skips_llm(self):
         """Typo-matched guess (DL within tolerance) must also bypass LLM."""
         with patch("app.games.judge._race_generate", new_callable=AsyncMock) as mock_race:
-            # "монгуст" vs "мангуст" — 7 chars, dist=1, allowed=1
             status, judgement = await judge_guess("мангуст", "монгуст")
 
         assert status == "exact_match"
@@ -119,7 +112,6 @@ class TestJudgeGuessPipeline:
 
         assert status == "hot"
         assert judgement.cached is False
-        # create_task(cache_judgement(...)) calls the mock once to get the coroutine
         mock_cache_write.assert_called_once()
 
     async def test_topic_context_forwarded_to_race_and_cache(self):

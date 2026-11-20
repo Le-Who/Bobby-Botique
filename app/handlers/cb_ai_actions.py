@@ -76,14 +76,12 @@ def _continuation_request(query):
     source = message_request(user_id)
     request = current_request(user_id)
     if last is None and source is None and request is None:
-        return None  # Replies created before ownership metadata was recorded.
+        return None
     if clicked is None or request is None or request.response_ref != clicked:
         raise StaleRetryRequest("Continuation no longer owns this response")
     if request.source_ref is not None:
         if source is None or source.source_ref != request.source_ref:
             raise StaleRetryRequest("Continuation source changed")
-        # The delivery receipt owns split/replacement actions even when the
-        # router still remembers this source's original placeholder.
         return request
     if (last is not None and last != clicked) or (source is not None and source.response_ref != clicked):
         raise StaleRetryRequest("Continuation response ownership is uncertain")
@@ -155,7 +153,6 @@ async def _admit_callback(
     ):
         await query.answer(_BUSY_TOAST)
         return None
-    # This acquisition cannot block: no await separates inspection and reserve.
     await user_lock.acquire()
     admission = _CallbackAdmission(user_id, user_lock)
     try:
@@ -189,8 +186,6 @@ async def _schedule_ai_callback(coroutine, placeholder, *, operation: str, neste
         if snapshot is None:
             await coroutine
         else:
-            # This is admitted request work; retain its route revision while
-            # the shared manager detaches ordinary background-job snapshots.
             async with runtime_settings_scope(snapshot):
                 await coroutine
 
@@ -246,20 +241,15 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     if admission is None:
         return
     try:
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # 1. Определяем, какую задачу будем запускать.
         task_to_run = None
         if action == "vision_only":
-            # 2. СРАЗУ даем обратную связь пользователю.
             await placeholder_message.edit_text(t("processing.describing_image"))
             chat_state = await get_user_chat(user_id)
-            task_to_run = agent._handle_photo(placeholder_message, original_message, chat_state)  # type: ignore[arg-type]  # message comes from original update
+            task_to_run = agent._handle_photo(placeholder_message, original_message, chat_state)  # type: ignore[arg-type]
         elif action == "confirm":
-            # У этой функции своя обратная связь ("Аналfromирую..."), поэтому здесь ничего не меняем.
             search_prefix = "??" if (original_message.caption and original_message.caption.startswith("??")) else "?"
             task_to_run = agent._handle_complex_agent_search(placeholder_message, original_message, search_prefix)
 
-        # 3. If задача определена, запускаем ее в фоне под блокировкой.
         if task_to_run:
 
             async def task_wrapper() -> None:
@@ -327,7 +317,6 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 async with _HEAVY_CALLBACK_SEMAPHORE:
                     if action == "confirm":
                         user_message = original_message.text
-                        # ⚡ Bolt Optimization: Fetch chat state and detect TTS intent concurrently
                         from app.voice_intent import detect_tts_intent
 
                         chat_state, voice_decision = await asyncio.gather(
@@ -336,7 +325,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
                         async with MetricsMiddleware("fallback_callback", user_id=user_id):
                             await agent._handle_regular_chat(
-                                placeholder_message,  # type: ignore[arg-type]  # MaybeInaccessibleMessage
+                                placeholder_message,  # type: ignore[arg-type]
                                 user_id,
                                 user_message,
                                 chat_state,
@@ -385,7 +374,6 @@ async def cancel_long_wait_callback(update: Update, context: ContextTypes.DEFAUL
 
     try:
         async with asyncio.timeout(5.0):
-            # A released lock can precede worker finally/resource callbacks.
             completion: asyncio.Future[None] = asyncio.get_running_loop().create_future()
             owner.add_done_callback(lambda _owner: completion.set_result(None))
             await asyncio.shield(completion)
@@ -457,8 +445,6 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
         await query.answer(_BUSY_TOAST)
         return
-    # No intervening await after the check: acquisition and reservation are one
-    # event-loop admission; the worker inherits this lock until its finally.
     await user_lock.acquire()
     handed_off = False
     request = None
@@ -535,8 +521,6 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception as error:
                 logging.error("retry_last_callback failed (error_type=%s)", type(error).__name__)
                 if replay.response_ref != response_ref_before_attempt:
-                    # Delivery already owns the final answer/actions. Later
-                    # persistence failures must not replace that presentation.
                     return
                 with contextlib.suppress(Exception):
                     from app.errors import build_retry_and_roles_keyboard
@@ -577,10 +561,8 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         getattr(query.message.chat, "id", None) if query.message else None,
     )
 
-    # Extract text from the message that has the button
     response_text = query.message.text if query.message else None
 
-    # Check if there's a WebApp url with a UID (Long-read)
     if query.message and query.message.reply_markup:
         for row in query.message.reply_markup.inline_keyboard:
             for btn in row:
@@ -602,7 +584,6 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not response_text or len(response_text.strip()) < 5:
         return
 
-    # Strip code blocks so TTS does not synthesize visually represented source code.
     response_text = _strip_tts_code_blocks(response_text)
 
     chat_id = query.message.chat_id
@@ -642,12 +623,10 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer("❌ Ошибка озвучки")
 
 
-# ── Interruption error footers to strip from partial text ──────────────────
 _INTERRUPTION_FOOTERS = (
     "\n\n⏰ _(ответ был прерван по таймауту)_",
     "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_",
     "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_",
-    # Legacy footers (backward compat)
     "\n\n⚠️ _(ответ был прерван из-за ошибки API)_",
 )
 
@@ -670,13 +649,11 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
     )
     user_id = query.from_user.id
 
-    # Extract partial text from the interrupted message
     partial_text = query.message.text if query.message else None
     if not partial_text or len(partial_text.strip()) < 10:
         await query.answer("❌")
         return
 
-    # Strip the interruption footer to get clean partial text
     clean_partial = _strip_interruption_footer(partial_text)
 
     from app.handlers.retry_requests import StaleRetryRequest, current_request, message_request, scope_matches
@@ -720,19 +697,16 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
     if admission is None:
         return
     try:
-        # Create placeholder for the continuation response
         placeholder_message = await query.message.reply_text(t("processing.continuing"))
 
         from app.handlers.agent import _handle_regular_chat
 
-        # Captured here so the inner closure can reference them without closure mutation risk
         _clean_partial = clean_partial
         _continuation_prompt = render_additional_prompt("chat.continue")
 
         async def _continue_wrapper() -> None:
             try:
                 async with _HEAVY_CALLBACK_SEMAPHORE:
-                    # Fetch and mutate state under lock to prevent history data race
                     from app.metrics import role_conv_metrics
                     from app.utils.background_tasks import submit_task
 
@@ -743,10 +717,6 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
                     assert _chat_state is not None
                     last_turn = _chat_state.history[-1] if _chat_state.history else None
                     if not last_turn or last_turn.get("role") != "model":
-                        # Compatibility for interrupted replies created before
-                        # partial deliveries were persisted. Current deliveries
-                        # already end in a model turn. Comparing rendered Telegram
-                        # text is unsafe because formatting entities are normalized.
                         _chat_state.history.append({"role": "model", "parts": [_clean_partial]})
                     submit_task(role_conv_metrics.record_stream_recovery())
 

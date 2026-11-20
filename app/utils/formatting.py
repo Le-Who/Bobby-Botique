@@ -34,5 +34,4 @@ class TelegramFormatter:
         if not preserve_formatting or not text:
             return new_strip_formatting(text), None
 
-        # Always use HTML as it is more robust
         return new_format_text(text, parse_mode="HTML")

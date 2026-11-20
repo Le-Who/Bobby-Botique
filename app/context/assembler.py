@@ -14,10 +14,10 @@ from app.observability.events import emit
 from app.prompt_registry import estimate_tokens_cyrillic, get_prompt_text, register_controlled_text, render_prompt_text
 
 from .summarizer import (
-    _extract_text as extract_text,  # canonical implementation
+    _extract_text as extract_text,
 )
 from .summarizer import (
-    schedule_llm_summarization,  # noqa: F401 – re-exported
+    schedule_llm_summarization,  # noqa: F401
 )
 from .token_budget import (
     DEFAULT_TOKEN_BUDGET,
@@ -84,24 +84,16 @@ class ContextAssembler:
         """
         budget = TokenBudget(total=token_budget)
 
-        # 1. Account for fixed costs
         budget.system_prompt = estimate_tokens_cyrillic(system_instruction)
         budget.user_message = estimate_tokens_cyrillic(user_message)
 
-        # 2. Check if summary exists and account for it.  Persisted summaries
-        # from older versions may predate the byte-aware cap.
         if existing_summary:
             existing_summary = truncate_to_token_budget(existing_summary, SUMMARY_BUDGET)
             budget.summary = self._summary_token_cost(existing_summary)
 
-        # 3. Fit history within remaining budget
         available = budget.available_for_history
         total_history_tokens = sum(estimate_tokens_cyrillic(self._extract_text(message)) for message in history)
         if total_history_tokens > available:
-            # A first truncation creates or expands the local summary. Reserve
-            # its full allowance before selecting retained turns; otherwise
-            # the newly-created summary can push the provider prompt over the
-            # declared context budget.
             summary_allowance = SUMMARY_BUDGET + self._summary_token_cost("")
             available = max(0, available - max(0, summary_allowance - budget.summary))
         trimmed_history, was_truncated, dropped_count, new_summary = self._fit_history(
@@ -111,18 +103,15 @@ class ContextAssembler:
         if new_summary and new_summary != existing_summary:
             budget.summary = self._summary_token_cost(new_summary)
 
-        # 4. Determine dropped messages and if we should schedule LLM summarization
         llm_scheduled = False
         dropped_msgs: list[dict[str, Any]] = []
         if was_truncated:
-            # Compute what was dropped (first N messages not in trimmed)
             kept_count = len(trimmed_history)
             dropped_msgs = list(history[: len(history) - kept_count])
             dropped_tokens = sum(estimate_tokens_cyrillic(self._extract_text(msg)) for msg in dropped_msgs)
             if dropped_tokens >= LLM_SUMMARY_TOKEN_THRESHOLD:
                 llm_scheduled = True
 
-        # 5. Build final history with proper structure
         final_history = self._build_final_history(
             trimmed_history,
             new_summary,
@@ -130,12 +119,9 @@ class ContextAssembler:
             user_parts=user_parts,
         )
 
-        # Role alternation can merge a retained user turn with the new input;
-        # count the actual payload so separators/rounding are included too.
         final_history_tokens = sum(estimate_tokens_cyrillic(self._extract_text(msg)) for msg in final_history)
         budget.history = final_history_tokens - budget.summary - budget.user_message
 
-        # 6. Generate audit hash
         audit_hash = self._compute_audit_hash(final_history, system_instruction)
 
         result = AssembledContext(
@@ -189,7 +175,6 @@ class ContextAssembler:
         if not history:
             return [], False, 0, existing_summary
 
-        # Calculate total tokens for all history messages
         message_tokens = []
         for msg in history:
             text = self._extract_text(msg)
@@ -198,12 +183,9 @@ class ContextAssembler:
 
         total_history_tokens = sum(message_tokens)
 
-        # If everything fits, no truncation needed
         if total_history_tokens <= available_tokens:
             return list(history), False, 0, existing_summary
 
-        # Need to truncate — keep most recent messages
-        # Work backwards from the end, accumulating tokens
         kept_indices: list[int] = []
         accumulated = 0
         for i in range(len(history) - 1, -1, -1):
@@ -215,14 +197,12 @@ class ContextAssembler:
 
         kept_indices.reverse()
 
-        # Determine dropped messages
         first_kept = kept_indices[0] if kept_indices else len(history)
 
         dropped_messages = history[:first_kept]
         trimmed_history = [history[i] for i in kept_indices]
         dropped_count = len(dropped_messages)
 
-        # Create local summary of dropped messages (immediate, non-blocking)
         summary = self._create_summary_local(dropped_messages, existing_summary)
 
         logger.info(
@@ -233,8 +213,6 @@ class ContextAssembler:
         )
 
         return trimmed_history, True, dropped_count, summary
-
-    # ── Local summarization (Tier 1: fast, no API cost) ──────────────────────
 
     def _create_summary_local(
         self,
@@ -249,7 +227,6 @@ class ContextAssembler:
         if not dropped_messages:
             return existing_summary
 
-        # Extract snippets from dropped messages
         user_questions: list[str] = []
         assistant_points: list[str] = []
 
@@ -260,7 +237,6 @@ class ContextAssembler:
             if not text:
                 continue
 
-            # Keep first 150 chars of each message for context
             snippet = text[:150].strip()
             if len(text) > 150:
                 snippet += "..."
@@ -270,25 +246,21 @@ class ContextAssembler:
             elif role == "model":
                 assistant_points.append(snippet)
 
-        # Build structured summary
         parts: list[str] = []
 
         if existing_summary:
             parts.append(existing_summary.strip())
 
         if user_questions:
-            # Keep last 5 questions to avoid summary bloat
             recent_questions = user_questions[-5:]
             parts.append("Темы пользователя: " + " | ".join(recent_questions))
 
         if assistant_points:
-            # Keep last 3 assistant points
             recent_points = assistant_points[-3:]
             parts.append("Ключевые ответы: " + " | ".join(recent_points))
 
         summary = "\n".join(parts) if parts else None
 
-        # Cap summary length to stay within budget
         if summary and estimate_tokens_cyrillic(summary) > SUMMARY_BUDGET:
             summary = truncate_to_token_budget(summary, SUMMARY_BUDGET)
 
@@ -300,8 +272,6 @@ class ContextAssembler:
         return estimate_tokens_cyrillic(
             render_prompt_text(get_prompt_text("context.summary.preamble"), summary=summary)
         ) + estimate_tokens_cyrillic(get_prompt_text("context.summary.ack"))
-
-    # ── History building ─────────────────────────────────────────────────────
 
     def _build_final_history(
         self,
@@ -318,7 +288,6 @@ class ContextAssembler:
         """
         context: list[dict[str, Any]] = []
 
-        # Insert summary as context preamble (user/model pair)
         if summary:
             context.append(
                 {
@@ -333,16 +302,13 @@ class ContextAssembler:
                 }
             )
 
-        # Add trimmed history
         context.extend(trimmed_history)
 
-        # Add current user message — skip if None (caller already appended manually)
         if user_message is not None:
             msg_text = user_message.strip() if user_message else ""
             parts = list(user_parts) if user_parts is not None else [msg_text or "..."]
             context.append({"role": "user", "parts": parts})
 
-        # Validate role alternation
         context = self._fix_role_alternation(context)
 
         return context
@@ -360,15 +326,12 @@ class ContextAssembler:
         fixed: list[dict[str, Any]] = [{**history[0], "parts": list(history[0].get("parts", []))}]
         for msg in history[1:]:
             if msg.get("role") == fixed[-1].get("role"):
-                # Merge consecutive same-role messages
                 new_parts = msg.get("parts", [])
                 fixed[-1]["parts"] = fixed[-1]["parts"] + new_parts
             else:
                 fixed.append({**msg, "parts": list(msg.get("parts", []))})
 
         return fixed
-
-    # ── Utilities ────────────────────────────────────────────────────────────
 
     @staticmethod
     def _extract_text(msg: dict[str, Any]) -> str:
@@ -383,7 +346,6 @@ class ContextAssembler:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
 
 
-# Singleton assembler instance
 _assembler = ContextAssembler()
 
 

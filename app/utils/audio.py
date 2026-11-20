@@ -1,4 +1,3 @@
-# /app/utils/audio.py
 """Audio format conversion utilities for Telegram voice messages.
 
 Converts raw PCM audio (from Gemini TTS/Live API) to OGG Opus format
@@ -28,25 +27,25 @@ async def pcm_to_ogg_opus(
     ffmpeg_cmd = [
         "ffmpeg",
         "-f",
-        "s16le",  # Input format: signed 16-bit little-endian PCM
+        "s16le",
         "-ar",
-        str(sample_rate),  # Input sample rate
+        str(sample_rate),
         "-ac",
-        str(channels),  # Input channels (mono)
+        str(channels),
         "-i",
-        "pipe:0",  # Read from stdin
+        "pipe:0",
         "-c:a",
-        "libopus",  # Encode with Opus codec
+        "libopus",
         "-b:a",
-        bitrate,  # Output bitrate (48k = good quality for speech)
+        bitrate,
         "-f",
-        "ogg",  # Output container format
+        "ogg",
         "-application",
-        "voip",  # Opus application mode: optimized for speech
-        "-y",  # Overwrite (no interactive prompts)
+        "voip",
+        "-y",
         "-loglevel",
-        "error",  # Suppress verbose output
-        "pipe:1",  # Write to stdout
+        "error",
+        "pipe:1",
     ]
 
     proc = None
@@ -62,8 +61,6 @@ async def pcm_to_ogg_opus(
             proc.communicate(input=pcm_data),
             timeout=90.0,
         )
-        # ⚠ pcm_data has been consumed by communicate — help GC reclaim
-        # (the caller's reference may still exist, but our local copy is freed)
 
         if proc.returncode != 0:
             err_msg = stderr.decode(errors="replace")[:500]
@@ -71,7 +68,7 @@ async def pcm_to_ogg_opus(
             logging.error("ffmpeg OGG encoding failed (exit %d): %s", proc.returncode, err_msg)
             return None
 
-        del stderr  # free stderr buffer on success path too
+        del stderr
 
         if not stdout or len(stdout) < 100:
             logging.error(
@@ -98,20 +95,16 @@ async def pcm_to_ogg_opus(
         logging.error("Audio encoding failed: %s", e)
         return None
     finally:
-        # communicate() can be interrupted while ffmpeg is still alive. Own
-        # the child until it is killed and reaped, including caller cancellation.
         if proc is not None and proc.returncode is None:
             try:
                 proc.kill()
             except OSError:
-                pass  # The child may have exited between the check and kill.
+                pass
             reap_task = asyncio.create_task(proc.wait())
             while not reap_task.done():
                 try:
                     await asyncio.shield(reap_task)
                 except asyncio.CancelledError as error:
-                    # A second purge/shutdown must not abandon our child. Keep
-                    # awaiting the same reap task and restore cancellation after.
                     cancellation = cancellation or error
             reap_task.result()
             if cancellation is not None:
@@ -129,9 +122,6 @@ def make_voice_file(ogg_bytes: bytes) -> io.BytesIO:
     return buf
 
 
-# ─── PCM post-processing ─────────────────────────────────────────────────────
-
-# PCM format: signed 16-bit little-endian, mono, 24 kHz
 _SAMPLE_BYTES = 2
 _SAMPLE_RATE = 24000
 
@@ -160,10 +150,9 @@ def trim_trailing_silence(
     import struct
 
     n_samples = len(pcm) // _SAMPLE_BYTES
-    if n_samples < _SAMPLE_RATE:  # less than 1 second — don't trim
+    if n_samples < _SAMPLE_RATE:
         return pcm
 
-    # Scan backwards to find the last non-silent sample
     last_loud = n_samples - 1
     for i in range(n_samples - 1, -1, -1):
         sample = struct.unpack_from("<h", pcm, i * _SAMPLE_BYTES)[0]
@@ -171,10 +160,8 @@ def trim_trailing_silence(
             last_loud = i
             break
     else:
-        # Entire buffer is silence — return as-is (caller will handle)
         return pcm
 
-    # Keep min_tail_ms of padding after the last loud sample for fade-out
     tail_samples = int(_SAMPLE_RATE * min_tail_ms / 1000)
     cut_at = min(last_loud + tail_samples, n_samples)
     trimmed = pcm[: cut_at * _SAMPLE_BYTES]
@@ -227,16 +214,13 @@ def crossfade_pcm_chunks(
         overlap = min(fade_samples, len(result) // _SAMPLE_BYTES, len(chunk) // _SAMPLE_BYTES)
 
         if overlap < 10:
-            # Too short to cross-fade — just concatenate
             result.extend(chunk)
             continue
 
-        # Cross-fade region: last `overlap` samples of result × first `overlap` samples of chunk
         result_offset = len(result) - overlap * _SAMPLE_BYTES
 
         for i in range(overlap):
-            # Linear fade: outgoing fades 1→0, incoming fades 0→1
-            alpha = i / overlap  # 0.0 → 1.0
+            alpha = i / overlap
 
             out_pos = result_offset + i * _SAMPLE_BYTES
             out_sample = struct.unpack_from("<h", result, out_pos)[0]
@@ -249,7 +233,6 @@ def crossfade_pcm_chunks(
 
             struct.pack_into("<h", result, out_pos, mixed)
 
-        # Append the rest of the incoming chunk (after the overlap region)
         result.extend(chunk[overlap * _SAMPLE_BYTES :])
 
     return bytes(result)

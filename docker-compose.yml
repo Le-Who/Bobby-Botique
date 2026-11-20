@@ -1,5 +1,3 @@
-# Docker Compose (local legacy)
-# Оптимизирован для production deployment
 
 version: '3.8'
 

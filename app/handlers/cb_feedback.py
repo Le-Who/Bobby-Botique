@@ -1,4 +1,3 @@
-# /app/handlers/cb_feedback.py
 """Callback handlers — RLHF feedback via inline buttons.
 
 Two-stage UX to reduce button clutter:
@@ -46,9 +45,6 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.answer()
 
 
-# ── Stage 1: Reveal 👍/👎 buttons ────────────────────────────────────────────
-
-
 async def _handle_reveal(query) -> None:
     """Replace the "📝 Оценить" button with actual 👍/👎 choice pair."""
     await query.answer()
@@ -62,7 +58,6 @@ async def _handle_reveal(query) -> None:
         new_buttons: list[tuple[InlineKeyboardButton, ...]] = []
         if old_markup and old_markup.inline_keyboard:
             for row in old_markup.inline_keyboard:
-                # Replace the reveal button row with actual 👍/👎 buttons
                 if any((getattr(btn, "callback_data", "") or "") == "feedback:reveal" for btn in row):
                     new_buttons.append(
                         (
@@ -75,10 +70,7 @@ async def _handle_reveal(query) -> None:
 
         await msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_buttons))
     except Exception:
-        pass  # Best-effort UI update
-
-
-# ── Stage 2: Process vote ────────────────────────────────────────────────────
+        pass
 
 
 async def _handle_vote(query, rating: str) -> None:
@@ -97,17 +89,14 @@ async def _handle_vote(query, rating: str) -> None:
         return
     message_id = msg.message_id
 
-    # Acknowledge immediately
     emoji = "👍" if rating == "up" else "👎"
     await query.answer(f"{emoji} Отзыв принят!", show_alert=False)
 
-    # ── 1. Save feedback to DB ────────────────────────────────────────────
     try:
         await save_feedback(user_id, message_id, rating)
     except Exception as e:
         logger.warning("Feedback save failed: %s", e)
 
-    # ── 2. Response-bound RLHF action on downvote ─────────────────────────
     if rating == "down":
         from app.utils.background_tasks import submit_task
 
@@ -131,27 +120,21 @@ async def _handle_vote(query, rating: str) -> None:
 
         submit_task(_penalize_edges())
 
-    # ── 3. Visual confirmation: replace feedback row in keyboard ──────────
     try:
         old_markup = msg.reply_markup
         new_buttons: list[tuple[InlineKeyboardButton, ...]] = []
         if old_markup and old_markup.inline_keyboard:
             for row in old_markup.inline_keyboard:
-                # Skip the feedback row (contains feedback: callbacks)
                 if any((getattr(btn, "callback_data", "") or "").startswith("feedback:") for btn in row):
                     continue
                 new_buttons.append(row)
 
-        # Add confirmed feedback indicator as last row (where feedback was)
         confirmed_row = (InlineKeyboardButton(f"{emoji} Отзыв учтён ✓", callback_data="noop"),)
         new_buttons.append(confirmed_row)
 
         await msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_buttons))
     except Exception:
-        pass  # Best-effort UI update
-
-
-# ── Citation badge: show retrieved facts ─────────────────────────────────────
+        pass
 
 
 async def show_facts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

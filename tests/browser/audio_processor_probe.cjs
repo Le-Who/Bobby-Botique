@@ -37,8 +37,6 @@ while (inputSamples < request.rate) {
     emptyInputChangedState ||= posted.length + processor._bufferLength !== before;
   }
   const length = Math.min(request.blocks[block++ % request.blocks.length], request.rate - inputSamples);
-  // A continuous ramp has an independent, exact interpolation oracle: at output
-  // time k/16000 seconds its amplitude is -.4 + .8*k/16000, for every input rate.
   const channel = Float32Array.from({ length }, (_, i) => -.4 + .8 * (inputSamples + i) / request.rate);
   assert.equal(processor.process([[channel, new Float32Array(length).fill(1)]]), true);
   inputSamples += length;

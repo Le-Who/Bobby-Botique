@@ -110,8 +110,6 @@ def build_semantic_judge(*, router=None, model_name: str) -> SemanticJudge:
                 )
                 parsed = parse_response(response_text)
                 if used_model is not None:
-                    # Reuse a validated fallback for later pairs in this run,
-                    # without changing explicit policies or persisted defaults.
                     preferred_model = used_model
         except SemanticAuditUnavailableError:
             raise

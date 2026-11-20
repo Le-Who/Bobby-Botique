@@ -409,7 +409,7 @@ async def test_reset_clears_retry_and_legacy_text_even_without_changed_generatio
     callback = retry_button(s.sessions[0])
     prior_user_state = state.get_user_state(USER_ID)
     prior_user_state.last_sent_message_text = TEXT
-    assert s.chat.history == []  # A length check alone cannot detect this reset.
+    assert s.chat.history == []
     if reset == "new_topic":
         monkeypatch.setattr(cb_navigation, "get_user_chat", AsyncMock(return_value=s.chat))
         monkeypatch.setattr(cb_navigation, "update_user_chat", AsyncMock(return_value=True))
@@ -513,7 +513,6 @@ async def test_invalidated_retry_cannot_write_or_roll_back_reset_history(scenari
     async with asyncio.timeout(2):
         while len(s.requests) < 2:
             await asyncio.sleep(0)
-    # An erasure/reset path outside the callbacks may invalidate a running request.
     state.clear_retry_request(USER_ID)
     s.chat.history = []
     s.chat.context_summary = "Reset summary"

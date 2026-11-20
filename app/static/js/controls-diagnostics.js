@@ -1,4 +1,3 @@
-/* Read-only model evidence. Configuration assignments are never execution counts. */
 (() => {
   "use strict";
   const byId = id => document.getElementById(id);
@@ -176,7 +175,6 @@
       ? "Источник счётчиков Gemini недоступен. Повторите обновление диагностики."
       : "Для этой модели нет записей общего учёта RPD. Отсутствие записей не означает нулевой расход."));
     const healthSource = snapshot?.providers?.key_health;
-    // Truncation metadata belongs to the health summary in the canonical API.
     const incomplete = healthSource?.truncated ?? healthSource?.summary?.truncated;
     for (const row of item.rows) {
       const key = node("div", "diagnostic-key");

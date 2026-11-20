@@ -610,7 +610,6 @@ const CrocModule = (() => {
     });
   }
 
-  // Bind header refresh/security buttons (data-croc-action on header)
   document.addEventListener('click', (e) => {
     const target = e.target.closest('[data-croc-action]');
     if (!target) return;

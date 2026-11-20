@@ -1,4 +1,3 @@
-# /app/handlers/msg_media.py
 """Media group handling extracted from messages.py.
 
 Manages incoming photo groups: accumulation, deferred processing,
@@ -18,18 +17,14 @@ from app import state
 from app.i18n import t
 from app.utils.background_tasks import submit_task
 
-# ── Shared state for media group accumulation ────────────────────────────────
 MEDIA_GROUPS: dict = {}
 MEDIA_GROUPS_TTL: dict = {}
-MEDIA_GROUP_TIMEOUT = 300  # 5 minutes
-MEDIA_GROUPS_MAX_SIZE = 500  # OOM protection
+MEDIA_GROUP_TIMEOUT = 300
+MEDIA_GROUPS_MAX_SIZE = 500
 _media_groups_lock = asyncio.Lock()
 _background_tasks: set = set()
 _cleanup_task: asyncio.Task[None] | None = None
 _HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore(10)
-
-
-# ── Cleanup ──────────────────────────────────────────────────────────────────
 
 
 async def cleanup_old_media_groups() -> None:
@@ -81,20 +76,11 @@ async def stop_media_groups_cleanup() -> None:
             await task
 
 
-# ── Media group update handling ──────────────────────────────────────────────
-
-
 async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int) -> bool:
     """Handle an update if it's part of a media group. Returns True if consumed."""
     is_photo = bool(update.message.photo)
     media_group_id = update.message.media_group_id if update.message else None
 
-    # ── Улучшение 3: Forwarded photo merging into text debounce slot ──────────
-    # When the user forwards a mixed batch (texts + photos), the text messages
-    # enter the debounce window while photos arrive here.  If a debounce slot
-    # is already open for this user AND the arriving photo is forwarded, we
-    # inject the photo into the text slot so the AI receives a unified context
-    # (text attribution + image) in a single request.
     if is_photo and getattr(update.message, "forward_origin", None) is not None:
         from app.middleware.debounce import has_open_slot, inject_forwarded_photo
 
@@ -109,7 +95,7 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
                     "📸 Forwarded photo injected into debounce slot for user %s",
                     user_id,
                 )
-                return True  # consumed — text debounce waiter will handle it
+                return True
 
     if is_photo and media_group_id:
         logging.info(
@@ -143,8 +129,6 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
                 }
                 MEDIA_GROUPS_TTL[media_group_id] = current_time
                 if _cleanup_task is None or _cleanup_task.done():
-                    # No I/O in startup: register the maintenance owner before
-                    # returning so shutdown cannot race a queued startup job.
                     await start_media_groups_cleanup()
 
             MEDIA_GROUPS[media_group_id]["messages"].append(update.message)
@@ -168,8 +152,6 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
 
                 def completed(owner: asyncio.Task) -> None:
                     _background_tasks.discard(owner)
-                    # A task cancelled before its first step never enters the
-                    # coroutine's finally block. Retire only its own album.
                     if MEDIA_GROUPS.get(media_group_id) is group_owner:
                         MEDIA_GROUPS.pop(media_group_id, None)
                         MEDIA_GROUPS_TTL.pop(media_group_id, None)
@@ -178,9 +160,6 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
 
         return True
     return False
-
-
-# ── Deferred processing ─────────────────────────────────────────────────────
 
 
 async def delayed_process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE, delay: float) -> None:
@@ -234,7 +213,7 @@ async def _process_single_image_from_group(media_group_id: str, context: Context
         from app.handlers.agent import process_long_request
 
         async with state.get_user_lock(message.from_user.id):
-            await process_long_request(placeholder_message, mock_update, context)  # type: ignore[arg-type]  # SimpleNamespace duck-types Update
+            await process_long_request(placeholder_message, mock_update, context)  # type: ignore[arg-type]
     except Exception as e:
         logging.error("Error processing single image from group: %s", e, exc_info=True)
         try:

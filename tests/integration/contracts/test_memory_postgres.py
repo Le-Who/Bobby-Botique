@@ -244,8 +244,6 @@ async def test_error_drain_compensates_only_its_own_generation(contract_pool, db
         async def fetch(self, sql, *params):
             result = await self.connection.fetch(sql, *params)
             if "AS active_count" in sql and asyncio.current_task().get_name() == "failing-consent-drain":
-                # The real wait loop deleted expired leases and counted the
-                # remaining live lease in its real PostgreSQL transaction.
                 assert result[0]["active_count"] == 1
                 assert (
                     await self.connection.fetchval(
@@ -298,8 +296,6 @@ async def test_error_drain_compensates_only_its_own_generation(contract_pool, db
         assert drain_pids and observer_pid not in drain_pids
         assert drain_queries == [(USER, barrier, False)]
         assert not task.done() and phase_calls == []
-        # An independent connection still sees the expired row: the drain's
-        # preceding DELETE has not committed and must roll back on the error.
         assert await db_conn.fetchval("SELECT count(*) FROM private_data_leases WHERE lease_id=$1", expired_lease) == 1
         assert await consent._acquire_private_data_lease(USER, epoch, "ltm:blocked-old", True, uuid4()) is False
         assert await consent._renew_private_data_lease(USER, active_lease) is False
@@ -444,7 +440,6 @@ async def test_erased_recreated_account_rejects_stale_provider_and_write(db_conn
     )
     try:
         await asyncio.wait_for(provider_entered.wait(), 5)
-        # Exact persisted generation authority survives deletion even for the same Telegram ID.
         await db_conn.execute("DELETE FROM users WHERE user_id=$1", USER)
         newer = await account(db_conn)
         assert newer > epoch
@@ -486,7 +481,6 @@ async def test_source_delete_recomposes_attributes_then_deletes_last_graph(contr
     assert await db_conn.fetchval("SELECT weight FROM memory_edges") == pytest.approx(0.9)
     async with contract_pool.acquire() as connection, connection.transaction():
         await connection.execute("DELETE FROM long_term_memory WHERE id=$1", new)
-        # Constraint triggers defer recomposition until the caller requests it or commits.
         assert await connection.fetchval("SELECT description FROM memory_nodes LIMIT 1") == "new description"
         await connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
         nodes = await connection.fetch("SELECT description,file_id,file_type FROM memory_nodes ORDER BY entity_name")

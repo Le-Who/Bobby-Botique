@@ -1,6 +1,6 @@
 """Idempotent host installer. Never replaces live Redis or another project's resources."""
 
-# ruff: noqa: T201 -- bounded operator CLI output, never command diagnostics.
+# ruff: noqa: T201
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ VOLUME = "gemaibot-redis-data"
 def run(*args: str) -> str:
     result = subprocess.run(args, capture_output=True, text=True, timeout=180)
     if result.returncode:
-        # Docker diagnostics may include environment values. Never echo stderr.
         raise RuntimeError(f"Command failed: {args[0]} {args[1]} (exit {result.returncode})")
     return result.stdout.strip()
 
@@ -29,7 +28,6 @@ def run(*args: str) -> str:
 def inspect(kind: str, name: str) -> dict | None:
     result = subprocess.run(["docker", kind, "inspect", name], capture_output=True, text=True, timeout=15)
     if result.returncode:
-        # Missing and inaccessible are distinguished before any mutation.
         run("docker", "info", "--format", "{{.ServerVersion}}")
         return None
     return json.loads(result.stdout)[0]
@@ -59,7 +57,6 @@ def prepare_credentials(root: Path, *, existing_data: bool) -> None:
         path = directory / name
         path.write_text(value + "\n", encoding="utf-8")
         path.chmod(0o444 if name == "admin_password" else 0o600)
-    # Only the host maintenance user may reconfigure Redis or remove whole databases.
     app_hash = hashlib.sha256(app_password.encode()).hexdigest()
     admin_hash = hashlib.sha256(admin_password.encode()).hexdigest()
     acl = directory / "users.acl"
@@ -143,7 +140,6 @@ def install(root: Path, *, require_ready: bool) -> None:
         "60",
         "redis",
     )
-    # The stateless log sidecar may pick up monitoring changes independently.
     run("docker", "compose", "-f", str(root / "compose.yml"), "up", "-d", "--wait", "monitor-log")
     if require_ready:
         expected = (root / "migration-complete").read_text(encoding="utf-8").strip()
@@ -157,7 +153,6 @@ def install(root: Path, *, require_ready: bool) -> None:
         )
         if len(expected) != 32 or actual != expected:
             raise RuntimeError("Redis migration identity missing; refusing empty or wrong database")
-    # Timers are owned independently of bot container recreation.
     for name in ("backup", "monitor"):
         for extension in ("service", "timer"):
             filename = f"gemaibot-redis-{name}.{extension}"

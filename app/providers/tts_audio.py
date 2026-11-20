@@ -80,8 +80,6 @@ def _wav_pcm(data: bytes) -> bytes:
             ):
                 raise TTSOutputError("incompatible_wav")
             frames = reader.getnframes()
-            # readframes rounds the declared data size down when computing
-            # nframes. Probe one extra frame to reject a partial final sample.
             pcm = reader.readframes(frames + 1)
             if len(pcm) != frames * 2:
                 raise TTSOutputError("truncated_wav")

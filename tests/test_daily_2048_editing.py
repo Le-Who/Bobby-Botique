@@ -375,7 +375,7 @@ async def test_terminal_move_fallback_reads_same_transaction_without_pool_reacqu
         async def fetch(self, sql, *args):
             assert self.in_transaction
             if "UPDATE public.daily_2048_results" in sql:
-                return []  # Already terminal in this connection's transaction.
+                return []
             assert "FROM public.daily_2048_results" in sql
             return [asdict(terminal)]
 

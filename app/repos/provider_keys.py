@@ -1,4 +1,3 @@
-# /app/repos/provider_keys.py
 """Runtime provider API key management via global_settings DB table.
 
 Each provider has a key stored in global_settings as 'provider_key:<name>'.
@@ -16,7 +15,6 @@ from app.repos.settings_repo import delete_global_setting, get_global_setting, s
 
 logger = logging.getLogger(__name__)
 
-# Map provider names to their Settings field names (env fallback)
 _PROVIDER_ENV_MAP: dict[str, str] = {
     "weather": "WEATHER_API_KEY",
     "exchange": "EXCHANGE_RATE_API_KEY",
@@ -44,7 +42,6 @@ async def get_provider_key(provider: str) -> str:
             if is_encrypted(db_val):
                 return safe_decrypt(db_val)
 
-            # Migrate values written before encrypted provider storage existed.
             await set_global_setting(_db_key(provider), encrypt_api_key(db_val))
             logger.info("Legacy provider key encrypted at rest: %s", provider)
             return db_val
@@ -52,7 +49,6 @@ async def get_provider_key(provider: str) -> str:
             logger.error("Provider key unavailable for %s (%s)", provider, type(exc).__name__)
             return ""
 
-    # Fallback to env
     env_field = _PROVIDER_ENV_MAP.get(provider)
     if env_field:
         try:

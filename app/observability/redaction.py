@@ -49,7 +49,7 @@ def provider_key_fields(
     key_hash: str | None = None,
 ) -> dict[str, JsonValue]:
     """Return the mandatory, safe identity fields for a selected provider key."""
-    del provider  # The provider remains an explicit event field; hashes match the existing repositories.
+    del provider
     if not isinstance(api_key, str) or not api_key:
         return {
             "key_present": False,

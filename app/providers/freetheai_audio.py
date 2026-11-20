@@ -39,7 +39,6 @@ from app.utils.media_download import (
 
 logger = logging.getLogger(__name__)
 
-# Lyria models exposed through FreeTheAI
 LYRIA_MODELS: frozenset[str] = frozenset(
     {
         "or/google/lyria-3-pro-preview",
@@ -55,18 +54,15 @@ LYRIA_MODEL_LABELS: dict[str, str] = {
 LYRIA_DEFAULT: str = "or/google/lyria-3-clip-preview"
 
 _FTA_CHAT_URL = "https://api.freetheai.xyz/v1/chat/completions"
-_AUDIO_TIMEOUT = 300.0  # music generation can be very slow
+_AUDIO_TIMEOUT = 300.0
 
-# In-memory key health
 _lyria_key_health: dict[str, datetime] = {}
 _LYRIA_COOLDOWN = timedelta(seconds=60)
 
-# Pattern to detect audio URLs in the response text
 _AUDIO_URL_RE = re.compile(
     r'https?://[^\s"\'<>]+\.(?:mp3|wav|ogg|m4a|flac|webm|opus)(?:[?#][^\s"\'<>()]*)?',
     re.IGNORECASE,
 )
-# Pattern to detect base64 audio data
 _B64_AUDIO_RE = re.compile(
     r"data:audio/[a-z0-9]+;base64,([A-Za-z0-9+/=]+)",
     re.IGNORECASE,
@@ -84,15 +80,14 @@ class AudioGenResult:
 
     success: bool
     audio_bytes: bytes = b""
-    mime_type: str = "audio/mpeg"  # default to mp3
-    text_content: str = ""  # any text (lyrics etc.) returned alongside audio
+    mime_type: str = "audio/mpeg"
+    text_content: str = ""
     error_message: str = ""
     model_used: str = ""
     duration_s: float = 0.0
 
 
 def _suspend_lyria_key(key_hash: str, cooldown: timedelta | None = None) -> None:
-    # With a single key, suspending it means total unavailability — skip.
     if len(get_freetheai_keys()) <= 1:
         logger.info("Lyria: single-key mode, skipping suspension for %s…", key_hash[:8])
         return
@@ -116,7 +111,6 @@ def _pick_key() -> tuple[str, str] | None:
         if suspended_until and now < suspended_until:
             continue
         return key, kh
-    # All suspended — clean expired
     expired = [h for h, until in list(_lyria_key_health.items()) if now >= until]
     for h in expired:
         del _lyria_key_health[h]
@@ -129,7 +123,6 @@ def _extract_audio_from_response(content: str) -> tuple[bytes | None, str, str]:
     Returns:
         (audio_bytes, mime_type, remaining_text)
     """
-    # 1. Check for inline base64 audio
     b64_match = _B64_AUDIO_RE.search(content)
     if b64_match:
         max_encoded_chars = ((MAX_AUDIO_DOWNLOAD_BYTES + 2) // 3) * 4
@@ -139,7 +132,6 @@ def _extract_audio_from_response(content: str) -> tuple[bytes | None, str, str]:
             audio_data = base64.b64decode(b64_match.group(1), validate=True)
             if len(audio_data) > MAX_AUDIO_DOWNLOAD_BYTES:
                 return None, "audio/mpeg", content.strip()
-            # Determine mime type from the data URI
             full_match = b64_match.group(0)
             if "audio/wav" in full_match:
                 mime = "audio/wav"
@@ -152,7 +144,6 @@ def _extract_audio_from_response(content: str) -> tuple[bytes | None, str, str]:
         except Exception:
             pass
 
-    # 2. No inline data found — return None so caller can check for URL
     return None, "audio/mpeg", content.strip()
 
 
@@ -268,7 +259,6 @@ class FreeTheAIAudioProvider:
 
             data = response.json()
 
-            # Extract content from OpenAI-compatible response
             choices = data.get("choices", [])
             if not choices:
                 logger.warning("Lyria: empty choices in response")
@@ -281,7 +271,6 @@ class FreeTheAIAudioProvider:
                 logger.warning("Lyria: empty content in response")
                 return finish(AudioGenResult(success=False, error_message="empty_content", model_used=model))
 
-            # Try to extract inline audio data
             audio_data, mime_type, remaining_text = _extract_audio_from_response(content)
 
             if audio_data:
@@ -303,7 +292,6 @@ class FreeTheAIAudioProvider:
                     )
                 )
 
-            # Try to find and download audio URL from the text
             url_match = _AUDIO_URL_RE.search(content)
             if url_match:
                 audio_url = url_match.group(0)
@@ -316,7 +304,6 @@ class FreeTheAIAudioProvider:
                         timeout=120.0,
                     )
 
-                    # Detect mime type from URL
                     url_lower = urlsplit(audio_url).path.lower()
                     if url_lower.endswith(".wav"):
                         mime_type = "audio/wav"
@@ -352,8 +339,6 @@ class FreeTheAIAudioProvider:
                         )
                     )
 
-            # No audio found — return the text content as-is
-            # This might happen if the model returned lyrics or a description
             logger.warning("Lyria: response contained text but no audio data (model=%s)", model)
             return finish(
                 AudioGenResult(
@@ -375,7 +360,6 @@ class FreeTheAIAudioProvider:
             return AudioGenResult(success=False, error_message=f"unexpected:{error_type}", model_used=model)
 
 
-# Module-level singleton
 _lyria_provider: FreeTheAIAudioProvider | None = None
 
 

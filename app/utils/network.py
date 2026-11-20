@@ -62,7 +62,6 @@ class NetworkErrorHandler:
                     )
                     raise
 
-                # Calculate delay with exponential backoff
                 delay = min(base_delay * (2**attempt), max_delay)
                 logging.warning(
                     "Network error on attempt %d/%d for %s: %s",
@@ -75,8 +74,7 @@ class NetworkErrorHandler:
 
                 await asyncio.sleep(delay)
 
-        # This should never be reached, but just in case
-        assert last_exception is not None  # nosec - guaranteed by loop
+        assert last_exception is not None
         raise last_exception
 
     @staticmethod

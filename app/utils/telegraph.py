@@ -26,10 +26,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Telegraph API endpoint
 _TELEGRAPH_API = "https://api.telegra.ph"
 
-# Cached access_token (created lazily on first use)
 _access_token: str | None = None
 
 
@@ -110,7 +108,6 @@ class TelegraphHTMLParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         node: dict = {"tag": tag.lower()}
 
-        # Valid Telegraph tags: a, aside, b, blockquote, br, code, em, figcaption, figure, h3, h4, hr, i, iframe, img, li, ol, p, pre, s, strong, u, ul, video
         if attrs:
             valid_attrs = {}
             for k, v in attrs:
@@ -128,10 +125,8 @@ class TelegraphHTMLParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
-        # Find matching tag up the stack
         for i in range(len(self.stack) - 1, 0, -1):
             if self.stack[i].get("tag") == tag:
-                # Pop all up to this tag
                 while len(self.stack) > i:
                     self.stack.pop()
                 break
@@ -148,10 +143,8 @@ class TelegraphHTMLParser(HTMLParser):
 
 def _markdown_to_telegraph_nodes(text: str) -> list[dict]:
     """Convert markdown text to Telegraph Node format utilizing standard formatting."""
-    # Convert to standard Telegram HTML which accurately parses code blocks and escapes
     html_out = markdown_to_html(text)
 
-    # Split by block-level elements before paragraph wrapping
     segments = re.split(r"(<pre(?:>| [^>]*>).*?</pre>|<blockquote>.*?</blockquote>)", html_out, flags=re.DOTALL)
     final_nodes: list[dict] = []
 
@@ -163,13 +156,11 @@ def _markdown_to_telegraph_nodes(text: str) -> list[dict]:
             parser.feed(segment)
             final_nodes.extend(parser.nodes)
         else:
-            # Wrap standard text splits in paragraphs
             paras = segment.split("\n\n")
             for para in paras:
                 para = para.strip()
                 if not para:
                     continue
-                # If the markdown text produced top-level <b>...</b> we can just wrap in <p>
                 parser = TelegraphHTMLParser()
                 parser.feed(para)
                 if parser.nodes:

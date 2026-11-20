@@ -1,5 +1,3 @@
--- 000_init_schema.sql
--- Initial schema definition from legacy Python code.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -168,7 +166,6 @@ CREATE TABLE IF NOT EXISTS feedback (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Per-user daily metrics (added by migration 003, included here for completeness)
 CREATE TABLE IF NOT EXISTS user_metrics (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -181,14 +178,12 @@ CREATE TABLE IF NOT EXISTS user_metrics (
     UNIQUE(user_id, metric_date)
 );
 
--- Dynamic model limits (added by migration 005)
 CREATE TABLE IF NOT EXISTS model_configuration (
     model_name TEXT PRIMARY KEY,
     daily_limit INTEGER,
     provider TEXT
 );
 
--- Active chat messages for O(1) inserts (added by migration 005)
 CREATE TABLE IF NOT EXISTS active_chat_messages (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -197,7 +192,6 @@ CREATE TABLE IF NOT EXISTS active_chat_messages (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Long-term memory with pgvector embeddings (created via Supabase dashboard, never had a migration)
 CREATE TABLE IF NOT EXISTS long_term_memory (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -209,7 +203,6 @@ CREATE TABLE IF NOT EXISTS long_term_memory (
     expires_at TIMESTAMPTZ
 );
 
--- Group chat tables (previously created at runtime in group_chat.py)
 CREATE TABLE IF NOT EXISTS group_chats (
     chat_id BIGINT PRIMARY KEY,
     title TEXT NOT NULL,

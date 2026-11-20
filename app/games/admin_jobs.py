@@ -333,7 +333,6 @@ async def execute(*, command: dict[str, Any]) -> JobResult:
                         except QueueError:
                             raise
                         except Exception:
-                            # Read persisted stages below; provider errors never become public text.
                             pass
                         puzzle = await crocodile_daily.get_puzzle(day, difficulty=difficulty)
                         if puzzle and puzzle.image_file_id:

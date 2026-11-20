@@ -40,8 +40,6 @@ async def save_croc_model_at_revision(
             f"crocodile.{process}", model, expected_revision=expected_revision, actor=actor
         )
     await snapshot_at_revision(expected_revision)
-    # Empty is intentional: it shadows an old persisted legacy selection.
-    # Resetting one process to Auto and clearing its chain is indivisible.
     return await store.update_values(
         {f"legacy_model:{key}": model},
         removals=(f"process:crocodile.{process}",) if process else (),

@@ -1,4 +1,3 @@
-# /app/repos/memory.py
 """Long-term memory repository — semantic search over past conversations.
 
 Uses pgvector for embedding storage and HNSW-indexed cosine similarity search.
@@ -29,8 +28,6 @@ from app.observability.workload_events import start_workload_attempt
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.providers.gemini import get_cached_genai_client
 from app.providers.gemini_config import build_generate_content_config
-
-# ── Constants (re-exported from memory_config for backward compatibility) ─────
 from app.repos.memory_config import (
     DEFAULT_MEMORY_TTL_DAYS,
     EMBEDDING_DIMENSION,
@@ -51,11 +48,8 @@ __all__ = [
     "is_ltm_write_enabled",
 ]
 
-# Cached flag: True if pg_trgm extension is available in this database
 _trgm_available: bool | None = None
 
-# Response-bound attribution. ContextVar keeps concurrent retrieval tasks isolated;
-# the bounded TTL cache bridges the retrieval task to a later Telegram callback.
 _current_retrieved_edge_ids: ContextVar[tuple[int, tuple[int, ...]] | None] = ContextVar(
     "current_retrieved_edge_ids",
     default=None,
@@ -74,8 +68,6 @@ class _QueryEmbeddingReuse:
     vector: tuple[float, ...] | None = None
 
     def clear(self) -> None:
-        # Child tasks inherit ContextVars. Retire their shared holder as well,
-        # rather than leaving private query data in an inherited context.
         self.identity = None
         self.vector = None
         self.owner = None
@@ -97,8 +89,6 @@ async def _get_query_embedding(user_id: int, memory_epoch: int | None, query: st
     if owned and reuse is not None and reuse.identity == identity and reuse.vector is not None:
         return list(reuse.vector)
 
-    # Storage/multimodal embeddings bypass this query-only helper. The original
-    # provider function still owns key resolution, retries and attempt events.
     embedding = await _get_embedding(query, api_key, task_type="RETRIEVAL_QUERY")
     if (
         owned
@@ -115,9 +105,6 @@ async def _get_query_embedding(user_id: int, memory_epoch: int | None, query: st
     return embedding
 
 
-# ── Query Intent Gate ────────────────────────────────────────────────────────
-# Compiled once at import time.  Matches trivial conversational inputs where
-# burning a Flash-Lite LLM call for query expansion is pure waste.
 _TRIVIAL_QUERY_RE = re.compile(
     r"^(?:"
     r"привет|здравствуй|хай|хей|hello|hi|hey|yo"
@@ -128,8 +115,6 @@ _TRIVIAL_QUERY_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Minimum query length that justifies an LLM expansion call.
-# Anything shorter is either a greeting or too terse to meaningfully expand.
 _MIN_EXPANSION_LENGTH = 12
 QUERY_EXPANSION_TIMEOUT_SECONDS = 8.0
 _QUERY_EXPANSION_PROMPT = (
@@ -325,16 +310,15 @@ async def _get_embedding(
     """
     import hashlib
 
-    # Apply truncation for long text context up to ~30,000 chars (model supports 8192 tokens)
     payload = content[:30000] if isinstance(content, str) else content
 
     current_key: str | None = api_key
     if current_key and (current_key.startswith("sk-") or "opencode" in current_key.lower()):
-        current_key = None  # Force immediate resolution of a native Gemini key
+        current_key = None
 
     failed_hashes: set[str] = set()
 
-    for _attempt in range(2):  # One retry with a rotated key on 400
+    for _attempt in range(2):
         if not current_key:
             from app.handlers.ai_core import _resolve_ai_request
 
@@ -378,7 +362,7 @@ async def _get_embedding(
             input_parts=len(payload) if isinstance(payload, list) else None,
         )
         try:
-            client = get_cached_genai_client(current_key)  # Reuse cached client (HTTP/2 multiplexing)
+            client = get_cached_genai_client(current_key)
             request_attempt.record_dispatch()
             result = await client.aio.models.embed_content(
                 model=EMBEDDING_MODEL,
@@ -404,7 +388,6 @@ async def _get_embedding(
             request_attempt.fail(e, reason_code="invalid_key" if is_invalid_key else "provider_error")
 
             if is_invalid_key and _attempt == 0:
-                # Key is revoked/invalid — track hash and rotate to a fresh one
                 key_hash = hashlib.sha256(current_key.encode()).hexdigest()
                 failed_hashes.add(key_hash)
                 try:
@@ -417,7 +400,7 @@ async def _get_embedding(
                     )
                     if key_data:
                         current_key = key_data["api_key"]
-                        continue  # Retry with the fresh key
+                        continue
                 except Exception as resolve_exc:
                     emit(
                         "provider.key_rotation_failed",
@@ -428,13 +411,12 @@ async def _get_embedding(
                         error_type=type(resolve_exc).__name__,
                     )
 
-            # Emit metric for observability
             try:
                 from app.metrics import metrics_collector
 
                 await metrics_collector.record_error("ltm_embedding_fail", error_str)
             except Exception:
-                pass  # Metrics emission must not block
+                pass
             break
 
         return None
@@ -504,7 +486,6 @@ async def store_memory(
     else:
         if not content:
             return None
-        # Provide a text representation for DB storage by picking out strings
         strings = [str(c) for c in content if isinstance(c, str)]
         db_text_content = (" ".join(strings) or "<Multimodal Memory>")[:32000]
 
@@ -512,9 +493,6 @@ async def store_memory(
 
     resolved_epoch = expected_epoch
     if resolved_epoch is None:
-        # Compatibility for immediate/manual callers: bind them to the current
-        # generation before any provider receives content. Background callers
-        # must carry their captured epoch and are never silently rebound.
         resolved_epoch = await resolve_current_epoch(user_id, require_ltm=True)
     if resolved_epoch is None:
         return None
@@ -564,8 +542,6 @@ async def _store_embedded_memory(
     """Commit an already embedded memory under the exact consent generation."""
     expires_at = datetime.now(UTC) + timedelta(days=ttl_days) if ttl_days > 0 else None
 
-    # Storage failures intentionally propagate so retry-aware background callers can
-    # distinguish a transient database failure from a consent/validation no-op.
     async with db_manager.pool.acquire() as conn, conn.transaction():
         await set_user_context(user_id, False, conn=conn)
 
@@ -581,8 +557,6 @@ async def _store_embedded_memory(
             conn=conn,
         )
 
-        # Missing chat state is never implicit consent. In particular, an old
-        # retry must not survive account deletion and recreation.
         if not consent_rows:
             return None
         consent = consent_rows[0]
@@ -782,8 +756,6 @@ async def _search_memories_impl(
     Returns:
         List of dicts with 'id', 'content', 'similarity', 'source_type', 'created_at'.
     """
-    # This repository boundary is authoritative even when a caller bypasses the
-    # handler guard. Consent must be known before sending text to an embedding API.
     if not _consent_checked and not await _is_ltm_read_enabled(user_id, expected_epoch):
         return []
 
@@ -794,10 +766,9 @@ async def _search_memories_impl(
     embedding_str = f"[{','.join(str(v) for v in query_embedding)}]"
     use_trgm = await _check_trgm_available()
 
-    # Adaptive: relax the floor and fetch more candidates than needed
     adaptive_floor = max(0.40, min_similarity - 0.12)
-    fetch_limit = limit * 2  # over-fetch; we'll trim with gap-filter below
-    _adaptive_floor = adaptive_floor  # kept for gap-filter reference below
+    fetch_limit = limit * 2
+    _adaptive_floor = adaptive_floor
 
     try:
         async with db_manager.pool.acquire() as conn, conn.transaction():
@@ -806,7 +777,6 @@ async def _search_memories_impl(
                 return []
 
             if use_trgm:
-                # RRF hybrid: cosine similarity + keyword trigram
                 results = await db_query(
                     """
                         WITH semantic AS (
@@ -871,7 +841,6 @@ async def _search_memories_impl(
                     conn=conn,
                 )
             else:
-                # Pure semantic fallback
                 results = await db_query(
                     """
                         SELECT id, content, source_type, metadata, created_at,
@@ -896,15 +865,6 @@ async def _search_memories_impl(
             if not results:
                 return []
 
-            # ─ Adaptive Gap Filtering ─────────────────────────────────
-            # Keep only results within 15pp of the best score.
-            # We intentionally do NOT re-apply min_similarity as a hard
-            # floor here — that was already enforced by adaptive_floor in
-            # the SQL WHERE clause. Using max(min_similarity, ...) was a
-            # logic bug: it discarded valid results that passed the SQL gate
-            # but fell just below the caller's soft threshold. The gap
-            # filter's only job is to prune outliers *within* this candidate
-            # set, not to act as a second hard threshold.
             rows = list(results)
             adjusted_similarities = [max(0.0, float(row["sim"]) - (int(row["rlhf_neg"] or 0) * 0.03)) for row in rows]
             top_sim = max(adjusted_similarities)
@@ -1007,22 +967,16 @@ async def _search_memories_with_graph_impl(
         (memories, graph_triples, source_passages) where source_passages maps
         triple strings to their originating LTM passage text.
     """
-    # Clear task-local attribution before any await. An empty/failed
-    # retrieval must never inherit edge IDs from an earlier response in this task.
     _current_retrieved_edge_ids.set((user_id, ()))
 
-    # Fail closed before query expansion or embedding sends any user text to an
-    # external model. Missing chat state is not implicit consent for recall.
     if not await _is_ltm_read_enabled(user_id, expected_epoch):
         return [], [], {}
 
-    # Multi-Query Expansion gate
     if _should_expand_query(query):
         expanded_query = await expand_query_with_llm(query, api_key)
     else:
         expanded_query = query
 
-    # 1. Standard vector search for memories
     memories = await search_memories(
         user_id,
         expanded_query,
@@ -1032,18 +986,13 @@ async def _search_memories_with_graph_impl(
         expected_epoch=expected_epoch,
     )
 
-    # 2. Graph traversal: find related entities
     graph_triples: list[str] = []
     source_passages: dict[str, str] = {}
     try:
-        # Vector retrieval may have taken long enough for consent to change. Recheck
-        # before reusing the query vector or dispatching a graph retry.
         if not await _is_ltm_read_enabled(user_id, expected_epoch):
             return [], [], {}
 
         query_embedding = await _get_query_embedding(user_id, expected_epoch, expanded_query, api_key)
-        # Provider failure may return None after consent changed while it was
-        # pending. Even a vector-only fallback must still belong to this epoch.
         if not await _is_ltm_read_enabled(user_id, expected_epoch):
             return [], [], {}
         if query_embedding is None:
@@ -1056,7 +1005,6 @@ async def _search_memories_with_graph_impl(
             if not await _lock_ltm_read_consent(user_id, conn, expected_epoch):
                 return [], [], {}
 
-            # Find top-K similar entity nodes
             nodes = await db_query(
                 """
                     WITH live_node_sources AS (
@@ -1105,7 +1053,6 @@ async def _search_memories_with_graph_impl(
             if not relevant_ids:
                 return memories, graph_triples, source_passages
 
-            # 2-hop traversal with temporal filtering (valid_to IS NULL)
             edges = await db_query(
                 """
                     WITH live_edge_sources AS (
@@ -1250,21 +1197,17 @@ async def _search_memories_with_graph_impl(
                 conn=conn,
             )
 
-            # Sort by effective_weight descending (core edges bubble up)
             edges_sorted = sorted(
                 edges or [],
                 key=lambda r: float(r["effective_weight"]),
                 reverse=True,
             )
 
-            # Cache edge IDs for RLHF feedback penalization
             retrieved_edge_ids = [int(e["edge_id"]) for e in edges_sorted if e.get("edge_id")]
             _current_retrieved_edge_ids.set((user_id, tuple(retrieved_edge_ids)))
 
-            # ── Edge Provenance: batch-fetch source passages for top-K ──
             from app.repos.memory_config import SOURCE_PASSAGE_MAX_CHARS, SOURCE_PASSAGE_TOP_K
 
-            # Collect the normalized live source IDs aggregated by the graph query.
             _top_edge_source_map: dict[str, list[int]] = {}
             for edge in edges_sorted[:SOURCE_PASSAGE_TOP_K]:
                 _src_ids: list[int] = edge.get("source_memory_ids") or []
@@ -1291,7 +1234,7 @@ async def _search_memories_with_graph_impl(
                     for triple_key, src_ids in _top_edge_source_map.items():
                         passages = [_source_content_map[sid] for sid in src_ids if sid in _source_content_map]
                         if passages:
-                            source_passages[triple_key] = passages[0]  # best/first source
+                            source_passages[triple_key] = passages[0]
                 except Exception as src_exc:
                     logging.debug("Source passage fetch failed (non-critical): %s", src_exc)
 
@@ -1302,7 +1245,6 @@ async def _search_memories_with_graph_impl(
                     f"{edge['from_name']} — {edge['predicate']} → {edge['to_name']}{core_label}{hop_label}"
                 )
 
-            # ── Temporal Context: find superseded edges for seed nodes ──
             superseded = await db_query(
                 """
                     WITH live_sources AS (
@@ -1435,7 +1377,6 @@ async def _search_memories_with_llm_judge_impl(
     Returns [] silently on any error — this is strictly non-blocking.
     """
 
-    # Step 1: Over-fetch low-confidence candidates
     candidates = await search_memories(
         user_id,
         query,
@@ -1452,13 +1393,9 @@ async def _search_memories_with_llm_judge_impl(
         )
         return []
 
-    # Retrieval and its embedding are a separate phase. A user can opt out while
-    # candidates are being fetched, so never send stored facts to the judge without
-    # a fresh durable check immediately before this external call.
     if not await _is_ltm_read_enabled(user_id, expected_epoch):
         return []
 
-    # Step 2: Build batch judge prompt — one call for all candidates
     facts_lines = "\n".join(f"{i}. {c['content'][:300]}" for i, c in enumerate(candidates))
     prompt = render_prompt_text(get_prompt_text("memory.relevance"), user_message=query[:400], facts=facts_lines)
 
@@ -1613,10 +1550,8 @@ async def penalize_graph_edges(
                 edge_ids,
                 user_id,
             )
-            # asyncpg execute returns a status string like "UPDATE 3"
             count = int(result.split()[-1]) if result else 0
 
-            # ── Provenance RLHF: cascade penalty to source memories ──
             if count > 0:
                 try:
                     source_rows = await db_query(
@@ -1669,8 +1604,6 @@ async def penalize_graph_edges(
 
 async def delete_user_memories(user_id: int) -> int:
     """Delete all memories + graph data, propagating failures to the caller."""
-    # Cancel local captures before taking the durable lock. The epoch bump below is
-    # still authoritative for work running in another process or already past cancel.
     try:
         from app.repos.memory_autosave import cancel_user_memory_tasks
 
@@ -1689,8 +1622,6 @@ async def delete_user_memories(user_id: int) -> int:
 
         await get_voice_reply_manager().purge_user_jobs(user_id, ltm_only=True)
 
-        # Phase 2 verifies the barrier, deletes atomically, then unblocks with a
-        # new generation so work queued while blocked cannot become current.
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await set_user_context(user_id, False, conn=conn)
             await conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
@@ -1744,8 +1675,6 @@ async def delete_memory(user_id: int, memory_id: int) -> bool:
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await set_user_context(user_id, False, conn=conn)
             await conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
-            # Provenance rows cascade from the deleted memory; migration 067's
-            # deferred trigger removes orphan edges and graph nodes at commit.
             result = await db_query(
                 "DELETE FROM long_term_memory WHERE id = $1 AND user_id = $2 RETURNING id",
                 (memory_id, user_id),
@@ -1812,8 +1741,6 @@ async def list_memories(
 
 async def cleanup_expired_memories() -> int:
     """Delete all expired memories across all users. Returns count deleted."""
-    # Discover work in a short cross-tenant transaction. Database failures must
-    # propagate so the scheduler cannot report a misleading successful zero.
     async with db_manager.pool.acquire() as conn, conn.transaction():
         await set_user_context(0, True, conn=conn)
         await db_query(
@@ -1859,9 +1786,6 @@ async def cleanup_expired_memories() -> int:
     count = 0
     failures: list[tuple[int, Exception]] = []
 
-    # Isolate every tenant in its own short transaction and advisory lock. A
-    # single tenant failure cannot roll back already-completed maintenance or
-    # prevent later tenants from being attempted.
     for maintenance_user_id in maintenance_user_ids:
         try:
             async with db_manager.pool.acquire() as conn, conn.transaction():

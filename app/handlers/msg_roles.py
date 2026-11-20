@@ -1,4 +1,3 @@
-# /app/handlers/msg_roles.py
 """Role and conversation rename state-machine handlers.
 
 Extracted from messages.py to isolate the text-input state machines
@@ -283,7 +282,6 @@ async def handle_manual_role_input(
         await update.message.reply_text("⏳ Дождитесь завершения текущего действия или отмените его.")
         return True
 
-    # Step 1: User sends title
     if is_awaiting_manual_role_title(user_id):
         if len(message_text) > 100:
             await update.message.reply_text(t("role.title_too_long"))
@@ -301,7 +299,6 @@ async def handle_manual_role_input(
         )
         return True
 
-    # Step 2: User sends prompt text
     if is_awaiting_manual_role_prompt(user_id):
         title = get_manual_role_title(user_id)
         from app.state import finish_manual_role_input, set_manual_role_prompt
@@ -415,8 +412,6 @@ async def generate_custom_role(
                         ),
                     )
                     return
-                # The token is part of the saved JSON payload, so a restart cannot
-                # make a generic button refer to a newer owned preview.
                 role_obj["_interaction_token"] = owner.token
                 role_obj["_memory_epoch"] = owner.epoch
                 title = role_obj.get("title", t("role.custom_default_title"))

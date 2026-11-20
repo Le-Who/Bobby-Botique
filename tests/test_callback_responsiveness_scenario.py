@@ -37,7 +37,6 @@ async def test_user_b_settings_callback_not_blocked_by_user_a_long_request(monke
     user_a = 111
     user_b = 222
 
-    # Minimal settings/config stubs used by model_button_callback
     monkeypatch.setattr(
         cb_models,
         "settings",

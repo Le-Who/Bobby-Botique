@@ -36,8 +36,6 @@ def _positive_patterns(value: Any) -> Iterator[re.Pattern[str]]:
     elif isinstance(declared, re.Pattern):
         yield declared
     elif getattr(value, "inv_filter", None) is None:
-        # These are PTB's filter-composition attributes. Negative conditions
-        # cannot introduce input aliases; the complete filter is retained below.
         for name in ("base_filter", "and_filter", "or_filter", "xor_filter"):
             child = getattr(value, name, None)
             if child is not None:
@@ -47,7 +45,6 @@ def _positive_patterns(value: Any) -> Iterator[re.Pattern[str]]:
 def _positive_aliases(value: Any) -> Iterator[str]:
     if getattr(value, "inv_filter", None) is not None:
         return
-    # Custom filters opt in with class-level static inputs, never instance state.
     declared = getattr(type(value), "inventory_aliases", ())
     if isinstance(declared, tuple):
         yield from (alias for alias in declared if isinstance(alias, str) and alias)
@@ -189,8 +186,6 @@ def registered_commands(application: Any | None) -> tuple[dict[str, Any], dict[s
             continue
         callback = id(inspect.unwrap(handler.callback))
         identities = callbacks.get(callback, set())
-        # Free-text fields within a conversation are data entry, unless they
-        # explicitly share a command callback. Entry/fallback rules are included.
         if (
             not identities
             and " / state " in context
@@ -199,8 +194,6 @@ def registered_commands(application: Any | None) -> tuple[dict[str, Any], dict[s
         ):
             continue
         if len(identities) != 1:
-            # Callback equality does not select one command when a dispatcher
-            # handles multiple identities. Keep the input rule independently.
             identity = text_identities.setdefault(callback, f"text:{_callback_key(handler)}:{len(text_identities)}")
             identities = {identity}
         for identity in sorted(identities):

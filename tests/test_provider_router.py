@@ -36,14 +36,12 @@ from app.providers.stream_types import (
     Workload,
 )
 
-# ── Fakes ─────────────────────────────────────────────────────────────────────
-
 
 class FakeKeyStatusManager:
     """In-memory KeyStatusManager that tracks suspended keys and recorded successes."""
 
     def __init__(self) -> None:
-        self.suspended_keys: dict[str, dict] = {}  # key_hash → {'category': ..., 'error_text': ...}
+        self.suspended_keys: dict[str, dict] = {}
         self.successful_keys: list[str] = []
 
     async def suspend_key(
@@ -688,9 +686,6 @@ def test_transient_fallback_uses_next_known_model_even_when_hidden():
     assert primary_fallback == "gemini-3.5-flash"
 
 
-# ── Tests for ProviderRouter.get_response ──────────────────────────────────────
-
-
 class TestProviderRouter:
     @pytest.mark.asyncio
     async def test_successful_response(self, caplog):
@@ -815,8 +810,8 @@ class TestProviderRouter:
                 ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.1", None),
             ],
             response_sequence=[
-                ("🔑 Неверный API ключ.", None),  # permanent
-                ("Hello!", 10),  # success
+                ("🔑 Неверный API ключ.", None),
+                ("Hello!", 10),
             ],
         )
 
@@ -1095,7 +1090,7 @@ class TestProviderRouter:
                 (None, None, "all_exhausted"),
             ],
             response_sequence=[
-                ("⏰ Превышено время ожидания ответа от API.", None),  # transient, from timeout
+                ("⏰ Превышено время ожидания ответа от API.", None),
             ],
         )
 
@@ -1121,10 +1116,10 @@ class TestProviderRouter:
                 ({"api_key": "k4", "key_hash": "hash4"}, "gemini-3.1-flash-lite", None),
             ],
             response_sequence=[
-                ("🔑 Неверный API ключ.", None),  # permanent
-                ("🔑 Неверный API ключ.", None),  # permanent
-                ("🔑 Неверный API ключ.", None),  # permanent
-                ("Fallback response!", 15),  # success on fallback model
+                ("🔑 Неверный API ключ.", None),
+                ("🔑 Неверный API ключ.", None),
+                ("🔑 Неверный API ключ.", None),
+                ("Fallback response!", 15),
             ],
         )
 
@@ -1146,7 +1141,6 @@ class TestProviderRouter:
         assert text == "Fallback response!"
         assert tokens == 15
 
-        # 3 keys from the first model should be suspended
         assert "hash1" in fake_status.suspended_keys
         assert "hash2" in fake_status.suspended_keys
         assert "hash3" in fake_status.suspended_keys
@@ -1211,9 +1205,9 @@ class TestProviderRouter:
                 ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3.5-flash", None),
             ],
             response_sequence=[
-                ("🔑 Неверный API ключ.", None),  # permanent
-                ("🚫 Достигнут лимит запросов к API (Quota Exceeded).", None),  # quota (not permanent to model)
-                ("🔑 Неверный API ключ.", None),  # permanent
+                ("🔑 Неверный API ключ.", None),
+                ("🚫 Достигнут лимит запросов к API (Quota Exceeded).", None),
+                ("🔑 Неверный API ключ.", None),
             ],
         )
 

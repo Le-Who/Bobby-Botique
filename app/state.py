@@ -1,4 +1,3 @@
-# /app/state.py
 """
 User state management with database persistence.
 
@@ -69,7 +68,6 @@ class UserState:
         "_interaction_tasks",
         "_role_inputs_retired",
         "text_input_intent",
-        # Persisted fields
         "document_mode",
         "selected_document_id",
         "last_document_message_id",
@@ -79,17 +77,13 @@ class UserState:
         "generating_custom_role",
         "last_sent_message_text",
         "retry_request",
-        # Manual role creation fields
         "awaiting_manual_role_title",
         "awaiting_manual_role_prompt",
         "manual_role_title",
         "manual_role_prompt",
-        # MemPalace: persistent role diaries
         "role_diaries",
-        # Tarot mode session state
         "tarot_mode",
         "tarot_session",
-        # Internal bookkeeping
         "_loaded_from_db",
         "_dirty",
         "_user_id",
@@ -104,7 +98,6 @@ class UserState:
         self._role_inputs_retired = False
         self.text_input_intent: object | None = None
         self._user_id = user_id
-        # Persisted fields
         self.document_mode = False
         self.selected_document_id: int | None = None
         self.last_document_message_id: int | None = None
@@ -113,26 +106,17 @@ class UserState:
         self.last_custom_role_prompt: str | None = None
         self.generating_custom_role: bool = False
         self.last_sent_message_text: str | None = None
-        self.retry_request: object | None = None  # Runtime only; cleared with this user generation.
-        # Manual role creation
+        self.retry_request: object | None = None
         self.awaiting_manual_role_title: bool = False
         self.awaiting_manual_role_prompt: bool = False
         self.manual_role_title: str = ""
         self.manual_role_prompt: str = ""
-        # MemPalace role diaries: {role_id: ["entry1", "entry2", ...]}
         self.role_diaries: dict[str, list[str]] = {}
-        # Tarot mode session state
         self.tarot_mode: bool = False
         self.tarot_session: dict | None = None
-        # Internal
         self._loaded_from_db: bool = False
         self._dirty: bool = False
         self.is_processing: bool = False
-
-
-# =============================================================================
-# STATE STORE — In-memory dictionary with DB backing
-# =============================================================================
 
 
 class _UserStateStore:
@@ -178,16 +162,9 @@ def _create_user_state_store() -> _UserStateStore:
 
 USER_STATES = _create_user_state_store()
 
-# =============================================================================
-# RUNTIME-ONLY MAPS — Ephemeral, never persisted to DB
-# =============================================================================
 
-# user_id → running asyncio.Task for the AI request.
-# Used to cancel in-flight streaming when user edits their message.
 _ACTIVE_TASKS: dict[int, asyncio.Task] = {}
 
-# user_id → (message_id, chat_id) of the last bot response message.
-# Used to edit-in-place instead of sending a duplicate reply.
 _LAST_BOT_MESSAGE: dict[int, tuple[int, int]] = {}
 
 
@@ -212,16 +189,10 @@ def purge_user_runtime_state(user_id: int) -> None:
         if old_state is not None:
             old_state._user_id = 0
             _invalidate_interaction(old_state)
-            # A detached pre-erasure reference cannot schedule another durable write.
             old_state.retry_request = None
             old_state.last_sent_message_text = None
     _NETWORK_STALL_SINCE.pop(user_id, None)
     _LAST_BOT_MESSAGE.pop(user_id, None)
-
-
-# =============================================================================
-# DB PERSISTENCE — load/save helpers
-# =============================================================================
 
 
 async def _ensure_loaded(state: UserState) -> UserState:
@@ -230,9 +201,8 @@ async def _ensure_loaded(state: UserState) -> UserState:
         return state
 
     async with state.lock:
-        # Double-check after acquiring lock to avoid redundant loads
         if state._loaded_from_db:
-            return state  # type: ignore[unreachable]  # double-check lock pattern
+            return state  # type: ignore[unreachable]
 
         started_ns = time.monotonic_ns()
         try:
@@ -276,8 +246,6 @@ async def _ensure_loaded(state: UserState) -> UserState:
                     "duration_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
                 },
             )
-            # Absence and an unavailable store are different outcomes. Do not
-            # admit a handler against defaults that could overwrite saved data.
             raise
 
         state._loaded_from_db = True
@@ -297,8 +265,6 @@ async def _persist(state: UserState, *, retry_on_failure: bool = True) -> bool:
             if retry_on_failure:
                 _schedule_persist(state)
             return False
-    # Snapshot only after the preceding write (including its retries) finishes.
-    # The request lock stays independent so handlers can mutate state during I/O.
     try:
         await state._persist_lock.acquire()
     except asyncio.CancelledError:
@@ -354,8 +320,6 @@ async def _persist(state: UserState, *, retry_on_failure: bool = True) -> bool:
                     "duration_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
                 },
             )
-            # The DB manager already exhausted its immediate retries. Retain
-            # the latest state for debounced retry and the final shutdown flush.
             if retry_on_failure:
                 _schedule_persist(state)
             return False
@@ -363,7 +327,7 @@ async def _persist(state: UserState, *, retry_on_failure: bool = True) -> bool:
         state._persist_lock.release()
 
 
-_PERSIST_DEBOUNCE_SEC = 0.3  # 300ms debounce window
+_PERSIST_DEBOUNCE_SEC = 0.3
 _pending_persists: dict[int, asyncio.TimerHandle] = {}
 
 
@@ -384,8 +348,6 @@ def _schedule_persist(state: UserState) -> None:
 
         task = try_submit_task(_persist(state), operation="state.persist")
         if task is None:
-            # Keep a timer/marker for the latest state when background capacity
-            # is full; shutdown can still flush it directly.
             _schedule_persist(state)
             return
         _pending_persists.pop(state._user_id, None)
@@ -399,10 +361,8 @@ def _schedule_persist(state: UserState) -> None:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # No running event loop (e.g. during tests) — skip persistence
         return
 
-    # Cancel any pending persist for this user
     old_handle = _pending_persists.pop(state._user_id, None)
     if old_handle is not None:
         old_handle.cancel()
@@ -414,14 +374,8 @@ def _schedule_persist(state: UserState) -> None:
             debounce_ms=round(_PERSIST_DEBOUNCE_SEC * 1000, 2),
         )
 
-    # Schedule new debounced persist
     handle = loop.call_later(_PERSIST_DEBOUNCE_SEC, _fire)
     _pending_persists[state._user_id] = handle
-
-
-# =============================================================================
-# PUBLIC API — Drop-in compatible with the old state.py interface
-# =============================================================================
 
 
 def get_user_state(user_id: int) -> UserState:
@@ -443,9 +397,6 @@ def is_ordinary_request_busy(user_id: int) -> bool:
 def get_active_user_lock_count() -> int:
     """Return the number of currently-held process-local user locks."""
     return sum(1 for user_state in USER_STATES._live_states.values() if user_state.lock.locked())
-
-
-# --- Async load API (call once per handler, early) ---
 
 
 async def ensure_state_loaded(user_id: int) -> UserState:
@@ -519,9 +470,6 @@ async def cancel_interaction(user_id: int, *, input_intent: object | None = None
     tasks = tuple(state._interaction_tasks)
     _invalidate_interaction(state)
     _clear_role_inputs(state)
-    # Some context switches already hold state.lock before first hydration.
-    # Fence old JSON immediately; the persistence task loads unrelated fields
-    # under that lock before it writes the cleared, coherent snapshot.
     state._role_inputs_retired = True
     _schedule_persist(state)
     current_task = asyncio.current_task()
@@ -584,9 +532,6 @@ async def run_interaction(owner: InteractionOwner, work: Callable[[], Awaitable[
                 owner.phase = "input"
 
 
-# --- Document mode ---
-
-
 def set_document_mode(user_id: int, enabled: bool, document_id: int | None = None):
     """Set document mode for a user and persist to DB."""
     state = get_user_state(user_id)
@@ -604,9 +549,6 @@ def clear_document_state(user_id: int):
     state.selected_document_id = None
     state.last_document_message_id = None
     _schedule_persist(state)
-
-
-# --- Custom role creation ---
 
 
 def begin_custom_role_creation(user_id: int):
@@ -663,9 +605,6 @@ def get_generated_role(user_id: int) -> dict | None:
     return get_user_state(user_id).generated_role
 
 
-# --- Document mode queries ---
-
-
 def is_in_document_mode(user_id: int) -> bool:
     """Check if user is in document mode."""
     state = get_user_state(user_id)
@@ -680,9 +619,6 @@ def get_selected_document_id(user_id: int) -> int | None:
     if not state._loaded_from_db:
         logging.warning("Reading selected_document_id for user %s before state loaded from DB", user_id)
     return state.selected_document_id
-
-
-# --- Last message (for retry button) ---
 
 
 def set_last_sent_message(user_id: int, text: str):
@@ -704,9 +640,6 @@ def clear_retry_request(user_id: int) -> None:
     user_state.last_sent_message_text = None
     if had_legacy_text:
         _schedule_persist(user_state)
-
-
-# --- Manual role creation ---
 
 
 def begin_manual_role_creation(user_id: int):
@@ -779,9 +712,6 @@ def get_manual_role_prompt(user_id: int) -> str:
     return get_user_state(user_id).manual_role_prompt
 
 
-# --- MemPalace Role Diaries ---
-
-
 def get_role_diary(user_id: int, role_id: str) -> list[str]:
     """Get diary entries for a specific role."""
     state = get_user_state(user_id)
@@ -802,7 +732,6 @@ def append_role_diary(user_id: int, role_id: str, entry: str) -> None:
     trimmed = entry[:DIARY_ENTRY_MAX_LENGTH]
     state.role_diaries[role_id].append(trimmed)
 
-    # Evict oldest entries if over limit
     if len(state.role_diaries[role_id]) > MAX_DIARY_ENTRIES_PER_ROLE:
         state.role_diaries[role_id] = state.role_diaries[role_id][-MAX_DIARY_ENTRIES_PER_ROLE:]
 
@@ -815,11 +744,6 @@ def clear_role_diary(user_id: int, role_id: str) -> None:
     if role_id in state.role_diaries:
         del state.role_diaries[role_id]
         _schedule_persist(state)
-
-
-# =============================================================================
-# ACTIVE TASK REGISTRY — in-place edit & task cancellation
-# =============================================================================
 
 
 def register_active_task(user_id: int, task: asyncio.Task) -> None:
@@ -857,17 +781,13 @@ def clear_active_task(user_id: int) -> None:
     _ACTIVE_TASKS.pop(user_id, None)
 
 
-# user_id → timestamp when the current HTTP request entered "waiting for headers" state.
-# None means the task is actively receiving data (healthy).
 _NETWORK_STALL_SINCE: dict[int, float | None] = {}
 
-# Threshold: if waiting for TTFB longer than this, the task is considered stalled.
 _STALL_THRESHOLD_S = 15.0
 
 
 def mark_network_waiting(user_id: int) -> None:
     """Mark the user's active task as waiting for HTTP response headers (TTFB)."""
-    # Performance: `time` is now a top-level import — no per-call import machinery overhead.
     _NETWORK_STALL_SINCE[user_id] = time.monotonic()
 
 
@@ -895,11 +815,6 @@ def clear_network_stall(user_id: int) -> None:
     _NETWORK_STALL_SINCE.pop(user_id, None)
 
 
-# =============================================================================
-# LAST BOT MESSAGE REGISTRY — for edit-in-place UX
-# =============================================================================
-
-
 def set_last_bot_message(user_id: int, message_id: int, chat_id: int) -> None:
     """Record the (message_id, chat_id) of the bot's most recent reply to a user.
 
@@ -917,11 +832,6 @@ def get_last_bot_message(user_id: int) -> tuple[int, int] | None:
 def clear_last_bot_message(user_id: int) -> None:
     """Clear the stored last bot message for a user."""
     _LAST_BOT_MESSAGE.pop(user_id, None)
-
-
-# =============================================================================
-# TAROT MODE STATE
-# =============================================================================
 
 
 def is_in_tarot_mode(user_id: int) -> bool:

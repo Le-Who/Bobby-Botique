@@ -55,7 +55,6 @@ async def restore_branch(user_id: int, branch_id: int) -> list[dict[str, Any]] |
         if result:
             history = result[0]["snapshot_history"]
             if isinstance(history, str):
-                # Fallback: old double-encoded row still in DB — parse it once
                 import json as _json
 
                 history = _json.loads(history)

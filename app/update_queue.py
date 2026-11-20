@@ -53,7 +53,6 @@ class OutstandingUpdateQueue[T](asyncio.Queue[T]):
                 await waiter
             except BaseException:
                 waiter.cancel()
-                # A completion may already have removed and woken this waiter.
                 if waiter in self._capacity_waiters:
                     self._capacity_waiters.remove(waiter)
                 if not self.full():
@@ -71,7 +70,6 @@ class OutstandingUpdateQueue[T](asyncio.Queue[T]):
             update_admission_times.remember(update_id)
 
     def task_done(self) -> None:
-        # The base queue detects repeated task_done and owns join's event.
         super().task_done()
         self._outstanding -= 1
         self._wake_producer()

@@ -1,15 +1,4 @@
--- Migration 012: Schema type fixes (M2-M5)
--- Applied via Supabase MCP on 2026-02-28
---
--- M2: chats.search_enabled INTEGER → BOOLEAN
--- M3: metrics/error_logs timestamps → TIMESTAMPTZ
--- M4: user_documents.user_id → NOT NULL
--- M5: chats.history TEXT → JSONB
---
--- All operations are wrapped in type-checks for idempotency
--- (safe to re-run if already applied via MCP)
 
--- M2: chats.search_enabled → BOOLEAN (only if still integer)
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -23,7 +12,6 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- M3: metrics timestamps → TIMESTAMPTZ (only if still timestamp without tz)
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -36,7 +24,6 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- M3: error_logs.created_at → TIMESTAMPTZ
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -48,7 +35,6 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- M4: user_documents.user_id → NOT NULL (only if still nullable)
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -59,7 +45,6 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- M5: chats.history → JSONB (only if still text)
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns

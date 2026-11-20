@@ -95,7 +95,6 @@ async def test_fired_state_persist_remains_owned_by_shutdown_drain(store, monkey
     try:
         assert not state._pending_persists
         assert await manager.drain(timeout=0) is True
-        # A retained retry marker must not create a new writer after drain.
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert finished.is_set()

@@ -26,8 +26,6 @@ SSE = b'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ready"
 @pytest.mark.asyncio
 @pytest.mark.parametrize("primary_stalls", [False, True])
 async def test_sequential_chat_preserves_each_models_first_text_budget(monkeypatch, primary_stalls):
-    # 0.2 s models a response arriving after the old half-budget (0.15 s)
-    # but within the model's own 0.3 s allowance.
     original_budget = GenerationRequest.first_text_timeout_seconds
     monkeypatch.setattr(
         GenerationRequest,
@@ -92,7 +90,6 @@ async def test_sequential_chat_preserves_each_models_first_text_budget(monkeypat
             allow_deferred=False,
         )
         try:
-            # Measure delayed HTTP headers independently of cold SDK setup.
             for model in (PRIMARY, BACKUP):
                 for index in range(2):
                     gemini.get_cached_genai_client(f"synthetic-{model}-{index}")

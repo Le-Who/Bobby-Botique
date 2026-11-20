@@ -47,7 +47,6 @@ class TestUserStatsQueries:
         today = await db_conn_with_metrics.fetchval("SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Kyiv')::date")
         collector = metrics.MetricsCollector()
         await collector.record_request("chat", response_time=0.25, user_id=test_user_id)
-        # Process the owned queue synchronously without starting a background worker.
         event = collector._events_queue.get_nowait()
         collector._process_event(event)
         collector._events_queue.task_done()

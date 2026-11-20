@@ -49,9 +49,6 @@ def test_elevenlabs_model_and_voice_defaults_and_overrides(monkeypatch, empty):
     assert configured.ELEVENLABS_VOICE_ID == "workspace-voice"
 
 
-# ── get_model_hash ───────────────────────────────────────────────────────────
-
-
 class TestGetModelHash:
     """get_model_hash should produce deterministic 8-char hex strings."""
 
@@ -65,9 +62,6 @@ class TestGetModelHash:
 
     def test_different_models_different_hashes(self):
         assert get_model_hash("gemini-2.5-flash") != get_model_hash("gemini-3.1-flash-lite")
-
-
-# ── _load_and_clean_keys ─────────────────────────────────────────────────────
 
 
 class TestLoadAndCleanKeys:
@@ -109,9 +103,6 @@ class TestLoadAndCleanKeys:
             _load_and_clean_keys("TEST_KEYS", required=True)
 
 
-# ── _load_daily_limits ───────────────────────────────────────────────────────
-
-
 class TestLoadDailyLimits:
     """_load_daily_limits should parse JSON and compact formats."""
 
@@ -140,7 +131,6 @@ class TestLoadDailyLimits:
 
     def test_quoted_json(self, monkeypatch):
         monkeypatch.setenv("DAILY_LIMITS", "'\"gemini-2.5-flash\": 100'")
-        # Quoted but incomplete JSON — should fallback to defaults
         result = _load_daily_limits()
         assert isinstance(result, dict)
 

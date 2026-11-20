@@ -1,4 +1,3 @@
-# /app/voice_engine.py
 """Voice Engine — queued TTS orchestration and Telegram voice delivery."""
 
 from __future__ import annotations
@@ -29,7 +28,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ELEVENLABS_TTS_CONCURRENCY = 2
-# Counts actual provider requests; TTS never races duplicate generations.
 GEMINI_TTS_CONCURRENCY = 3
 _HEARTBEAT_INTERVAL_S = 4.0
 _GEMINI_PLAN_TIMEOUT_FACTOR = 2.0
@@ -185,14 +183,10 @@ async def _generate_single_chunk_gemini(
     status_mgr = get_key_status_manager()
     minute_retries: dict[str, float] = {}
     while True:
-        # Fresh usage ordering spreads jobs across the pool, including when a
-        # model has no local daily cap. Never pin TTS to the chat key cache.
         key_data = await get_available_gemini_key(model_name, excluded_hashes=failed_keys, use_cache=False)
         if not key_data:
             if not minute_retries:
                 return None
-            # Every remaining key is temporarily full: wait for the earliest
-            # minute window under the owning whole-message deadline.
             await asyncio.sleep(max(0.01, min(minute_retries.values()) - time.monotonic()))
             failed_keys.difference_update(minute_retries)
             minute_retries.clear()
@@ -225,8 +219,6 @@ async def _generate_single_chunk_gemini(
                 "output_budget_exceeded",
             }:
                 raise
-            # The transcript/output is independent of credentials. Advance the
-            # complete-message model plan without spending another key.
             return None
         except TTSAdmissionRejected as error:
             if error.retry_after is not None:
@@ -235,8 +227,6 @@ async def _generate_single_chunk_gemini(
             with contextlib.suppress(Exception):
                 category = classify_key_error(str(error))
                 if getattr(error, "code", None) == 429 or getattr(error, "status_code", None) == 429:
-                    # "Quota exceeded" also describes RPM. Only explicit daily
-                    # evidence may suspend a key until the next Pacific day.
                     evidence = str(error).lower().replace("_", "").replace(" ", "")
                     category = "quota" if "perday" in evidence or "dailylimit" in evidence else "rate_limit"
                 await status_mgr.suspend_key(key_hash, model_name, category, type(error).__name__)
@@ -264,8 +254,6 @@ async def _run_gemini_pipeline(
     token_cache = token_cache if token_cache is not None else SpeechTokenCache()
     pcm_parts: list[bytes] = []
     audio_size = 0
-    # Lossless text splitting can isolate a long whitespace run. It carries no
-    # speech and must not become an API request that returns empty audio.
     pending = deque((transcript, 0) for transcript in chunks if transcript.strip())
     total = len(pending)
     subdivisions = 0
@@ -535,8 +523,6 @@ class VoiceReplyManager:
             self._queues.clear()
             for job in self._active_jobs.values():
                 self._scrub_job(job)
-            # Workers cancel their shielded children exactly once and await
-            # lease release; repeated caller cancellation cannot interrupt it.
             owners = set(self._worker_tasks.values()) | set(self._refresh_tasks.values()) | self._cleanup_tasks
             owners.update(self._status_tasks.values())
             tasks = owners | set(self._job_tasks.values())
@@ -601,7 +587,6 @@ class VoiceReplyManager:
                 except asyncio.CancelledError:
                     if owner is not None and owner.cancelling():
                         raise
-                    # A failed consent renewal cancels this job, not the FIFO.
                 except Exception:
                     logger.exception("TTS job owner failed: job_id=%s", job.job_id)
                 finally:
@@ -714,10 +699,6 @@ class VoiceReplyManager:
 
                     policy = await resolve_process("tts", TTS_DEFAULT_MODELS)
                     model_plan = policy.models if policy.explicit else TTS_DEFAULT_MODELS
-                    # A shared deadline covers the complete model plan; each
-                    # actual key request acquires the semaphore independently.
-                    # Budget the sequential plan for every required piece, with
-                    # an absolute cap retained by the owning whole-job timeout.
                     plan_settings = {}
                     for model in model_plan:
                         try:
@@ -730,8 +711,6 @@ class VoiceReplyManager:
                             plan_settings[model] = prepared
                         except TTSContractError as error:
                             logger.warning("TTS local model plan rejected: reason=%s", error.reason_code)
-                    # Fitting sources keep the normal failover deadline. Extend
-                    # only after actual input/output evidence proves more pieces.
                     model_unit_timeout = gemini_timeout * _GEMINI_PLAN_TIMEOUT_FACTOR
                     model_started = asyncio.get_running_loop().time()
                     plan_timeout = min(_MAX_SYNTHESIS_TIMEOUT_S - 30, model_unit_timeout)
@@ -779,7 +758,6 @@ class VoiceReplyManager:
                 return None
 
             await self._set_status(job, status="encoding", detail="Упаковываю аудио…")
-            # No overlap or silence trimming: a boundary may contain speech.
             pcm_audio = b"".join(pcm_parts)
             ogg_bytes = await pcm_to_ogg_opus(pcm_audio)
             return ogg_bytes

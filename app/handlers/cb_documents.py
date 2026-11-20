@@ -54,7 +54,6 @@ async def _handle_document_cancel(query, context, user_id):
 
 
 async def _handle_document_clear_all(query, context, user_id):
-    # Get все documents user
     documents = await get_user_documents(user_id)
     if not documents:
         await query.answer(t("doc.no_documents_to_delete"))
@@ -76,7 +75,6 @@ async def _handle_document_clear_all(query, context, user_id):
 
 
 async def _handle_document_clear_all_confirm(query, context, user_id):
-    # Delete все documents одной оптимfromированной операцией
     deleted_count = await delete_all_user_documents(user_id)
 
     if deleted_count == 0:
@@ -85,17 +83,14 @@ async def _handle_document_clear_all_confirm(query, context, user_id):
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
         return
 
-    # Clean up state работы с documentами
     clear_document_state(user_id)
 
-    # Update menu
     text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
     await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     await query.answer(f"🗑️ Удалено {deleted_count} документов.")
 
 
 async def _handle_document_use_existing(query, context, user_id):
-    # Используем существующий document
     document_id = int(query.data.split(":")[2])
 
     document = await get_document_by_id(document_id, user_id)
@@ -108,7 +103,6 @@ async def _handle_document_use_existing(query, context, user_id):
         )
         return
 
-    # Устанавливаем state работы с documentами
     set_document_mode(user_id, True, document_id)
 
     text = f"✅ **Используется существующий документ**\n\n📄 **{document['filename']}**\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n🔄 **Для выхода из режима документов:**\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
@@ -134,10 +128,8 @@ async def _handle_document_force_upload(query, context, user_id):
 
 
 async def _handle_document_select_document(query, context, user_id):
-    # Показываем menu выбора documentа
     documents = await get_user_documents(user_id)
     if not documents:
-        # If documentов нет, показываем главное menu documentов
         text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
         try:
             await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -148,9 +140,8 @@ async def _handle_document_select_document(query, context, user_id):
                 raise e
         return
 
-    # Create buttons for каждого documentа
     keyboard = []
-    for doc in documents[:10]:  # Максимум 10 documentов
+    for doc in documents[:10]:
         keyboard.append(
             [
                 InlineKeyboardButton(
@@ -173,7 +164,6 @@ async def _handle_document_select_document(query, context, user_id):
 
 
 async def _handle_document_select(query, context, user_id):
-    # Выбираем конкретный document
     document_id = int(query.data.split(":")[2])
 
     document = await get_document_by_id(document_id, user_id)
@@ -186,7 +176,6 @@ async def _handle_document_select(query, context, user_id):
         )
         return
 
-    # Устанавливаем state работы с documentами
     set_document_mode(user_id, True, document_id)
 
     text = f"✅ **Выбран документ**\n\n📄 **{document['filename']}**\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n🔄 **Для выхода из режима документов:**\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
@@ -202,7 +191,6 @@ async def _handle_document_select(query, context, user_id):
 
 
 async def _handle_document_delete_document(query, context, user_id):
-    # Delete конкретный document
     document_id = int(query.data.split(":")[2])
 
     document = await get_document_by_id(document_id, user_id)
@@ -212,19 +200,15 @@ async def _handle_document_delete_document(query, context, user_id):
 
     success = await delete_user_document(document_id, user_id)
     if success:
-        # Check, был ли это выбранный document
         selected_doc_id = get_selected_document_id(user_id)
         if selected_doc_id == document_id:
-            # If удалor выбранный document, очищаем state
             clear_document_state(user_id)
 
         documents = await get_user_documents(user_id)
         if not documents:
-            # If documentов не осталось, показываем главное menu documentов
             text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
             await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
         else:
-            # Otherwise перестраиваем list выбора
             keyboard = []
             for doc in documents[:10]:
                 keyboard.append(

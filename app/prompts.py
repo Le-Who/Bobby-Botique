@@ -1,13 +1,5 @@
-# /app/prompts.py
-# Backward-compat re-exports — all code moved to proper homes.
-# New code should import from the canonical locations directly.
-
 from app.prompt_registry import DEFAULT_ROLES, get_registry  # noqa: F401
 from app.utils.json_utils import extract_json_object  # noqa: F401
-
-# ============================================================================
-# COMPOSE HELPERS — delegates to PromptRegistry
-# ============================================================================
 
 
 def compose_system_instruction(role_prompt: str | None, use_compact: bool = True) -> str:

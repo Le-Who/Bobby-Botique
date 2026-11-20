@@ -1,18 +1,15 @@
-# ruff: noqa: E402
 import os
 import sys
 from unittest.mock import MagicMock
 
 import pytest
 
-# Isolate in dedicated xdist worker — mutates sys.modules and os.environ in setup_module.
 pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
 
 _mock_keys = ["app.database"]
 _original_modules = {}
 _original_env: dict[str, str | None] = {}
 
-# Environment variables this test module requires
 _ENV_OVERRIDES = {
     "TELEGRAM_BOT_TOKEN": "123:test",
     "ADMIN_ID": "123456",
@@ -26,7 +23,6 @@ _ENV_OVERRIDES = {
 def setup_module(module):
     global _original_modules, _original_env
 
-    # Save and override environment variables
     _original_env.clear()
     for k, v in _ENV_OVERRIDES.items():
         _original_env[k] = os.environ.get(k)
@@ -40,7 +36,6 @@ def setup_module(module):
 
 
 def teardown_module(module):
-    # Restore environment variables
     for k, orig in _original_env.items():
         if orig is None:
             os.environ.pop(k, None)
@@ -63,7 +58,6 @@ async def test_docx_magic_bytes_validation():
 
     processor = DocumentProcessor()
 
-    # Invalid content
     invalid_content = b"this is not a zip file"
 
     result = await processor._process_word_unified(file_data=invalid_content, filename="test.docx")

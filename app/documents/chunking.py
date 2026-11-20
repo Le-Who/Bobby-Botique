@@ -16,7 +16,6 @@ import math
 import re
 from dataclasses import dataclass
 
-# Approximate characters per token for mixed Cyrillic/Latin text
 _CHARS_PER_TOKEN = 3.5
 _QUERY_WORD_RE = re.compile(r"\w{3,}")
 
@@ -24,9 +23,6 @@ _QUERY_WORD_RE = re.compile(r"\w{3,}")
 def _estimate_tokens(text: str) -> int:
     """Fast token estimate without calling a tokenizer."""
     return math.ceil(len(text) / _CHARS_PER_TOKEN)
-
-
-# ── Recursive chunking ──────────────────────────────────────────────────
 
 
 def recursive_chunk(
@@ -48,11 +44,9 @@ def recursive_chunk(
     max_chars = int(max_tokens * _CHARS_PER_TOKEN)
     overlap_chars = int(max_chars * overlap_ratio)
 
-    # If text fits in one chunk, return as-is
     if len(text) <= max_chars:
         return [text.strip()]
 
-    # Try splitting by hierarchy of separators
     for separator in ["\n\n", "\n", ". ", " "]:
         parts = text.split(separator)
         if len(parts) > 1:
@@ -60,7 +54,6 @@ def recursive_chunk(
             if chunks:
                 return chunks
 
-    # Fallback: hard split at max_chars boundaries
     return _hard_split(text, max_chars, overlap_chars)
 
 
@@ -82,7 +75,6 @@ def _merge_parts(
         else:
             if current:
                 chunks.append(current.strip())
-            # Start new chunk with overlap from previous
             if chunks and overlap_chars > 0:
                 prev = chunks[-1]
                 overlap = prev[-overlap_chars:]
@@ -90,7 +82,6 @@ def _merge_parts(
             else:
                 current = part
 
-            # If single part exceeds max_chars, split it further
             if len(current) > max_chars:
                 sub_chunks = _hard_split(current, max_chars, overlap_chars)
                 chunks.extend(sub_chunks[:-1])
@@ -115,9 +106,6 @@ def _hard_split(text: str, max_chars: int, overlap_chars: int) -> list[str]:
     return chunks
 
 
-# ── Hierarchical chunking ────────────────────────────────────────────────
-
-
 @dataclass
 class HierarchicalChunk:
     """A parent chunk containing child chunks for relevance scoring."""
@@ -139,7 +127,6 @@ def hierarchical_chunk(
     if not text or not text.strip():
         return []
 
-    # First split into parent-sized chunks
     parent_chunks = recursive_chunk(text, max_tokens=parent_tokens, overlap_ratio=0.1)
 
     result: list[HierarchicalChunk] = []
@@ -148,9 +135,6 @@ def hierarchical_chunk(
         result.append(HierarchicalChunk(parent=parent_text, children=children))
 
     return result
-
-
-# ── Relevance scoring ────────────────────────────────────────────────────
 
 
 def _score_chunk(chunk: str, query: str) -> float:
@@ -163,12 +147,8 @@ def _score_chunk_words(chunk: str, query_words: set[str]) -> float:
         return 0.5
 
     chunk_lower = chunk.lower()
-    # Count matches
     matches = sum(1 for w in query_words if w in chunk_lower)
     return matches / len(query_words)
-
-
-# ── Main entry point ─────────────────────────────────────────────────────
 
 
 def chunk_for_context(
@@ -191,35 +171,27 @@ def chunk_for_context(
 
     text = text.strip()
 
-    # Short document → return as-is
     doc_tokens = _estimate_tokens(text)
     if doc_tokens <= max_context_tokens:
         return text
 
-    # Long document → hierarchical chunk + score + select
     h_chunks = hierarchical_chunk(text)
 
     if not h_chunks:
-        # Fallback: truncate to budget
         max_chars = int(max_context_tokens * _CHARS_PER_TOKEN)
         return text[:max_chars].strip()
 
-    # Score each parent by best child score
-    # Normalize once per request instead of reparsing the query for every child.
     query_words = set(_QUERY_WORD_RE.findall(query.lower()))
     scored: list[tuple[float, HierarchicalChunk]] = []
     for hc in h_chunks:
         if not query:
-            # No query: use sequential order (score by position, first chunks higher)
             scored.append((0.5, hc))
         else:
             best_child_score = max(_score_chunk_words(c, query_words) for c in hc.children) if hc.children else 0.0
             scored.append((best_child_score, hc))
 
-    # Sort by score (highest first), then original order for ties
     scored.sort(key=lambda x: -x[0])
 
-    # Assemble context within budget
     max_chars = int(max_context_tokens * _CHARS_PER_TOKEN)
     selected: list[str] = []
     chars_used = 0
@@ -229,17 +201,13 @@ def chunk_for_context(
         separator_len = 2 if selected else 0
         if chars_used + parent_len + separator_len > max_chars:
             if not selected:
-                # Preserve the strongest match when even it needs truncation;
-                # an unrelated short tail must not displace it entirely.
                 selected.append(hc.parent[:max_chars])
                 break
-            # A smaller later chunk may still fit the remaining context budget.
             continue
         selected.append(hc.parent)
         chars_used += parent_len + separator_len
 
     if not selected:
-        # At least include a truncated version of the top chunk
         selected.append(scored[0][1].parent[:max_chars])
 
     return "\n\n".join(selected)

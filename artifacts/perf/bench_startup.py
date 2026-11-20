@@ -9,7 +9,6 @@ def run_bench():
     repeats = 5
     times = []
 
-    # Warmup
     subprocess.run(["python", "-c", "import bot"], capture_output=True)
 
     for _ in range(repeats):

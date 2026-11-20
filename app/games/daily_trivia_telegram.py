@@ -64,7 +64,6 @@ async def render_result_body(
     leaderboard = await repo.get_daily_leaderboard(puzzle_date, limit=5)
 
     if result.status != "completed":
-        # Game still in progress — return current state
         answered = result.current_question
         text = (
             f"🧠 <b>Daily Trivia</b> · <code>{puzzle_date.isoformat()}</code>\n\n"
@@ -79,7 +78,6 @@ async def render_result_body(
         )
         return text, keyboard
 
-    # Game finished
     rank_rows = await repo.get_daily_leaderboard(puzzle_date, limit=100)
     rank = None
     for idx, row in enumerate(rank_rows, start=1):
@@ -110,7 +108,6 @@ async def render_result_body(
     else:
         lines.append("Пока нет завершённых результатов.")
 
-    # Monthly top-3
     monthly_lb = await repo.get_monthly_leaderboard(puzzle_date.year, puzzle_date.month, limit=3)
     if monthly_lb:
         month_medals = ["🥇", "🥈", "🥉"]
@@ -173,7 +170,6 @@ async def _edit_prompt_to_result(
         if "message is not modified" in message:
             return True
         if "there is no text" not in message and "message to edit not found" not in message:
-            # Fallback: try plain text edit if media edit failed
             try:
                 await bot.edit_message_text(
                     chat_id=prompt["chat_id"],
@@ -248,15 +244,10 @@ async def send_trivia_result_message(bot, user_id: int, puzzle_date: date) -> No
     if not edited:
         await _send_result_photo(bot, user_id, text, keyboard)
 
-    # Batch-refresh all other players' result messages that are stale (>10 min).
     await refresh_stale_result_messages(bot, puzzle_date, exclude_user_id=user_id)
 
 
-# ---------------------------------------------------------------------------
-# Throttled leaderboard refresh for all players
-# ---------------------------------------------------------------------------
-
-_REFRESH_STALE_SECONDS = 600  # 10 minutes
+_REFRESH_STALE_SECONDS = 600
 
 
 async def refresh_stale_result_messages(

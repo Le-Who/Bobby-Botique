@@ -11,8 +11,6 @@ import logging
 from pydantic import ValidationError
 
 from app.config import settings
-
-# Performance: Import Pydantic models at module level to avoid __import__ lock overhead in hot DB paths
 from app.core.entities import ChatStateRow, UserInfoRow
 from app.database import (
     ChatState,
@@ -88,21 +86,17 @@ async def get_user_chat(user_id: int) -> ChatState | None:
             result = await db_query(query, (user_id,), conn=conn)
 
             if not result:
-                # User does not exist at all
                 return _default_chat_state()
 
             row = result[0]
-            # asyncpg.Record supports mapping interface, cast to dict for safe handling
             row_dict = dict(row)
 
             messages = row_dict.get("messages", [])
-            # Defensive decode in case asyncpg misses jsonb codec mapping
             if isinstance(messages, str):
                 messages = json.loads(messages)
 
             history = [{"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])]
 
-            # If c.token_count is None, the LEFT JOIN to public.chats found no row
             has_chat = row_dict.get("token_count") is not None
 
             if not has_chat:
@@ -164,10 +158,6 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                 chat_state.deep_dive_thread_id = row_dict.get("deep_dive_thread_id")
 
             chat_state._original_length = len(chat_state.history)
-            # A default ChatState alone cannot distinguish a genuinely missing
-            # row from a legacy row whose valid generation is zero.  Request
-            # handlers use this marker to create a generation only for the
-            # former, while exact-matching every already persisted snapshot.
             chat_state._has_persisted_chat = has_chat
 
             return chat_state
@@ -344,8 +334,6 @@ async def update_user_chat(
             original_length = getattr(chat_state, "_original_length", 0)
 
             should_delete = False
-            # ⚡ Bolt Optimization: Use parallel arrays instead of JSON for ~13x faster
-            # Python serialization and much cheaper Postgres `unnest` vs `json_to_recordset`
             roles_to_insert = []
             contents_to_insert = []
 
@@ -449,8 +437,6 @@ async def update_user_chat(
 
     if not rows:
         return False
-    # Publish checkpoints only after the transaction acknowledges success.
-    # Failed or rejected writes must not consume the pending history suffix.
     chat_state._original_length = current_length
     chat_state.memory_epoch = int(rows[0]["memory_epoch"])
     chat_state._has_persisted_chat = True

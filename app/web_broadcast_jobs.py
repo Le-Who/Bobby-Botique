@@ -73,8 +73,6 @@ async def legacy_enqueue(*, single=False):
     except ValueError, TypeError:
         return jsonify(error="invalid_broadcast_command"), 400
     except Exception:
-        # The caller must look up its existing operation; a journal/queue write
-        # may already have committed even when its acknowledgment was lost.
         return jsonify(error="broadcast_command_unconfirmed", outcome_unknown=True), 503
 
 

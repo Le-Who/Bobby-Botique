@@ -18,9 +18,6 @@ def make_update(user_id=123, args=None):
     return update, context
 
 
-# ── /save ─────────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_save_conversation_with_title():
     """save_conversation_command with explicit title."""
@@ -83,9 +80,6 @@ async def test_save_conversation_failure():
     assert "❌" in reply_text
 
 
-# ── /conversations ────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_conversations_command_empty():
     """conversations_command shows menu content."""
@@ -106,9 +100,6 @@ async def test_conversations_command_empty():
         await conversations_command(update, context)
 
     update.message.reply_text.assert_awaited_once_with("📂 Нет бесед")
-
-
-# ── /switch ───────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -152,9 +143,6 @@ async def test_switch_conversation_success():
     switch.assert_awaited_once_with(123, 5)
     mock_metrics.record_conversation_switched.assert_awaited_once_with()
     update.message.reply_text.assert_awaited_once_with("✅ Переключились на беседу 5")
-
-
-# ── /delete ───────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,6 @@ from app.repos.horoscope_subscriptions import (
 
 logger = logging.getLogger(__name__)
 
-# Human-readable sign labels (mirrors horoscope_subscription.py; kept local to avoid circular import)
 _SIGN_LABELS: dict[str, str] = {
     "aries": "♈ Овен",
     "taurus": "♉ Телец",
@@ -45,7 +44,7 @@ async def _deliver_horoscope(
     bot,
     user_id: int,
     sign: str,
-    kind: str,  # 'today' or 'tomorrow'
+    kind: str,
 ) -> bool:
     """Generate and send one horoscope message. Returns True on success."""
     from app.intent_router import _handle_horoscope

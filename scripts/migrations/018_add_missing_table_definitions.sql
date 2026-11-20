@@ -1,10 +1,4 @@
--- 018_add_missing_table_definitions.sql
--- Backfill: create tables that were originally created outside the migration system.
---
--- For EXISTING databases (where 000_init_schema was already applied without these tables),
--- this migration ensures all tables exist. All statements use IF NOT EXISTS for idempotency.
 
--- 1. Per-user daily metrics (originally migration 003, but not in 000_init_schema)
 CREATE TABLE IF NOT EXISTS user_metrics (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -19,14 +13,12 @@ CREATE TABLE IF NOT EXISTS user_metrics (
 
 CREATE INDEX IF NOT EXISTS idx_user_metrics_user_date ON user_metrics (user_id, metric_date);
 
--- 2. Dynamic model limits (originally migration 005, but not in 000_init_schema)
 CREATE TABLE IF NOT EXISTS model_configuration (
     model_name TEXT PRIMARY KEY,
     daily_limit INTEGER,
     provider TEXT
 );
 
--- 3. Active chat messages (originally migration 005, but not in 000_init_schema)
 CREATE TABLE IF NOT EXISTS active_chat_messages (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -37,7 +29,6 @@ CREATE TABLE IF NOT EXISTS active_chat_messages (
 
 CREATE INDEX IF NOT EXISTS idx_active_chat_messages_user_id ON active_chat_messages(user_id);
 
--- 4. Long-term memory (was created via Supabase dashboard, never had a migration)
 CREATE TABLE IF NOT EXISTS long_term_memory (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -49,12 +40,10 @@ CREATE TABLE IF NOT EXISTS long_term_memory (
     expires_at TIMESTAMPTZ
 );
 
--- HNSW index for vector similarity search (idempotent)
 CREATE INDEX IF NOT EXISTS idx_memory_embedding
     ON long_term_memory USING hnsw (embedding halfvec_cosine_ops)
     WITH (m = 16, ef_construction = 64);
 
--- 5. Group chat tables (previously created at runtime in group_chat.py)
 CREATE TABLE IF NOT EXISTS group_chats (
     chat_id BIGINT PRIMARY KEY,
     title TEXT NOT NULL,

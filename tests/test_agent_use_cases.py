@@ -57,9 +57,6 @@ def test_custom_gemini_model_uses_full_known_fallback_chain_even_when_hidden(moc
     ]
 
 
-# ── resolve_ai_request ───────────────────────────────────────────────────────
-
-
 class TestResolveAiRequest:
     """Key resolution with fallback chain."""
 
@@ -90,7 +87,7 @@ class TestResolveAiRequest:
 
         async def mock_get_key(model, excluded_hashes=None):
             if model == "gemini-3.5-flash":
-                return None  # Exhausted
+                return None
             return fallback_key
 
         with (
@@ -204,9 +201,6 @@ class TestResolveAiRequest:
             key, model, status = await usecase.resolve_ai_request("anthropic/claude-3-sonnet")
 
         assert key == fake_key
-
-
-# ── increment_key_usage ──────────────────────────────────────────────────────
 
 
 class TestIncrementKeyUsage:

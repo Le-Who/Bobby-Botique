@@ -1,6 +1,3 @@
--- 039_add_daily_crocodile.sql
--- Wordle-like daily Crocodile mode: global daily puzzle, opt-in delivery,
--- result tracking, leaderboards, and live-edited result messages.
 
 CREATE TABLE IF NOT EXISTS public.crocodile_daily_puzzles (
     puzzle_date DATE PRIMARY KEY,

@@ -35,7 +35,6 @@ async def test_cancellation_drain_rejects_replacement_work_and_closes_admission(
             await asyncio.Future()
         finally:
             submit_replacement()
-            # Let cleanup submissions start before the cancelling owner finishes.
             await asyncio.sleep(0)
 
     tm.submit(work())

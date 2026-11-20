@@ -60,7 +60,6 @@ def make_original_message(caption=None, user_id=123):
     msg.from_user.id = user_id
     msg.caption = caption
 
-    # Build photo mock: photo[-1].get_file() -> download_as_bytearray()
     photo_file = MagicMock()
     photo_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"\x89PNG"))
     photo_file.get_file = AsyncMock(return_value=photo_file)
@@ -88,9 +87,6 @@ def make_chat_state():
         private_data_blocked=False,
         _has_persisted_chat=True,
     )
-
-
-# ── Happy path — AI describes photo ──────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -149,9 +145,6 @@ async def test_handle_photo_success(monkeypatch):
     ]
 
 
-# ── Empty AI response ────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_handle_photo_empty_response():
     """Typed delivery renders empty-response failure exactly once."""
@@ -181,9 +174,6 @@ async def test_handle_photo_empty_response():
         await _handle_photo(placeholder, original, chat_state)
 
     assert chat_state.history == []
-
-
-# ── AI response is an error ──────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -237,9 +227,6 @@ async def test_handle_photo_ai_error(partial):
     assert consume_operation_failure() is True
 
 
-# ── Exception during download ────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_handle_photo_download_exception():
     """Handles exception during photo download gracefully."""
@@ -250,7 +237,6 @@ async def test_handle_photo_download_exception():
     original = make_original_message()
     chat_state = make_chat_state()
 
-    # Make photo download fail
     original.photo[-1].get_file = AsyncMock(side_effect=Exception("Network error"))
 
     from app.handlers.ai_photo import _handle_photo
@@ -263,9 +249,6 @@ async def test_handle_photo_download_exception():
     assert consume_operation_failure() is True
 
 
-# ── Exception during processing with edit fallback ────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_handle_photo_exception_edit_fallback():
     """Falls back to reply_text when edit_text fails during error."""
@@ -273,16 +256,13 @@ async def test_handle_photo_exception_edit_fallback():
     original = make_original_message()
     chat_state = make_chat_state()
 
-    # Make photo download fail
     original.photo[-1].get_file = AsyncMock(side_effect=Exception("Download failed"))
-    # Make edit_text also fail
     placeholder.edit_text = AsyncMock(side_effect=Exception("Message not found"))
 
     from app.handlers.ai_photo import _handle_photo
 
     await _handle_photo(placeholder, original, chat_state)
 
-    # Should fall back to reply_text
     original.reply_text.assert_awaited_once()
     text = original.reply_text.call_args[0][0]
     assert "ошибка" in text.lower()

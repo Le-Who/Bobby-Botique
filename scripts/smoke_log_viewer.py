@@ -166,7 +166,7 @@ def query_loki(*, base_url: str, query: str, window: timedelta, limit: int, time
     )
     url = f"{base_url.rstrip('/')}/loki/api/v1/query_range?{parameters}"
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - operator-supplied Loki URL
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read()
 
 

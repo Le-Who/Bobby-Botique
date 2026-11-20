@@ -78,14 +78,13 @@ from app.providers.pollinations import (
     get_model_label,
     get_pollinations_provider,
 )
-from app.runtime_settings import media_prompts as _media_prompts  # noqa: F401 — registers image prompts
+from app.runtime_settings import media_prompts as _media_prompts  # noqa: F401
 from app.utils.chat_actions import send_chat_action
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.ux_improvements import make_copy_text_button
 
 logger = logging.getLogger(__name__)
 
-# ── Constants ──────────────────────────────────────────────────────────────────
 
 _SUPPORTED_AR = SUPPORTED_ASPECT_RATIOS
 _AR_LABELS = ASPECT_RATIO_LABELS
@@ -98,21 +97,15 @@ _AR_TO_PIXELS: dict[str, tuple[int, int]] = {
     "16:9": (1024, 576),
 }
 
-# Models that natively understand non-English prompts well enough that
-# we skip the auto-translation step.
 _CYRILLIC_NATIVE_MODELS: frozenset[str] = frozenset({"zimage"})
 
 _CYRILLIC_RE = re.compile(r"[а-яёА-ЯЁ]")
 
-# Translation model — cheapest Gemini variant; fast and cost-effective.
 _TRANSLATE_MODEL = "gemini-3.1-flash-lite"
 
 _DRAW_STATE_KEY = "draw_state"
 
-# ── Implicit draw intent detection ────────────────────────────────────────────
 
-# Optional prefixes the user might include before the trigger verb.
-# Matches: "бот,", "мне нужно", "я хочу", "э", "ну"…
 _DRAW_PREFIX = (
     r"(?:"
     r"(?:бот[аы]?|можешь(?:\s+ты)?|ты|скажи(?:\s+боту)?|мне\s*нужно|нам\s*нужно|я\s*хочу|мы\s*хотим)\s*[,:]?\s*"
@@ -120,8 +113,6 @@ _DRAW_PREFIX = (
     r")*"
 )
 
-# Core trigger verbs — all conjugations / imperatives / infinitives that
-# explicitly ask the bot to draw / generate an image.
 _DRAW_VERBS = (
     r"(?:"
     r"нарисуй|нарисуйте|рисуй|нарисовать|изобрази|изобразите|изобразить"
@@ -130,23 +121,19 @@ _DRAW_VERBS = (
     r"|создай\s+(?:изображение|картинку|рисунок|фото|картину|арт|аватар|мем|постер|обложку)"
     r"|создайте\s+(?:изображение|картинку|рисунок|арт|фото|картину)"
     r"|покажи\s+(?:изображение|картинку|рисунок|фото|картину)"
-    r"|напиши\s+(?:изображение|картинку)"  # rare but seen in speech
+    r"|напиши\s+(?:изображение|картинку)"
     r"|draw|generate\s+(?:an?\s+)?(?:image|picture|photo|art|illustration)"
     r"|create\s+(?:an?\s+)?(?:image|picture|photo|art|illustration)"
     r"|make\s+(?:an?\s+)?(?:image|picture|photo|art|illustration)"
     r")"
 )
 
-# Noise that might follow the verb before the actual prompt content
-# e.g., "мне", "пожалуйста", "картинку" (if the verb was just "сгенерируй")
 _DRAW_POST_VERB = (
     r"(?:"
     r"\s+(?:мне|нам|для\s*меня|пожалуйста|э+|м+|ну|давай|ка|картинку|картину|изображение|рисунок|фото)"
     r")*"
 )
 
-# Full pattern: prefix + verb + post_verb + mandatory space + prompt text.
-# We anchor at the start of the string (after stripping).
 DRAW_TRIGGER_RE = re.compile(
     rf"^{_DRAW_PREFIX}{_DRAW_VERBS}{_DRAW_POST_VERB}[\s:]+(.+)$",
     re.IGNORECASE | re.DOTALL,
@@ -175,7 +162,7 @@ def _check_draw_intent_fast(text: str) -> str | None:
     Returns the core prompt string (without the trigger verb prefix) on match,
     or ``None`` if the regex fails.
     """
-    m = DRAW_TRIGGER_RE.search(text.strip())  # Changed from match to search
+    m = DRAW_TRIGGER_RE.search(text.strip())
     if m:
         prompt = m.group(1).strip().lstrip(":—–-").strip()
         return prompt or None
@@ -184,17 +171,13 @@ def _check_draw_intent_fast(text: str) -> str | None:
 
 async def check_draw_intent_async(text: str) -> str | None:
     """Check if the text is an image generation request, using hybrid Regex + AI."""
-    # 1. Very fast regex path
     fast_match = _check_draw_intent_fast(text)
     if fast_match:
         return fast_match
 
-    # 2. Check if we *might* be asking to draw (keyword heuristic)
-    # If there's no draw verb anywhere, bail instantly.
     if not _VERB_HEURISTIC.search(text):
         return None
 
-    # 3. Ask AI to resolve coreferences (e.g. "такую же картинку")
     return await _extract_draw_prompt_ai(text)
 
 
@@ -254,9 +237,6 @@ def check_draw_intent(text: str) -> str | None:
     return _check_draw_intent_fast(text)
 
 
-# ── State helpers ──────────────────────────────────────────────────────────────
-
-
 def _get_draw_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
     """Return current draw state, creating defaults if missing."""
     default_model = settings.POLLINATIONS_DEFAULT_IMAGE_MODEL
@@ -281,7 +261,7 @@ def _set_draw_state(
     aspect_ratio: str | None = None,
     enhance_prompt: bool | None = None,
     awaiting_prompt: bool | None = None,
-    last_photo_msg: int | None | str = "KEEP",  # sentinel: "KEEP" = don't change
+    last_photo_msg: int | None | str = "KEEP",
 ) -> dict:
     """Merge partial updates into draw_state and return the updated dict."""
     state = _get_draw_state(context)
@@ -301,9 +281,6 @@ def _set_draw_state(
     return state
 
 
-# ── Provider routing ───────────────────────────────────────────────────────────
-
-
 def _is_imagen_model(model: str) -> bool:
     return model in IMAGEN_MODEL_LABELS or model.startswith("imagen-")
 
@@ -315,9 +292,9 @@ def _is_fta_image_model(model: str) -> bool:
 def _needs_translation(prompt: str, model: str) -> bool:
     """True if prompt contains Cyrillic and model doesn't natively handle it."""
     if _is_imagen_model(model):
-        return False  # Imagen understands many languages
+        return False
     if _is_fta_image_model(model):
-        return False  # FTA image models handle prompt internally
+        return False
     if model in _CYRILLIC_NATIVE_MODELS:
         return False
     return bool(_CYRILLIC_RE.search(prompt))
@@ -325,7 +302,6 @@ def _needs_translation(prompt: str, model: str) -> bool:
 
 def _get_all_models() -> list[str]:
     models = list(settings.POLLINATIONS_IMAGE_MODELS)
-    # Append FTA image models (always available if keys are configured)
     from app.config import get_freetheai_keys
 
     if get_freetheai_keys():
@@ -341,9 +317,6 @@ def _model_label(model: str) -> str:
     if model in IMAGEN_MODEL_LABELS:
         return IMAGEN_MODEL_LABELS[model]
     return get_model_label(model)
-
-
-# ── Prompt translation ─────────────────────────────────────────────────────────
 
 
 async def _translate_to_english(prompt: str, user_id: int | None = None) -> str:
@@ -394,9 +367,6 @@ async def _translate_to_english(prompt: str, user_id: int | None = None) -> str:
     except Exception as error:
         logger.warning("Prompt translation failed (%s), using original", type(error).__name__)
         return prompt
-
-
-# ── Keyboard builders ──────────────────────────────────────────────────────────
 
 
 def _chunk(lst: list, size: int) -> list[list]:
@@ -453,9 +423,6 @@ def _build_main_menu(state: dict) -> InlineKeyboardMarkup:
         [generate_btn],
     ]
 
-    # ── UX: CopyTextButton + quick-edit via switch_inline_query ──────────────
-    # CopyTextButton copies the prompt to clipboard in one tap (Bot API 7.4+).
-    # Falls back gracefully to None on older PTB — we omit the row if so.
     utility_row: list[InlineKeyboardButton] = []
     if prompt:
         copy_btn = make_copy_text_button(prompt, "📋 Скопировать промпт")
@@ -512,9 +479,6 @@ def _build_awaiting_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="draw:cancel:prompt")]])
 
 
-# ── Heartbeat ──────────────────────────────────────────────────────────────────
-
-
 async def _send_typing_heartbeat(chat_id: int, bot, stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         try:
@@ -525,9 +489,6 @@ async def _send_typing_heartbeat(chat_id: int, bot, stop_event: asyncio.Event) -
             await asyncio.wait_for(stop_event.wait(), timeout=4.5)
         except TimeoutError:
             pass
-
-
-# ── Core generation ────────────────────────────────────────────────────────────
 
 
 async def _run_generation(
@@ -551,7 +512,6 @@ async def _run_generation(
     chat_id = message.chat_id if message.chat else 0
     user_id = update.effective_user.id if update.effective_user else None
 
-    # Persist state (prompt stays as original Russian for the UI)
     _set_draw_state(
         context,
         prompt=prompt,
@@ -560,8 +520,6 @@ async def _run_generation(
         enhance_prompt=enhance,
         awaiting_prompt=False,
     )
-
-    # ⚡ Bolt Optimization: Translate prompt and send placeholder concurrently.
 
     async def _do_translate():
         if _needs_translation(prompt, model):
@@ -641,13 +599,10 @@ async def _run_generation(
     state = _get_draw_state(context)
     keyboard = _build_main_menu(state)
 
-    # ── Success ───────────────────────────────────────────────────────────
     if image_bytes:
         model_label = _model_label(model)
         display_prompt = api_prompt if translated else prompt
 
-        # Safe truncation avoiding Telegram's 1024-char limit for media captions.
-        # Leave ~200 chars for layout and translated text string if needed.
         safe_limit = 400
         short = display_prompt[:safe_limit].strip() + ("..." if len(display_prompt) > safe_limit else "")
 
@@ -694,7 +649,6 @@ async def _run_generation(
         mark_operation_failed()
         return False
 
-    # ── Error ─────────────────────────────────────────────────────────────
     err = error_message or "unknown"
     from app.utils.metrics_middleware import mark_operation_failed
 
@@ -761,9 +715,6 @@ def _escape_md(text: str) -> str:
     return text
 
 
-# ── "Awaiting prompt" flag: called from messages.py ──────────────────────────
-
-
 async def handle_draw_prompt_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     Check if the user is in 'awaiting_prompt' mode for the draw command.
@@ -786,18 +737,16 @@ async def handle_draw_prompt_input(update: Update, context: ContextTypes.DEFAULT
     if not new_prompt:
         return False
 
-    # Update the prompt, clear the waiting flag
     _set_draw_state(context, prompt=new_prompt, awaiting_prompt=False)
 
     state = _get_draw_state(context)
     keyboard = _build_main_menu(state)
 
-    # Try to update the existing photo caption + keyboard
     last_photo_id = state.get("last_photo_msg")
     chat_id = message.chat_id if message.chat else 0
 
     try:
-        await message.delete()  # Remove raw text to keep chat clean
+        await message.delete()
     except BadRequest:
         pass
 
@@ -818,16 +767,12 @@ async def handle_draw_prompt_input(update: Update, context: ContextTypes.DEFAULT
         except Exception:
             pass
 
-    # Fallback: send a new confirmation message
     await message.reply_text(
         f"✅ Промпт обновлён: *{_escape_md(new_prompt[:80])}*\n\nНажмите *▶️ СГЕНЕРИРОВАТЬ*.",
         parse_mode="Markdown",
         reply_markup=keyboard,
     )
     return True
-
-
-# ── Help text ──────────────────────────────────────────────────────────────────
 
 
 def _build_help_text() -> str:
@@ -847,9 +792,6 @@ def _build_help_text() -> str:
         "• Нажать *▶️ СГЕНЕРИРОВАТЬ* когда параметры выбраны\n"
         "• *✏️ Изменить промпт* — отправьте новый текст следующим сообщением"
     )
-
-
-# ── Command handler ────────────────────────────────────────────────────────────
 
 
 @authorized_only
@@ -877,19 +819,16 @@ async def draw_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    # 1. Update the canvas state with the detected prompt
     state = _set_draw_state(
         context,
         prompt=prompt,
         awaiting_prompt=False,
     )
 
-    # 2. Render confirmation text
     auto_text = f"🎨 **Запрос на генерацию:**\n`{_escape_md(prompt)}`"
     from app.utils.formatting import TelegramFormatter
 
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
 
-    # 3. Apply canvas menu inline
     keyboard = _build_main_menu(state)
     await update.message.reply_text(formatted, parse_mode=parse_mode, reply_markup=keyboard)

@@ -67,8 +67,6 @@ async def test_hanging_synthesis_is_cancelled_at_total_deadline(observed_timeout
     started = asyncio.Event()
     cancelled = asyncio.Event()
     timeouts, delays = observed_timeouts
-    # Budget time is controlled independently from the real asyncio timeout clock.
-    # An exact origin keeps advancing by 30 seconds free of host-uptime rounding.
     now = [0.0]
 
     async def generate(**kwargs):
@@ -86,9 +84,7 @@ async def test_hanging_synthesis_is_cancelled_at_total_deadline(observed_timeout
     task = asyncio.create_task(agent_with(generate, budget).run("query", AsyncMock()))
     try:
         await asyncio.wait_for(started.wait(), 5)
-        assert delays == [30, 25, 30]  # Whole request, iteration, then synthesis reserve.
-        # Either real timeout may deliver cancellation first at the shared deadline.
-        # Expire it after SDK entry so cold setup and scheduler speed cannot choose the branch.
+        assert delays == [30, 25, 30]
         now[0] += budget.timeout_seconds
         timeouts[2 if expired_scope == "synthesis" else 0].reschedule(asyncio.get_running_loop().time())
         result = await asyncio.wait_for(task, 5)

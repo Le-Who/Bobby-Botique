@@ -78,7 +78,6 @@ class TestUpdateStage:
         msg = MagicMock()
         msg.edit_text = AsyncMock()
 
-        # Index beyond list length should cap to last item
         next_idx = await update_stage(msg, STAGES_CHAT, 99)
 
         last_emoji, last_text = STAGES_CHAT[-1]
@@ -94,7 +93,6 @@ class TestUpdateStage:
         for i, (emoji, text) in enumerate(STAGES_SEARCH_DEEP):
             idx = await update_stage(msg, STAGES_SEARCH_DEEP, idx)
 
-        # After iterating all stages, index should be at the last one
         assert idx == len(STAGES_SEARCH_DEEP) - 1
 
     @pytest.mark.asyncio
@@ -102,6 +100,5 @@ class TestUpdateStage:
         msg = MagicMock()
         msg.edit_text = AsyncMock(side_effect=Exception("message not modified"))
 
-        # Should not raise, should return next index
         next_idx = await update_stage(msg, STAGES_CHAT, 0)
         assert next_idx == 1

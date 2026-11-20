@@ -9,7 +9,6 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="/static/css/daily-switcher.css">
   <script defer src="/static/js/daily-switcher.js"></script>
-  <!-- bot_username injected by Jinja2 for deep links -->
   <script>const BOT_USERNAME = "{{ bot_username }}";</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -160,7 +159,6 @@
       <div class="progress-fill" id="progressFill"></div>
     </div>
 
-    <!-- Game Screen -->
     <div id="gameView" aria-busy="true">
       <div class="question-card">
         <div class="topic-badge" id="topicBadge">Загрузка...</div>
@@ -180,7 +178,6 @@
       <button class="btn-primary" id="nextBtn" style="display: none;">Продолжить</button>
     </div>
 
-    <!-- Super Game Screen -->
     <div id="superView" style="display: none;">
       <div class="question-card" style="border-color: #665634;">
         <div class="super-question-header">
@@ -202,7 +199,6 @@
       <button class="btn-super" id="superNextBtn" style="display: none;">Продолжить</button>
     </div>
 
-    <!-- Finish Screen -->
     <div id="finishView" style="display: none;" class="question-card finish-card">
       <div id="alreadyDoneBadge" class="already-done-badge" style="display: none;">✓ Уже пройдено сегодня</div>
       <h2 class="finish-title" tabindex="-1" id="finishTitle">Викторина завершена!</h2>
@@ -215,7 +211,6 @@
       <button class="btn-secondary" id="reviewBtn">📋 Просмотреть ответы</button>
     </div>
 
-    <!-- Super Finish Screen -->
     <div id="superFinishView" style="display: none;" class="question-card finish-card">
       <h2 class="super-title finish-title" tabindex="-1" id="superFinishTitle">⚡ Суперигра завершена!</h2>
       <div class="finish-score" id="superDeltaDisplay">+0</div>
@@ -224,7 +219,6 @@
       <button class="btn-secondary" id="superReviewBtn">📋 Просмотреть ответы</button>
     </div>
 
-    <!-- Review Screen -->
     <div id="reviewView" style="display: none;">
       <div class="review-header">
         <button class="review-back-btn" id="backToFinishBtn">← Назад</button>
@@ -364,7 +358,6 @@
       }
     }
 
-    // Wire up static buttons via addEventListener (CSP-safe)
     document.getElementById('nextBtn').addEventListener('click', nextQuestion);
     document.getElementById('retryBtn').addEventListener('click', function () { defInit(); });
     document.getElementById('saveRecoveryBtn').addEventListener('click', function () {
@@ -462,7 +455,7 @@
           }
 
           if (r.status === 'completed') {
-            showFinishScreen(true /* alreadyDone */);
+            showFinishScreen(true );
             return true;
           }
           currentIdx = r.current_question || 0;
@@ -605,7 +598,6 @@
       focusElement('finishTitle');
     }
 
-    // --- Super Game Logic ---
 
     function startSuperGame() {
       if (userSuperResult && userSuperResult.status === 'completed') return;
@@ -743,7 +735,6 @@
       updateProgress(superQuestions.length, superQuestions.length, 'Суперигра');
       document.getElementById('qCounter').innerText = `Суперигра ${superQuestions.length}/${superQuestions.length} · завершена`;
 
-      // Reset score badge to plain style showing final total
       const badge = document.getElementById('scoreBadge');
       badge.innerText = `⭐ ${totalScore}`;
       badge.style.background = '';
@@ -762,7 +753,6 @@
       window.scrollTo({ top: 0, behavior: scrollBehavior });
     }
 
-    // --- Review Screen Logic ---
 
     function showReviewScreen() {
       document.getElementById('finishView').style.display = 'none';
@@ -777,7 +767,6 @@
       const container = document.getElementById('reviewAccordion');
       container.innerHTML = '';
 
-      // 1. Regular 5 questions
       questions.forEach(function (q, idx) {
         const answer = playerAnswers[idx];
         const isCorrect = answer && answer.isCorrect;
@@ -872,13 +861,11 @@
         container.appendChild(item);
       });
 
-      // 2. Super Game Divider
       const divContainer = document.createElement('div');
       divContainer.className = 'super-divider';
       divContainer.innerHTML = '<div class="super-divider-line"></div><div class="super-divider-text super-title">⚡ СУПЕРИГРА</div><div class="super-divider-line"></div>';
       container.appendChild(divContainer);
 
-      // 3. Super Game Section (Locked or Accordion)
       const isSuperCompleted = userSuperResult && userSuperResult.status === 'completed';
 
       if (!isSuperCompleted) {

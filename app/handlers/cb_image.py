@@ -41,8 +41,6 @@ logger = logging.getLogger(__name__)
 
 _DRAW_STATE_KEY = "draw_state"
 
-# ── Local state helpers (mirror cmd_image to avoid circular import) ────────────
-
 
 def _get_draw_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
     from app.config import settings
@@ -75,9 +73,6 @@ def _all_valid_models() -> list[str]:
     return _get_all_models()
 
 
-# ── Keyboard factory (re-imported from cmd_image lazily) ──────────────────────
-
-
 def _main_keyboard(state: dict) -> InlineKeyboardMarkup:
     from app.handlers.cmd_image import _build_main_menu
 
@@ -98,9 +93,6 @@ def _formats_keyboard(state: dict) -> InlineKeyboardMarkup:
 
 def _awaiting_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="draw:cancel:prompt")]])
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
 
 
 async def _edit_markup(query, markup: InlineKeyboardMarkup) -> None:
@@ -125,16 +117,12 @@ async def _edit_caption_and_markup(query, caption: str, markup: InlineKeyboardMa
     except BadRequest as e:
         if "not modified" not in str(e).lower():
             logger.debug("edit_caption_and_markup BadRequest: %s", e)
-        # Fallback: edit only markup
         try:
             await query.edit_message_reply_markup(reply_markup=markup)
         except Exception:
             pass
     except Exception as exc:
         logger.debug("edit_caption_and_markup error: %s", exc)
-
-
-# ── Central dispatcher ─────────────────────────────────────────────────────────
 
 
 async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -158,28 +146,25 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     data: str = query.data or ""
-    # data format: draw:<action>[:<sub>...]
-    parts = data.split(":")  # e.g. ["draw", "set", "model", "flux"]
+    parts = data.split(":")
     if len(parts) < 2:
         return
-    action = parts[1]  # "nav", "set", "toggle", "execute", "edit", "cancel"
+    action = parts[1]
 
     state = _get_draw_state(context)
 
-    # ── Navigation (just swap keyboard) ───────────────────────────────────
     if action == "nav":
         sub = parts[2] if len(parts) > 2 else "main"
         if sub == "models":
             await _edit_markup(query, _models_keyboard(state))
         elif sub == "formats":
             await _edit_markup(query, _formats_keyboard(state))
-        else:  # "main" or anything else
+        else:
             await _edit_markup(query, _main_keyboard(state))
         return
 
-    # ── Set model ─────────────────────────────────────────────────────────
     if action == "set" and len(parts) > 3 and parts[2] == "model":
-        new_model = ":".join(parts[3:])  # handles model ids without colons
+        new_model = ":".join(parts[3:])
         valid = _all_valid_models()
         if new_model not in valid:
             await query.answer("⚠️ Модель недоступна.", show_alert=True)
@@ -193,7 +178,6 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _edit_markup(query, _main_keyboard(state))
         return
 
-    # ── Set aspect ratio ──────────────────────────────────────────────────
     if action == "set" and len(parts) > 3 and parts[2] == "ar":
         new_ar = ":".join(parts[3:])
         if new_ar not in SUPPORTED_ASPECT_RATIOS:
@@ -206,7 +190,6 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _edit_markup(query, _main_keyboard(state))
         return
 
-    # ── Toggle enhance ────────────────────────────────────────────────────
     if action == "toggle" and len(parts) > 2 and parts[2] == "enhance":
         current = state.get("enhance_prompt", False)
         state = _patch_draw_state(context, enhance_prompt=not current)
@@ -215,7 +198,6 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _edit_markup(query, _main_keyboard(state))
         return
 
-    # ── Edit prompt ───────────────────────────────────────────────────────
     if action == "edit" and len(parts) > 2 and parts[2] == "prompt":
         current_prompt = state.get("prompt", "")
         if not current_prompt:
@@ -241,7 +223,6 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 reply_markup=_awaiting_keyboard(),
             )
         except Exception:
-            # If it's not a photo message, edit text instead
             try:
                 await query.edit_message_text(
                     f"✍️ Отправьте новый текст для генерации.\n\nТекущий промпт: `{short}`",
@@ -265,7 +246,6 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _edit_caption_and_markup(query, caption, _main_keyboard(state))
         return
 
-    # Current and legacy buttons share admission and owner-aware cleanup.
     if action in {"execute", "regen"}:
         current_prompt = state.get("prompt", "")
         if not current_prompt:
@@ -315,15 +295,13 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await query.answer("⏳ Сейчас не удалось запустить генерацию. Попробуйте ещё раз.", show_alert=True)
             return
         request_state.register_active_task(user_id, task)
-        # A worker cancelled before its first step never enters its finally.
         task.add_done_callback(release)
         return
 
     logger.warning("draw_callback: unknown action=%r data=%r", action, data)
 
 
-# ── Import settings (needed for default model in _patch_draw_state) ────────────
 try:
-    from app.config import settings  # noqa: E402 — late import OK
+    from app.config import settings  # noqa: E402
 except ImportError:
     pass

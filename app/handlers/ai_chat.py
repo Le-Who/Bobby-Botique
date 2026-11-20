@@ -31,8 +31,6 @@ from app.utils.ux_improvements import (
     set_thinking_reaction,
 )
 
-# Removed _background_tasks set, using centralized TaskManager
-
 _DEFAULT_CONTEXT_BUDGET = 128_000
 _DEFAULT_MODEL_CONTEXT_BUDGETS = {
     "flash-lite": 32_000,
@@ -200,7 +198,6 @@ def _store_memory_in_background(
                 expected_epoch=expected_epoch,
             )
 
-            # ── Real-time graph extraction & Consolidation (Concurrent) ───────
             async def _run_graph():
                 if memory_id:
                     try:
@@ -223,7 +220,6 @@ def _store_memory_in_background(
                         should_check_consolidation,
                     )
 
-                    # ⚡ maybe_consolidate fetches raw_memories once and reuses them
                     if should_check_consolidation(user_id):
                         await maybe_consolidate(
                             user_id,
@@ -255,10 +251,6 @@ async def _handle_regular_chat(
     user_parts: list | None = None,
     retry_request=None,
 ):
-    # Freeze the generation carried by this request.  Every external use and
-    # the final persistence CAS must use this exact value; reading the mutable
-    # ChatState again after an await could accidentally adopt a recreated
-    # account's generation.
     if bool(getattr(chat_state, "private_data_blocked", False)):
         await _retire_placeholder_notice(placeholder_message)
         await placeholder_message.edit_text(t("error.generic", detect_language(user_message)))
@@ -279,7 +271,6 @@ async def _handle_regular_chat(
     chat_state.memory_epoch = request_epoch
     chat_state._has_persisted_chat = True
 
-    # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
     from app.process_policies import resolve_process
     from app.runtime_settings.lifecycle import operation_snapshot
@@ -300,8 +291,6 @@ async def _handle_regular_chat(
     else:
         process_policy = await resolve_process("chat", (model_for_this_request,))
 
-    # ── Lyria audio intercept ─────────────────────────────────────────────
-    # When user has selected a Lyria model, generate music instead of chat.
     from app.providers.freetheai_audio import is_lyria_model
 
     if not process_policy.explicit and is_lyria_model(model_for_this_request):
@@ -340,8 +329,6 @@ async def _handle_regular_chat(
     if process_policy.explicit:
         from app.agent_use_cases import AgentRequestUseCase
 
-        # The configured plan owns fallback; the legacy preflight must not
-        # reject or ask to switch an unrelated user-selected baseline model.
         model_used = process_policy.models[0]
         key_data, _, _ = await AgentRequestUseCase().resolve_exact_ai_request(model_used)
         resolution = "configured"
@@ -382,17 +369,13 @@ async def _handle_regular_chat(
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
-    # Assemble context with token-budget awareness
     _context_started = time.monotonic()
     from app.context_assembler import get_assembler
 
     assembler = get_assembler()
 
-    # Use persisted summary from chat state (survives restarts)
     existing_summary = chat_state.context_summary
 
-    # Compose system instruction first (needed for budget calculation).
-    # Append current Moscow time so the model never hallucinates {{CURRENT_TIME}}.
     system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
     _now_msk = datetime.now(ZoneInfo("Europe/Moscow"))
     system_instruction += (
@@ -416,11 +399,8 @@ async def _handle_regular_chat(
         )
         system_instruction += fwd_override
 
-    # Exact prompt to restore if LTM consent changes after recall but before
-    # the downstream chat provider acquires its own lease.
     base_system_instruction = system_instruction
 
-    # Resolve model-specific token budget for context assembly
     context_budget = _setting("DEFAULT_CONTEXT_BUDGET", _DEFAULT_CONTEXT_BUDGET)
     model_lower = (model_used or "").lower()
     model_context_budgets = _setting("MODEL_CONTEXT_BUDGETS", _DEFAULT_MODEL_CONTEXT_BUDGETS)
@@ -429,7 +409,6 @@ async def _handle_regular_chat(
             context_budget = budget
             break
 
-    # Assemble context within token budget
     history_before_request = list(chat_state.history)
     assembly_history = (
         retry_history(logical_request, chat_state.history) if retry_request is not None else chat_state.history
@@ -443,8 +422,6 @@ async def _handle_regular_chat(
         user_parts=user_parts,
     )
 
-    # Provider history may contain a synthetic summary exchange.  Keep it
-    # request-local: canonical persistence must contain only real turns.
     provider_history = assembled.history
     chat_state.history = [
         {**message, "parts": list(message.get("parts", []))} for message in assembled.retained_history
@@ -457,7 +434,6 @@ async def _handle_regular_chat(
     )
     chat_state.context_summary = assembled.summary
 
-    # ── Inject tiered memory context & Update UI Stage (Concurrent) ───────
     _memories_injected = 0
     _graph_triples_count = 0
 
@@ -495,9 +471,6 @@ async def _handle_regular_chat(
                         limit=5,
                         min_similarity=0.60,
                     )
-                # inject_memory_layers runs in this gather() child task. ContextVar
-                # state does not flow back to the parent, so return provenance IDs
-                # as ordinary data for exact response attribution below.
                 return (
                     injected_instruction,
                     injection_stats,
@@ -538,7 +511,6 @@ async def _handle_regular_chat(
             assembled.llm_summarization_scheduled,
         )
 
-        # Record summarization metrics
         from app.metrics import role_conv_metrics
         from app.prompt_registry import estimate_tokens_cyrillic
 
@@ -551,16 +523,12 @@ async def _handle_regular_chat(
             summary_length=summary_len,
         )
 
-        # Defer external summarization until the response succeeds. Otherwise
-        # the dropped history is rolled back and the new summary would describe
-        # messages that are still present in canonical history.
         if assembled.llm_summarization_scheduled and assembled.dropped_messages:
             pending_llm_summary = (
                 list(assembled.dropped_messages),
                 assembled.summary,
             )
 
-    # ── Typed response delivery ───────────────────────────────────────────
     _stream_t0 = time.monotonic()
     _footer_text = (
         t(
@@ -621,11 +589,6 @@ async def _handle_regular_chat(
             retry_callback=logical_request.callback_data,
         )
 
-    # The response request always contains private active history.  If any LTM
-    # layer was injected, classify the lease as ltm:* so /memoryoff drains it;
-    # account erasure drains both variants.  A failed LTM lease must never send
-    # the already-assembled memory prompt, so fall back to the base prompt and
-    # reacquire an ordinary conversation lease.
     from contextlib import AsyncExitStack
 
     from app.repos.memory_consent import private_data_lease
@@ -680,8 +643,6 @@ async def _handle_regular_chat(
             chat_id=_chat_id,
             thinking_level=effective_thinking_level,
             workload=Workload.INTERACTIVE,
-            # A deferred worker would outlive this request-scoped lease while
-            # retaining the private prompt.
             allow_deferred=False,
         )
         emit(
@@ -724,8 +685,6 @@ async def _handle_regular_chat(
                     chat_state.history = history_before_request
                     chat_state.context_summary = existing_summary
                 else:
-                    # Initial cancellation keeps the assembled user turn. Its
-                    # position may move when context compaction drops a prefix.
                     logical_request.history_start = len(chat_state.history) - 1
             raise
         await _complete_regular_chat_response(
@@ -754,8 +713,6 @@ async def _handle_regular_chat(
         )
     finally:
         await provider_lease.aclose()
-        # The first visible text stops the heartbeat inside delivery.  This is
-        # the failure/cancellation safety net for streams that yield no text.
         from app.utils.heartbeat import stop_heartbeat
 
         stop_heartbeat(placeholder_message.message_id)
@@ -839,8 +796,6 @@ async def _complete_regular_chat_response(
         else:
             await set_done_reaction(bot, chat_id, user_message_id)
 
-    # Bind graph provenance to this exact Telegram response.  Feedback on an
-    # older/interleaved message must never penalize a later retrieval.
     try:
         from app.repos.memory import bind_retrieved_edges_to_response
 
@@ -850,8 +805,6 @@ async def _complete_regular_chat_response(
             edge_ids=retrieved_edge_ids,
         )
     except Exception as attribution_error:
-        # Feedback attribution must never turn a successfully delivered answer
-        # into a failed request.
         logging.debug("Could not bind memory provenance: %s", attribution_error)
 
     if reply_with_voice or outcome.voice_requested:
@@ -936,7 +889,6 @@ async def _complete_regular_chat_response(
             expected_epoch=memory_epoch,
         )
 
-    # ── Model suggestion (non-intrusive hint) ────────────────────────────
     try:
         from app.model_selector import select_model
 
@@ -960,7 +912,7 @@ async def _complete_regular_chat_response(
                 reply_markup=hint_keyboard,
             )
     except Exception:
-        pass  # Non-critical
+        pass
 
 
 async def _handle_lyria_audio(
@@ -991,7 +943,6 @@ async def _handle_lyria_audio(
     except Exception:
         pass
 
-    # Typing heartbeat
     import asyncio
 
     from telegram.constants import ChatAction
@@ -1024,7 +975,6 @@ async def _handle_lyria_audio(
 
     await _retire_placeholder_notice(placeholder_message)
     if result.success and result.audio_bytes:
-        # Determine file extension from mime type
         ext_map = {
             "audio/mpeg": ".mp3",
             "audio/wav": ".wav",
@@ -1034,18 +984,15 @@ async def _handle_lyria_audio(
         ext = ext_map.get(result.mime_type, ".mp3")
         filename = f"lyria_music{ext}"
 
-        # Prepare audio as file-like object
         audio_io = BytesIO(result.audio_bytes)
         audio_io.name = filename
 
-        # Build caption
         short_prompt = user_message[:200].strip()
         if len(user_message) > 200:
             short_prompt += "..."
         short_prompt = escape_markdown(short_prompt)
         caption = f"🎵 *{short_prompt}*\n_{model_label}_"
         if result.text_content:
-            # Include any text (e.g. lyrics) in caption, truncated
             text_preview = result.text_content[:300].strip()
             if len(result.text_content) > 300:
                 text_preview += "..."
@@ -1064,7 +1011,6 @@ async def _handle_lyria_audio(
                     ]
                 ),
             )
-            # Delete the placeholder
             try:
                 await placeholder_message.delete()
             except Exception:
@@ -1080,7 +1026,6 @@ async def _handle_lyria_audio(
                 pass
 
     elif result.text_content and not result.audio_bytes:
-        # Model returned text but no audio — show the text
         text = result.text_content[:2000]
         try:
             await placeholder_message.edit_text(
@@ -1094,7 +1039,6 @@ async def _handle_lyria_audio(
         except Exception:
             pass
     else:
-        # Error
         err = result.error_message or "unknown"
         error_texts = {
             "no_keys": "🔑 Нет доступных ключей FreeTheAI для генерации музыки.",

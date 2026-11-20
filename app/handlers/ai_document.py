@@ -88,7 +88,6 @@ async def _handle_document_question_leased(
 ):
     """Обрабатывает вопросы по загруженным документам."""
     try:
-        # Get afterдний document user
         from app.document_processor import get_document_by_id, get_document_content, get_user_documents
 
         if document_id is not None:
@@ -105,11 +104,9 @@ async def _handle_document_question_leased(
                 await placeholder_message.edit_text("❌ У вас нет загруженных документов. Сначала загрузите документ.")
             except Exception as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
-                # Fallback на new message
                 await placeholder_message.reply_text("❌ У вас нет загруженных документов. Сначала загрузите документ.")
             return
 
-        # Берем самый afterдний document
         latest_document = documents[0]
         document_content = await get_document_content(latest_document["id"], user_id)
 
@@ -118,7 +115,6 @@ async def _handle_document_question_leased(
                 await placeholder_message.edit_text("❌ Не удалось получить содержимое документа.")
             except Exception as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
-                # Fallback на new message
                 await placeholder_message.reply_text("❌ Не удалось получить содержимое документа.")
             return
 
@@ -126,17 +122,15 @@ async def _handle_document_question_leased(
             await update_stage(placeholder_message, STAGES_DOCUMENT, 0)
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
-            # If не можем отредактировать, отправляем new message
             placeholder_message = await placeholder_message.reply_text("📄 Анализирую документ...")
 
-        # Chunk document intelligently based on user's question
         from app.documents.chunking import chunk_for_context
 
         original_length = len(document_content) if document_content else 0
         document_content = chunk_for_context(
             document_content,
             query=user_message,
-            max_context_tokens=8500,  # ~30K chars, matching previous budget
+            max_context_tokens=8500,
         )
         if len(document_content) < original_length:
             document_content += "\n\n[Документ сокращён до наиболее релевантных фрагментов]"
@@ -146,7 +140,6 @@ async def _handle_document_question_leased(
                 len(document_content),
             )
 
-        # Безопасная обработка document_content
         try:
             safe_document_content = str(document_content)
         except Exception as e:
@@ -164,7 +157,6 @@ async def _handle_document_question_leased(
 
         from app.prompt_registry import get_prompt_text
 
-        # Create промпт for вопроса по documentу
         document_prompt = render_prompt_text(
             get_prompt_text("document.answer"),
             safe_document_content=safe_document_content,
@@ -220,5 +212,4 @@ async def _handle_document_question_leased(
             await placeholder_message.edit_text(t("doc.error_question"))
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
-            # Fallback на new message
             await placeholder_message.reply_text(t("doc.error_question"))

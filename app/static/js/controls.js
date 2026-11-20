@@ -1,4 +1,3 @@
-/* GemAI admin controls. All server-provided values enter the DOM as text. */
 (function () {
   "use strict";
 
@@ -21,8 +20,6 @@
         const current = drafts.get(name);
         if (current === submitted) drafts.delete(name);
         else if (current && current.expected_revision === baseRevision) {
-          // New typing in this card follows its own successful write, never
-          // an unrelated revision fetched later from another administrator.
           current.expected_revision = savedRevision;
         }
       },
@@ -124,8 +121,6 @@
   }
 
   function setBusy(value) {
-    // A refresh begun before a write must not replace the card while that
-    // write is pending, or its error would target detached feedback.
     if (value && !busy) loadSequence += 1;
     busy = value;
     ["process-list","prompt-list","catalog-list","audio-list","limit-list","command-list"].forEach(id => byId(id)?.setAttribute("aria-busy", String(value)));

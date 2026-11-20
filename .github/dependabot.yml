@@ -5,8 +5,6 @@ updates:
     directory: "/"
     schedule:
       interval: "cron"
-      # Fugit's weekday modulo preserves exact fortnightly gaps across months.
-      # https://github.com/dependabot/dependabot-core/issues/12246
       cronjob: "0 8 * * mon%2"
       timezone: "UTC"
     cooldown:
@@ -21,8 +19,6 @@ updates:
         applies-to: "version-updates"
         patterns:
           - "*"
-        # Dependabot follows SemVer mechanically. Keep every current 0.x direct
-        # dependency out of this group because its minor bump is breaking-risk.
         exclude-patterns:
           - "asyncpg"
           - "httpx"

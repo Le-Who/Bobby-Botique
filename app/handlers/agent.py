@@ -18,13 +18,8 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
-# ── Concurrency tiers ────────────────────────────────────────────────────────
 from app.adapters.concurrency import heavy_request_semaphore, ultra_heavy_semaphore
-
-# ── Re-exports from ai_chat ──────────────────────────────────────────────────
 from app.handlers.ai_chat import _handle_regular_chat  # noqa: F401
-
-# ── Re-exports from ai_core ──────────────────────────────────────────────────
 from app.handlers.ai_core import (  # noqa: F401
     _get_ai_response,
     _get_ai_response_with_routing,
@@ -32,11 +27,7 @@ from app.handlers.ai_core import (  # noqa: F401
     _resolve_ai_request,
     handle_ai_response_error,
 )
-
-# ── Re-exports from ai_document ──────────────────────────────────────────────
 from app.handlers.ai_document import _handle_document_question  # noqa: F401
-
-# ── Re-exports from ai_photo ─────────────────────────────────────────────────
 from app.handlers.ai_photo import (  # noqa: F401
     _download_images_concurrently,
     _handle_complex_media_group_search,
@@ -44,8 +35,6 @@ from app.handlers.ai_photo import (  # noqa: F401
     _handle_photo,
     process_media_group_request,
 )
-
-# ── Re-exports from ai_search ────────────────────────────────────────────────
 from app.handlers.ai_search import (  # noqa: F401
     _handle_complex_agent_search,
     _handle_qna_search,
@@ -53,8 +42,6 @@ from app.handlers.ai_search import (  # noqa: F401
 )
 from app.repos.chats import get_user_chat
 from app.utils.heartbeat import retire_heartbeat, stop_heartbeat
-
-# ── Orchestration (stays here — thin dispatcher) ─────────────────────────────
 
 
 async def process_long_request(
@@ -68,7 +55,6 @@ async def process_long_request(
     try:
         effective_msg = update.effective_message
         is_photo = bool(effective_msg.photo) if effective_msg else False
-        # Support edit-in-place: handle_edited_request injects the corrected text here
         _inplace_override = context.user_data.get("_edited_text_override") if context.user_data else None
         if text_override is not None:
             text = text_override
@@ -79,19 +65,10 @@ async def process_long_request(
         else:
             text = ""
 
-        # ── Forwarded photo+text batch (Improvement 3) ───────────────────────
-        # When the debounce window collected both forwarded text messages and
-        # forwarded photos (injected via inject_forwarded_photo), messages.py
-        # stores the photo Message objects in context.user_data["_fwd_photos"].
-        # We consume them here and route to the multimodal handler so the LLM
-        # receives a unified request: author-attributed text block + images.
         _fwd_photos: list | None = context.user_data.pop("_fwd_photos", None) if context.user_data else None
 
         chat_state = await get_user_chat(update.effective_user.id)
 
-        # ── Classify request tier ────────────────────────────────────────
-        # Ultra-heavy: all agentic/search paths (high RAM, multiple LLM calls)
-        # Regular: conversational chat and simple photo analysis
         is_ultra_heavy = (
             text.startswith(("?", "??"))
             or (is_photo and text.startswith(("?", "??")))
@@ -101,9 +78,6 @@ async def process_long_request(
         semaphore = ultra_heavy_semaphore if is_ultra_heavy else heavy_request_semaphore
 
         async with semaphore:
-            # ── Forwarded photo+text → multimodal handler ────────────────────
-            # Route as a media group so the LLM sees both images and the
-            # author-attributed text in a single multimodal request.
             if _fwd_photos:
                 await process_media_group_request(
                     placeholder_message,
@@ -159,10 +133,9 @@ async def process_long_request(
                     chat_state,
                     user_id=update.effective_user.id,
                 )
-            elif chat_state.search_enabled:
+            elif chat_state.search_enabled:  # noqa: SIM114
                 await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
             elif chat_state.is_deep_dive:
-                # Continue deep dive session — route follow-ups through agentic search
                 await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
             else:
                 await _handle_regular_chat(

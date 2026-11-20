@@ -1,4 +1,3 @@
-# /app/games/word_bank.py
 """Bilingual word bank for the Crocodile game (RU + EN).
 
 Unknown categories are handled by calling Gemini to generate words on the fly.
@@ -50,8 +49,6 @@ class TopicResolution:
     match_key: str
     is_builtin: bool
 
-
-# ── Word bank ─────────────────────────────────────────────────────────────────
 
 WORD_BANK: dict[str, dict[str, list[str]]] = {
     "ru": {
@@ -560,10 +557,8 @@ WORD_BANK: dict[str, dict[str, list[str]]] = {
     },
 }
 
-# ── Category aliases (case-insensitive, both languages) ───────────────────────
 
 _CATEGORY_ALIASES: dict[str, tuple[str, str]] = {
-    # Russian aliases → (lang, canonical_key)
     "животные": ("ru", "Животные"),
     "животное": ("ru", "Животные"),
     "звери": ("ru", "Животные"),
@@ -596,7 +591,6 @@ _CATEGORY_ALIASES: dict[str, tuple[str, str]] = {
     "природа": ("ru", "Природа"),
     "явления": ("ru", "Природа"),
     "nature": ("en", "Nature"),
-    # ── New categories ────────────────────────────────────────────────────────
     "транспорт": ("ru", "Транспорт"),
     "transport": ("en", "Transport"),
     "transportation": ("en", "Transport"),
@@ -616,7 +610,6 @@ _CATEGORY_ALIASES: dict[str, tuple[str, str]] = {
     "astronomy": ("en", "Space"),
     "астрономия": ("ru", "Космос"),
     "вселенная": ("ru", "Космос"),
-    # ── Misc ─────────────────────────────────────────────────────────────────
     "разное": ("ru", "Разное"),
     "random": ("en", "Random"),
     "misc": ("en", "Random"),
@@ -632,7 +625,6 @@ _YO_REPLACE = str.maketrans({"ё": "е", "Ё": "Е"})
 _TOPIC_SEP_RE = re.compile(r"[^0-9a-zA-Zа-яА-Я\s]+", re.UNICODE)
 _TOPIC_SPACE_RE = re.compile(r"\s+")
 
-# Lightweight lexical normalization for high-impact topic variants.
 _TOPIC_TOKEN_NORMALIZATION: dict[str, str] = {
     "герои": "герой",
     "героев": "герой",
@@ -717,7 +709,6 @@ def resolve_category(raw: str) -> tuple[str, str] | None:
     if key in _CATEGORY_ALIASES:
         return _CATEGORY_ALIASES[key]
 
-    # Try prefix match or root match safely
     for alias, pair in _CATEGORY_ALIASES.items():
         if len(key) >= 3 and (alias.startswith(key) or key.startswith(alias)):
             return pair
@@ -774,8 +765,6 @@ def _detect_lang(text: str) -> str:
     cyrillic = sum(1 for c in letters if "\u0400" <= c <= "\u04ff")
     return "ru" if cyrillic / len(letters) > 0.3 else "en"
 
-
-# ── Word validation ───────────────────────────────────────────────────────────
 
 _WORD_RE = re.compile(r"^[\w\s\-']+$", re.UNICODE)
 _WORD_MAX_LEN = 40
@@ -855,11 +844,6 @@ def _normalise_fast_word_candidate(raw: str | None, lang: str = "ru") -> str | N
     return cleaned
 
 
-# ── Reverse word-to-category index ────────────────────────────────────────────
-# Flat dict: lowercase_word → canonical_category_key.
-# Built once at import time so lookup is O(1).
-# Used by find_word_category() to enrich custom-word hint context (Bug-6.4).
-
 _WORD_TO_CATEGORY: dict[str, str] = {
     word: category for _lang_bank in WORD_BANK.values() for category, words in _lang_bank.items() for word in words
 }
@@ -874,10 +858,6 @@ def find_word_category(word: str) -> str | None:
     return _WORD_TO_CATEGORY.get(word.strip().lower())
 
 
-# ── Word-to-English translation cache (for image prompt quality) ─────────────
-# Populated at runtime by crocodile_daily._translate_word_for_prompt().
-# Kept here so the cache survives handler reloads within a process lifetime.
-
 _PROMPT_TRANSLATION_CACHE: dict[str, str] = {}
 
 
@@ -889,9 +869,6 @@ def get_english_equivalent(word: str) -> str | None:
     are O(1) lookups with no LLM round-trip.
     """
     return _PROMPT_TRANSLATION_CACHE.get(word.strip().lower())
-
-
-# ── Word bank analytics (used by /wordbank admin command) ─────────────────────
 
 
 async def get_bank_stats(category: str, *, lang: str = "ru") -> dict[str, int]:
@@ -951,7 +928,6 @@ async def resolve_custom_word_category(word: str) -> str:
     if local_cat:
         return local_cat
 
-    # Check in-process+disk cache before calling the LLM
     from app.games.judgement_cache import cache_word_category, get_cached_word_category
 
     selected_model = await daily_ai.get_daily_text_model_for("category")
@@ -1023,7 +999,6 @@ async def resolve_custom_word_category(word: str) -> str:
             raw = (response_text or "").strip().strip("`'\" \r\n.")
             for valid_cat in _ALL_CATS:
                 if valid_cat.lower() in raw.lower():
-                    # Persist to cache so same word never hits LLM again
                     await cache_word_category(category_cache_word, valid_cat)
                     return valid_cat
             await cache_word_category(category_cache_word, "Разное")
@@ -1034,20 +1009,14 @@ async def resolve_custom_word_category(word: str) -> str:
     return "Слово игрока (произвольная тема)"
 
 
-# ── AI-generated word bank ───────────────────────────────────────────────────
-
-# In-process cache: (lang, canonical_category) → word list
-# Avoids re-generating the same custom category within a process lifetime.
 _GENERATED_CACHE: dict[str, list[str]] = {}
 _GENERATED_INFLIGHT: dict[str, asyncio.Task[list[str] | None]] = {}
 _PROVISIONAL_GENERATED: dict[str, str] = {}
-# In-process rotation state: topic_id -> (bank_hash, order, cursor)
 _TOPIC_ROTATION: dict[str, tuple[str, list[str], int]] = {}
 
-# Gemini models tried in order for word generation
 _GEN_PRIMARY_MODEL = "opencode-go/minimax-m2.7"
 _GEN_FALLBACK_MODEL = "gemini-3.5-flash"
-_GEN_TIMEOUT_S = 30.0  # Background task: user not waiting, let slow providers finish
+_GEN_TIMEOUT_S = 30.0
 
 _GEN_PROMPT = (
     "Ты опытный геймдизайнер-пантомим игры 'Крокодил'. Твоя цель — придумать ровно 20 уникальных существительных "
@@ -1111,7 +1080,6 @@ def _normalise_word_diversity_key(word: str) -> str:
     return _SPACES_RE.sub(" ", base).strip(" -")
 
 
-# Characters that significantly raise word difficulty (slavic rares + latin outliers)
 _RARE_CHARS: frozenset[str] = frozenset("щъёэцшжqxz")
 
 
@@ -1177,22 +1145,18 @@ def _filter_words_by_difficulty(words: list[str], *, topic_id: str, preferred_di
 
     scored = [(word, describe_word_bank_entry(word, topic_id=topic_id)) for word in words]
     if preferred_difficulty == "easy":
-        # Tier 1: strictly easy + common
         filtered = [
             word for word, meta in scored if meta["difficulty_band"] == "easy" and meta["rarity_band"] == "common"
         ]
         if filtered:
             return filtered
-        # Tier 2: easy or medium (never hard) — broadened pool when bank is small
         filtered = [word for word, meta in scored if meta["difficulty_band"] in ("easy", "medium")]
         if filtered:
             return filtered
-        # Tier 3: absolute fallback — exclude hard-band words, take shorter half
         non_hard = [word for word, meta in scored if meta["difficulty_band"] != "hard"]
         pool = non_hard or words
         return sorted(pool, key=lambda item: (len(item.replace(" ", "")), item))[: max(1, len(pool) // 2)]
 
-    # hard: prefer hard-band or rare words
     filtered = [word for word, meta in scored if meta["difficulty_band"] == "hard" or meta["rarity_band"] == "rare"]
     if filtered:
         return filtered
@@ -1224,7 +1188,6 @@ def _pick_rotating_word(topic_id: str, words: list[str], used: set[str] | None =
             for word in used
         }
 
-    # If all words are currently "used", continue regular cycle.
     if not available_keys:
         available_keys = {
             describe_word_bank_entry(word, topic_id=topic_id)["normalized_lemma"] or _normalise_word_pick_key(word)
@@ -1306,7 +1269,6 @@ async def generate_words_for_category(
         _PROVISIONAL_GENERATED.pop(cache_key, None)
         logger.info("Hydrated AI-generated words for category %r (%s) from persistent cache", category, lang)
         if topic_id_norm:
-            # Write-through into topic-aware key so next lookup stays isolated.
             await cache_generated_words(lang, category, cached, topic_id=topic_id_norm)
         return cached
 
@@ -1315,7 +1277,6 @@ async def generate_words_for_category(
         return await asyncio.shield(inflight)
 
     lang_hint = "русском" if lang == "ru" else "English"
-    # Ensure system constraint explicitly for json arrays:
     prompt = render_prompt_text(get_prompt_text("crocodile.words.bank"), category=category.strip(), lang_hint=lang_hint)
 
     async def _do_generate() -> list[str] | None:
@@ -1359,7 +1320,6 @@ async def generate_words_for_category(
                 if lease is None:
                     continue
 
-                # Using ProviderRouter handles keys, timeouts, and circuit breaking natively
                 async with lease:
                     response_text, _ = await router.get_response(
                         preferred_model=model,
@@ -1382,7 +1342,6 @@ async def generate_words_for_category(
                     )
                     continue
 
-                # Strip markdown code fences if model wraps output
                 raw = _MD_FENCE_START_RE.sub("", raw)
                 raw = _MD_FENCE_END_RE.sub("", raw).strip()
 
@@ -1507,7 +1466,6 @@ async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: 
             logger.warning("Selected-model fast word generation failed: %s", type(exc).__name__)
             return None
 
-    # ── Slot A: Vertex AI Express + Search Grounding (primary) ────────────────
     async def _vertex_slot() -> str | None:
         lease = await acquire_foreground_slot("fast_word", "vertex_express", "gemini-3.1-flash-lite")
         if lease is None:
@@ -1551,7 +1509,6 @@ async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: 
             logger.warning("Fast word Vertex slot failed for %r: %r", category, exc)
             return None
 
-    # ── Slot B: Opencode inline model via ProviderRouter (fallback) ──────────
     async def _opencode_slot() -> str | None:
         model_name = settings.OPENCODE_INLINE_MODEL or "opencode-go/minimax-m2.5"
         lease = await acquire_foreground_slot("fast_word", "opencode_go", model_name)
@@ -1586,7 +1543,6 @@ async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: 
             logger.warning("Fast word Opencode slot failed for %r: %r", category, exc)
             return None
 
-    # ── Race both slots — first valid word wins ──────────────────────────────
     vertex_task = asyncio.create_task(_vertex_slot())
     opencode_task = asyncio.create_task(_opencode_slot())
     word_result: str | None = None
@@ -1598,7 +1554,7 @@ async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: 
                 timeout=10.0,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if not done:  # outer timeout
+            if not done:
                 break
             for task in done:
                 try:
@@ -1614,9 +1570,6 @@ async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: 
         await drain_provider_tasks((vertex_task, opencode_task))
 
     return word_result
-
-
-# ── Random word picker ────────────────────────────────────────────────────────
 
 
 async def pick_random_word_for_topic(
@@ -1671,7 +1624,6 @@ async def pick_random_word_for_topic(
                 else:
                     logger.info("Using provisional fast-word cache for category %r (%s)", category, lang)
             else:
-                # First response path: return one fast word, pre-warm full bank in background.
                 fast_word = await _generate_single_word_fast(category, lang, model=selected_model)
                 if not fast_word:
                     generated = await generate_words_for_category(
@@ -1694,7 +1646,6 @@ async def pick_random_word_for_topic(
                 is_generated = True
                 logger.info("Using AI-generated words for category %r (%s)", category, lang)
 
-    # De-duplicate via Redis (best-effort; Redis miss is non-fatal).
     used: set[str] = set(used_words or set())
     if redis_used_key:
         try:
@@ -1706,7 +1657,6 @@ async def pick_random_word_for_topic(
         except Exception as exc:
             logger.debug("Redis smembers failed for %s: %s", redis_used_key, exc)
 
-    # Reset used-set only when all known words are exhausted.
     used_normalized = {_normalise_word_pick_key(item) for item in used}
     if used and all(_normalise_word_pick_key(word) in used_normalized for word in words):
         if redis_used_key:
@@ -1736,7 +1686,7 @@ async def pick_random_word_for_topic(
 
             if redis_client:
                 await redis_client.sadd(redis_used_key, chosen)  # type: ignore[misc]
-                await redis_client.expire(redis_used_key, 3600)  # 1h TTL
+                await redis_client.expire(redis_used_key, 3600)
         except Exception as exc:
             logger.debug("Redis sadd failed: %s", exc)
 

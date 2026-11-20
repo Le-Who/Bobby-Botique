@@ -73,7 +73,6 @@ def test_wav_metadata_is_parsed_and_compatible_frames_returned(mime):
 
     pcm = b"\x01\x00" * 100
     data = wav_bytes(frames=pcm)
-    # A valid ancillary chunk proves the adapter does not strip a fixed 44-byte header.
     ancillary = b"JUNK" + struct.pack("<I", 4) + b"test"
     data = data[:12] + ancillary + data[12:]
     data = data[:4] + struct.pack("<I", len(data) - 8) + data[8:]

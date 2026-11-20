@@ -1,4 +1,3 @@
-# /app/repos/memory_tools.py
 """Agentic RAG — expose memory search as a Tool Declaration for Gemini function calling.
 
 When the agentic research loop is active and LTM is enabled, the agent can call

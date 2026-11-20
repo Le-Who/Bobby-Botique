@@ -32,7 +32,6 @@ async def redis_queue_keys():
         yield client, keys
     finally:
         try:
-            # Never flush a shared database: remove only this fixture's UUID keys.
             await client.delete(*vars(keys).values())
         finally:
             await client.aclose()
@@ -95,7 +94,6 @@ async def test_recovery_waits_for_expired_owner_and_is_idempotent(redis_queue_ke
     assert await redis.eval(queue._RECOVER_TASK, 3, *arguments) == 0
     assert await redis.lrange(keys.processing, 0, -1) == ["orphan-task"]
     assert await redis.llen(keys.pending) == 0
-    # Expire the fixture's lease deterministically rather than waiting for TTL.
     await redis.delete(keys.lease)
     assert await redis.eval(queue._RECOVER_TASK, 3, *arguments) == 1
     assert await redis.eval(queue._RECOVER_TASK, 3, *arguments) == 0

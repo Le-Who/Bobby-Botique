@@ -1,4 +1,3 @@
-# /app/handlers/cmd_conversations.py
 """Conversation management commands: save, list, switch, rename, delete."""
 
 from datetime import datetime
@@ -20,13 +19,11 @@ from app.utils.decorators import authorized_only
 
 @authorized_only
 async def save_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for получения argumentов команды
     """Сохранить текущую беседу"""
     user_id = update.effective_user.id
 
     args = context.args
     if not args:
-        # AI-powered auto-title from first messages
         chat_state = await get_user_chat(user_id)
         if chat_state and chat_state.history:
             from app.repos.analytics import generate_auto_title
@@ -40,13 +37,11 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
     if len(title) > 100:
         title = title[:97] + "..."
 
-    # Определяем current role
     chat_state = await get_user_chat(user_id)
     role_type = None
     role_id = None
 
     if chat_state and chat_state.system_prompt:
-        # Check, есть ли активная role
         for key, role_data in DEFAULT_ROLES.items():
             if role_data["prompt"] in chat_state.system_prompt:
                 role_type = "role"
@@ -63,11 +58,9 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
 
 @authorized_only
 async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for получения argumentов команды
     """Показать список сохранённых бесед"""
     user_id = update.effective_user.id
 
-    # Parse arguments for пагинации
     page = 1
     if context.args and context.args[0].isdigit():
         page = int(context.args[0])
@@ -82,7 +75,6 @@ async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 @authorized_only
 async def switch_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for получения argumentов команды
     """Переключиться на беседу"""
     user_id = update.effective_user.id
 
@@ -105,7 +97,6 @@ async def switch_conversation_command(update: Update, context: ContextTypes.DEFA
 
 @authorized_only
 async def rename_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for получения argumentов команды
     """Переименовать беседу"""
     user_id = update.effective_user.id
 
@@ -132,7 +123,6 @@ async def rename_conversation_command(update: Update, context: ContextTypes.DEFA
 
 @authorized_only
 async def delete_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for получения argumentов команды
     """Удалить беседу"""
 
     args = context.args
@@ -144,7 +134,6 @@ async def delete_conversation_command(update: Update, context: ContextTypes.DEFA
 
     conv_id = int(args[0])
 
-    # Подтверждение удаления
     keyboard = [
         [InlineKeyboardButton("✅ Да, удалить", callback_data=f"conv_delete_confirm:{conv_id}")],
         [InlineKeyboardButton("❌ Отмена", callback_data="conv_delete_cancel")],

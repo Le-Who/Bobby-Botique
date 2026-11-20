@@ -34,7 +34,6 @@ async def controls_server(monkeypatch):
     config.graceful_timeout = 1
     sockets = config.create_sockets()
     port = sockets.insecure_sockets[0].getsockname()[1]
-    # Retain the reserved ephemeral socket; do not race a second bind.
     monkeypatch.setattr(config, "create_sockets", lambda: sockets)
     previous_secret = quart_app.secret_key
     stop = asyncio.Event()
@@ -106,7 +105,6 @@ async def test_hypercorn_rejects_oversized_controls_before_chunked_eof(controls_
         async with chunked_request(controls_server) as (reader, writer):
             for size in chunk_sizes:
                 await send_chunk(writer, b" " * size)
-            # No terminating chunk is sent: receiving 413 must not depend on EOF.
             assert await response_status(reader) == 413
         write.assert_not_awaited()
 

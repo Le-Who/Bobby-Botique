@@ -121,15 +121,11 @@ class UploadConnection:
             return [{key: row[key] for key in ("id", "filename", "created_at")} for row in matches[:1]]
         if sql.startswith("INSERT INTO user_documents"):
             if self.pool.failure == "insert":
-                # The old standalone-query retry layer exits immediately for this
-                # synthetic error; the repository must still propagate failure.
                 raise asyncpg.PostgresError("rate limit: synthetic insert failure")
             if self.pool.pause_insert:
                 self.pool.insert_entered.set()
                 await self.pool.release_insert.wait()
             if any(row["file_hash"] == params[5] for row in rows):
-                # The real schema has UNIQUE(user_id, file_hash). Keep this
-                # constraint so forced copies cannot pass with invalid SQL.
                 raise asyncpg.UniqueViolationError("synthetic user_documents hash conflict")
             row = {
                 "id": self.pool.next_id,

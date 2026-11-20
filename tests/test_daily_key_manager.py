@@ -6,8 +6,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-# ─── DailyKeyManager unit tests ────────────────────────────────────────────
-
 
 class TestDailyKeyManager:
     """Tests for the generic DailyKeyManager key rotation engine."""
@@ -115,7 +113,7 @@ class TestDailyKeyManager:
             mock_db.return_value = [{"request_count": 50}]
             result = await mgr.is_key_available("hash1", "model", 100)
 
-        assert result is True  # 50 < 100 * 0.9 = 90
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_is_key_available_over_limit(self):
@@ -130,13 +128,12 @@ class TestDailyKeyManager:
             mock_db.return_value = [{"request_count": 95}]
             result = await mgr.is_key_available("hash1", "model", 100)
 
-        assert result is False  # 95 >= 100 * 0.9 = 90
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_is_key_available_no_limit(self):
         """Should return True when no daily limit is set."""
         mgr = self._make_manager()
-        # No db_query needed — should short-circuit
         result = await mgr.is_key_available("hash1", "model", None)
         assert result is True
 
@@ -150,10 +147,10 @@ class TestDailyKeyManager:
             patch("app.repos.keys.settings") as mock_settings,
         ):
             mock_settings.LIMIT_THRESHOLD_PERCENT = 0.9
-            mock_db.return_value = []  # No usage record
+            mock_db.return_value = []
             result = await mgr.is_key_available("hash1", "model", 100)
 
-        assert result is True  # 0 < 90
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_get_fresh_available_key_with_limit(self):
@@ -166,8 +163,8 @@ class TestDailyKeyManager:
         ):
             mock_settings.LIMIT_THRESHOLD_PERCENT = 0.9
             mock_db.return_value = [
-                {"key_hash": "h1", "api_key": "k1", "request_count": 95},  # over
-                {"key_hash": "h2", "api_key": "k2", "request_count": 10},  # under
+                {"key_hash": "h1", "api_key": "k1", "request_count": 95},
+                {"key_hash": "h2", "api_key": "k2", "request_count": 10},
             ]
             result = await mgr.get_fresh_available_key("model", 100)
 
@@ -223,9 +220,6 @@ class TestDailyKeyManager:
         assert _openrouter_km.usage_table == "openrouter_key_usage"
 
 
-# ─── MonthlyKeyManager unit tests ──────────────────────────────────────────
-
-
 class TestMonthlyKeyManager:
     """Tests for the monthly-credit MonthlyKeyManager engine."""
 
@@ -267,7 +261,7 @@ class TestMonthlyKeyManager:
             mock_db.return_value = mock_result
             result = await mgr.get_available_key()
 
-        assert result is None  # Both >= 1000 * 0.9 = 900
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_available_key_empty_table(self):

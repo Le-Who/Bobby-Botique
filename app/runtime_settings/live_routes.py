@@ -98,7 +98,7 @@ def effective_policy_value(process_id: str, snapshot: store.SettingsSnapshot) ->
         return default_policy(process_id, provider)
     if isinstance(raw, Mapping):
         return {**raw, "inherit_user_model": False}
-    return raw  # The ordinary process validator rejects malformed explicit plans.
+    return raw
 
 
 def _plain(value: Any) -> Any:
@@ -147,7 +147,6 @@ async def _initial_gemini(original: Mapping[str, Any]) -> dict[str, Any]:
     plans = {}
     for process_id in LIVE_PROCESS_IDS:
         previous = original.get(process_id)
-        # Preserve custom Gemini chains, strategy and inheritance verbatim.
         if previous and all(model.startswith("gemini-") for model in previous["models"]):
             plans[process_id] = _plain(previous)
             continue
@@ -177,8 +176,6 @@ async def switch_provider(provider: str, *, expected_revision: int, actor: str) 
         if provider == "openai":
             target = {process_id: default_policy(process_id, provider) for process_id in LIVE_PROCESS_IDS}
         elif provider == "gemini":
-            # On first activation capture the original Gemini configuration too,
-            # before replacing it with the OpenAI profile.
             baseline = current.values.get("live_route:saved:baseline", original)
             target = await _initial_gemini(baseline)
         else:

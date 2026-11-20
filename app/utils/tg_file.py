@@ -70,15 +70,10 @@ async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
     if getattr(bot, "local_mode", False) and tg_file.file_path:
         local_path_str = _extract_local_path(tg_file.file_path)
         if local_path_str:
-            # Shared-volume metadata and reads can stall on disk; keep that
-            # latency out of the event loop serving all Telegram/web requests.
             content = await asyncio.to_thread(_read_local_file, Path(local_path_str))
             if content is not None:
                 return content
 
-            # Volume not mounted in this container — fetch from local Bot API server via HTTP.
-            # PTB's base_file_url in local_mode = "http://tg-api:8081/file/bot{TOKEN}"
-            # The local server serves: base_file_url + absolute_file_path
             logging.warning("get_file_bytes: local path unavailable; trying local Bot API server HTTP")
             try:
                 import httpx
@@ -109,9 +104,6 @@ async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
         else:
             logging.warning("get_file_bytes: unsafe local file path; falling back to network download")
 
-    # Cloud mode OR all local fallbacks exhausted: use PTB's standard network download.
-    # In cloud mode this calls api.telegram.org; in local mode this tries disk again
-    # (last-resort — should only be reached if local server HTTP also failed).
     content = bytes(await tg_file.download_as_bytearray())
     if len(content) > MAX_TELEGRAM_FILE_BYTES:
         raise ValueError("Telegram file is too large")

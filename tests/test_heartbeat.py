@@ -37,14 +37,12 @@ class TestHeartbeatRegistry:
         assert 42 not in _HEARTBEAT_EVENTS
 
     def test_stop_nonexistent_is_noop(self):
-        # Should not raise
         stop_heartbeat(999)
 
     def test_stop_already_set_event(self):
         event = asyncio.Event()
         event.set()
         register_heartbeat(42, event)
-        # Stopping an already-set event should still remove it
         stop_heartbeat(42)
         assert 42 not in _HEARTBEAT_EVENTS
 
@@ -75,5 +73,4 @@ class TestHeartbeatRegistry:
         register_heartbeat(42, e2)
         stop_heartbeat(42)
         assert e2.is_set()
-        # e1 was overwritten, not stopped
         assert not e1.is_set()

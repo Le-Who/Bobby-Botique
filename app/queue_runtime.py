@@ -302,8 +302,6 @@ class TaskQueue:
                 if snapshot:
                     self._cache(snapshot, user_id)
             except Exception:
-                # Admission is already confirmed; an optional cache refresh is
-                # not authority to turn it into a rejection or another enqueue.
                 pass
         return admission
 
@@ -314,8 +312,6 @@ class TaskQueue:
         if task_type == "cleanup_metrics":
             operation = f"metrics:{int(self._clock() // 86400)}"
         if not operation:
-            # The legacy interface has no operation identity. Its one-shot callers
-            # get one identity; request-aware callers use enqueue_job explicitly.
             operation = uuid.uuid4().hex
         registration = self._registrations.get(task_type)
         if not registration:
@@ -485,8 +481,6 @@ class TaskQueue:
         )
 
     def _notify_work(self, lane: str):
-        # Rotate instead of clearing: every waiter retains the generation it saw
-        # before claiming, including workers still awaiting an empty Redis reply.
         event = self._work_available[lane]
         self._work_available[lane] = asyncio.Event()
         event.set()
@@ -513,8 +507,6 @@ class TaskQueue:
                 await self._choose_store().sweep()
             except Exception as error:
                 logging.warning("Queue scheduler unavailable (%s)", type(error).__name__)
-            # Claims also sweep. This independent timer covers expiry/retention
-            # while all workers are occupied, without waking idle worker pools.
             await asyncio.sleep(MAX_IDLE_POLL_SECONDS)
 
     async def _schedule_metrics_cleanup(self):

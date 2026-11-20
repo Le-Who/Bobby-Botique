@@ -60,11 +60,9 @@ def parse_brief_schedule(time_str: str) -> int:
         raise ValueError("Time string cannot be empty")
 
     try:
-        # Handle formats like "08:00" or "8:00"
         if ":" in time_str:
             hour_str = time_str.split(":")[0]
             hour = int(hour_str)
-        # Handle plain numbers like "8"
         else:
             hour = int(time_str)
 
@@ -73,13 +71,9 @@ def parse_brief_schedule(time_str: str) -> int:
 
         return hour
     except ValueError as e:
-        # Re-raise with our custom message or the inner value error if it's ours
         if "must be between" in str(e) or "cannot be empty" in str(e):
             raise
         raise ValueError(f"Invalid time format: {time_str}") from e
-
-
-# ── Database operations ──────────────────────────────────────────────────
 
 
 async def get_subscription(user_id: int, sub_type: str = "morning_brief") -> dict[str, Any] | None:
@@ -188,9 +182,6 @@ async def get_due_subscriptions(current_hour_utc: int) -> list[dict[str, Any]]:
         return []
 
 
-# ── Brief generation pipeline ───────────────────────────────────────────
-
-
 async def _query_ltm_topic_rows(
     user_id: int,
     source_type: str,
@@ -217,9 +208,7 @@ async def _query_ltm_topic_rows(
 async def _get_user_topics_snapshot(user_id: int) -> tuple[list[str], int | None]:
     """Extract topics together with the consent epoch that authorized the read."""
     try:
-        # Prefer consolidated facts (already distilled by LLM)
         result = await _query_ltm_topic_rows(user_id, "consolidated", 5)
-        # Fallback to raw user intents
         if not result:
             result = await _query_ltm_topic_rows(user_id, "user_intent", 10)
         if not result:
@@ -231,17 +220,15 @@ async def _get_user_topics_snapshot(user_id: int) -> tuple[list[str], int | None
             return [], None
         expected_epoch = epochs.pop()
 
-        # Extract key topics from recent memories
         topics: list[str] = []
         for row in result:
             content = row.get("content", "")
             if content and len(content) > 20:
-                # Take first meaningful sentence
                 first_sentence = content.split(".")[0].strip()
                 if first_sentence and len(first_sentence) > 10:
                     topics.append(first_sentence[:100])
 
-        return topics[:5], expected_epoch  # Limit to 5 topics
+        return topics[:5], expected_epoch
     except Exception as e:
         logger.error("Error getting user topics: %s", e, exc_info=True)
         return [], None
@@ -279,7 +266,7 @@ async def _search_for_topics(
     try:
         from app.search_services import tavily_search_agent
 
-        for topic in topics[:3]:  # Limit API calls
+        for topic in topics[:3]:
             if user_id is not None and not await _is_ltm_snapshot_current(user_id, expected_epoch):
                 logger.info("Stopped stale/revoked brief search for user %s", user_id)
                 break
@@ -324,7 +311,7 @@ async def _search_for_topics(
     except ImportError:
         logger.warning("Tavily search client not available for briefs")
 
-    return articles[:5]  # Limit total articles
+    return articles[:5]
 
 
 async def _generate_brief_summary(
@@ -471,7 +458,6 @@ async def _generate_brief_summary(
                     input_chars=len(prompt),
                 )
         raw = (response.text or "").strip()
-        # Strip any accidental markdown fences
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         return json.loads(raw)  # type: ignore[return-value]
@@ -515,11 +501,10 @@ async def generate_and_send_brief(
             if not sections:
                 return
 
-            # ── Build HTML digest with expandable blockquotes ─────────────────
             import html as _html
 
             now_ts = int(time.time())
-            time_tag = tg_time_tag(now_ts, fmt="f")  # "March 20, 2026 07:00"
+            time_tag = tg_time_tag(now_ts, fmt="f")
             lines: list[str] = [
                 f"<b>📬 Утренний брифинг</b> · {time_tag}\n",
             ]
@@ -527,10 +512,9 @@ async def generate_and_send_brief(
             for headline, body in sections.items():
                 safe_headline = _html.escape(headline)
                 safe_body = _html.escape(body) if body else ""
-                # Each topic as a collapsible blockquote: headline visible, body collapsed
                 block = wrap_in_expandable_blockquote(safe_body, label=safe_headline)
                 lines.append(block)
-                lines.append("")  # visual spacing
+                lines.append("")
 
             html_message = "\n".join(lines).strip()
 
@@ -544,9 +528,6 @@ async def generate_and_send_brief(
     except Exception as e:
         logger.error("Failed to send brief to user %s: %s", user_id, e, exc_info=True)
         return False
-
-
-# ── Telegram command handlers ────────────────────────────────────────────
 
 
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -602,9 +583,6 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(t("brief.unsubscribe_error"))
 
 
-# ── Scheduler job ────────────────────────────────────────────────────────
-
-
 async def check_and_send_briefs(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Hourly job: check for due subscriptions and send briefs.
 
@@ -623,7 +601,6 @@ async def check_and_send_briefs(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     logger.info("Found %d due subscriptions for hour %d UTC", len(due_subs), current_hour)
 
-    # Concurrency cap: 10 simultaneous LLM+search chains prevent provider overload.
     sem = asyncio.Semaphore(10)
 
     async def _send_one(sub: dict, *, retry=False) -> None:

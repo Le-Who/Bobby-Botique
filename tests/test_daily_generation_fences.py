@@ -85,7 +85,7 @@ async def test_provider_swallowing_cancel_cannot_publish_late_result(monkeypatch
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
-            pass  # adversarial provider adapter
+            pass
         await checkpoint()
         await writer()
 

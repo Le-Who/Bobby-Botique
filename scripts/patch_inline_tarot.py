@@ -10,7 +10,6 @@ with open(INLINE_PY, encoding="utf-8") as f:
 
 print(f"Total lines before: {len(lines)}")
 
-# Verify anchor at line 1948 (0-indexed 1947)
 assert "_generate_tarot_inline" in lines[1947], f"Unexpected line 1948: {lines[1947]!r}"
 print("Anchor verified.")
 
@@ -67,10 +66,8 @@ async def _generate_tarot_inline(
 
     provider = get_provider_for_model(mdl, kd["api_key"])
 
-    # Resolve spread
     spread = SPREAD_BY_ID.get(spread_type, SpreadType.CLASSIC)
 
-    # Extract user question
     arg = _TAROT_PREFIX_RE.sub("", user_query).strip()
     if not arg:
         arg = "\u041e\u0431\u0449\u0438\u0439 \u043f\u0440\u043e\u0433\u043d\u043e\u0437"
@@ -87,7 +84,6 @@ async def _generate_tarot_inline(
     system_instruction = _build_tarot_system_prompt(spread, tarot_ctx, arg)
     prompt = f"\u0412\u043e\u043f\u0440\u043e\u0441 \u043a \u0422\u0430\u0440\u043e: {arg}"
 
-    # Spread-specific header for the final message
     _HEADER_MAP = {
         SpreadType.CLASSIC: "\ud83d\udd2e \u0422\u0430\u0440\u043e",
         SpreadType.DAILY:   "\ud83c\udfa4 \u041a\u0430\u0440\u0442\u0430 \u0434\u043d\u044f",
@@ -111,7 +107,6 @@ async def _generate_tarot_inline(
         result = "".join(chunks).strip()
         if result:
             cards_str = " \u2022 ".join(card_names)
-            # Only show card list for spreads with a meaningful question
             if spread == SpreadType.DAILY:
                 final_text = f"{header}\\n_\u0412\u044b\u043f\u0430\u043b\u0430: {cards_str}_\\n\\n{result}"
             else:
@@ -173,7 +168,6 @@ def _build_tarot_system_prompt(
         )
 
     if spread == SpreadType.YES_NO:
-        # Determine upright/reversed from the single card's orientation in tarot_ctx
         is_upright = "\u041f\u0440\u044f\u043c\u0430\u044f" in tarot_ctx
         verdict = "\u0414\u0410" if is_upright else "\u041d\u0415\u0422"
         verdict_context = "\u041f\u0420\u042f\u041c\u041e (\u043e\u0442\u0432\u0435\u0442: \u0414\u0410)" if is_upright else "\u041f\u0415\u0420\u0415\u0412\u0401\u0420\u041d\u0423\u0422\u041e (\u043e\u0442\u0432\u0435\u0442: \u041d\u0415\u0422)"
@@ -220,7 +214,6 @@ def _build_tarot_system_prompt(
             f"---\\n\u0412\u042b\u041f\u0410\u0412\u0428\u0418\u0415 \u041a\u0410\u0420\u0422\u042b:\\n{tarot_ctx}\\n---"
         )
 
-    # Fallback: CLASSIC
     return (
         "\u0422\u044b \u2014 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0442\u0430\u0440\u043e\u043b\u043e\u0433.\\n"
         f"---\\n\u0412\u042b\u041f\u0410\u0412\u0428\u0418\u0415 \u041a\u0410\u0420\u0422\u042b:\\n{tarot_ctx}\\n---\\n"
@@ -228,7 +221,6 @@ def _build_tarot_system_prompt(
     )
 """
 
-# Replace lines 1948-2028 (0-indexed 1947-2027) with new block
 new_lines = lines[:1947] + [NEW_BLOCK]
 
 with open(INLINE_PY, "w", encoding="utf-8") as f:

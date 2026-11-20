@@ -17,7 +17,7 @@ from app.core.research_budget import BudgetExhausted, ResearchBudget
 from app.database import ChatState
 from app.observability.events import emit
 
-_bg_tasks: set[asyncio.Task[Any]] = set()  # Prevent task garbage collection (RUF006)
+_bg_tasks: set[asyncio.Task[Any]] = set()
 
 from app.config import get_primary_provider
 from app.handlers.ai_core import (
@@ -170,7 +170,6 @@ async def _handle_qna_search_leased_impl(
     today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
     role_extra = f"\n{chat_state.system_prompt}" if chat_state.system_prompt else ""
 
-    # ── Provider-aware path selection ──────────────────────────────────────────────
     use_external_grounding = get_primary_provider() == "opencode" or is_opencode_model(chat_state.model)
     from app.process_policies import resolve_process
 
@@ -179,8 +178,6 @@ async def _handle_qna_search_leased_impl(
         model.startswith("openai-direct/gpt-6") for model in search_policy.models
     )
     if search_policy.explicit:
-        # Mixed-provider plans share supplied search evidence; only an all-Gemini
-        # or supported direct OpenAI plan relies on its provider's native tool.
         use_external_grounding = not native_openai and any(
             not model.startswith("gemini-") for model in search_policy.models
         )
@@ -192,7 +189,6 @@ async def _handle_qna_search_leased_impl(
         )
         fallback_chain = list(search_policy.models)
     elif use_external_grounding:
-        # ── External grounding: fetch JINA context for gateways/legacy plans ────
         from app.search_jina import search_for_grounding
 
         grounding_context = await search_for_grounding(actual_search_query)
@@ -208,10 +204,7 @@ async def _handle_qna_search_leased_impl(
             _setting("QNA_MODEL", GEMINI_ECONOMY_MODEL),
         ]
     else:
-        # ── Gemini path: native Google Search Grounding ────────────────────────
         system_instruction = render_prompt_text(get_prompt_text("search.native"), today=today, role_extra=role_extra)
-        # QnA ALWAYS uses grounding-capable models — user's chat model preference
-        # is ignored since arbitrary models may not support Google Search Grounding.
         fallback_chain = [GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL]
     history = [{"role": "user", "parts": [actual_search_query]}]
 
@@ -313,7 +306,6 @@ async def _handle_research_agent(
                     voice_delivery_bot=voice_delivery_bot,
                 )
 
-    # Research always includes the active chat history, even when LTM is off.
     async with private_data_lease(
         user_id,
         expected_epoch,
@@ -351,17 +343,14 @@ async def _handle_research_agent_leased_impl(
     delivery_observer: Callable[[TelegramResponseOutcome], None] | None = None,
     voice_delivery_bot: Bot | None = None,
 ):
-    # If search_query is provided, use it for search, else use user_message
     actual_search_query = search_query if search_query else user_message
 
     await _retire_placeholder_notice(placeholder_message)
     await metrics_collector.record_search_query()
 
-    # Determine trace IDs
     trace_user_id: int = user_id
     trace_chat_id: int | None = placeholder_message.chat.id if placeholder_message.chat else None
 
-    # The agentic tool loop uses Gemini SDK even when ordinary chat uses another provider.
     from app.config import is_gemini_chat_model_id
     from app.repos.keys import get_available_gemini_key
 
@@ -406,7 +395,6 @@ async def _handle_research_agent_leased_impl(
 
     key_hash = key_data["key_hash"]
 
-    # Define the status callback that will show stages + fun facts
     last_fact_time = 0.0
     current_fact = ""
 
@@ -417,7 +405,6 @@ async def _handle_research_agent_leased_impl(
             current_fact = await get_waiting_message(trace_user_id)
             last_fact_time = now
 
-        # Build rich status: stage + optional detail + fun fact
         parts = [stage_text]
         if detail:
             parts.append(detail)
@@ -430,12 +417,8 @@ async def _handle_research_agent_leased_impl(
             if "not modified" not in str(edit_error).lower():
                 logging.error("Could not edit placeholder message with status: %s", edit_error)
 
-    # ── Build ranked fallback model chain ──────────────────────────────────
-    # Sort by capability tier (highest = most intelligent) using the existing
-    # _get_tier() ranking from model_selector.py. Primary model always first.
     _fallback_chain = list(research_policy.models[first_available:])
 
-    # Run the agentic loop with automatic model fallback
     result: AgenticResult | None = None
     final_answer: str | None = None
     budget = ResearchBudget(
@@ -454,9 +437,7 @@ async def _handle_research_agent_leased_impl(
                         break
                 except BudgetExhausted:
                     break
-                # Resolve key for this model
                 if attempt_idx > 0:
-                    # Need a fresh key for the fallback model
                     key_data = await get_available_gemini_key(attempt_model)
                     if not key_data:
                         logging.warning(
@@ -467,7 +448,6 @@ async def _handle_research_agent_leased_impl(
                     key_hash = key_data["key_hash"]
                     model_used = attempt_model
 
-                    # Notify user about the fallback
                     try:
                         await placeholder_message.edit_text(
                             f"⚡ Переключаюсь на модель {attempt_model}...\n\n"
@@ -478,7 +458,6 @@ async def _handle_research_agent_leased_impl(
 
                 assert key_data is not None
 
-                # Agentic RAG: enable recall_memory tool when user has LTM enabled
                 _ltm_key = key_data["api_key"] if _ltm_enabled else None
 
                 agent = AgenticSearch(
@@ -508,7 +487,6 @@ async def _handle_research_agent_leased_impl(
                         result.total_tokens,
                     )
 
-                    # Check if this is an error answer → try next model
                     if final_answer and final_answer.startswith("❌") and attempt_idx < len(_fallback_chain) - 1:
                         logging.warning(
                             "Agentic model %s returned error answer, falling back to next model (attempt %d/%d)",
@@ -518,7 +496,6 @@ async def _handle_research_agent_leased_impl(
                         )
                         continue
 
-                    # Success or last attempt — break out
                     break
 
                 except Exception as ai_error:
@@ -534,7 +511,6 @@ async def _handle_research_agent_leased_impl(
                         logging.info("Will retry with next model in fallback chain")
                         continue
 
-                    # Last model also failed — show error to user
                     mark_operation_failed()
                     try:
                         await placeholder_message.edit_text(
@@ -564,9 +540,7 @@ async def _handle_research_agent_leased_impl(
             reason_code=budget.reason,
         )
 
-    # Process and display the final answer
     if final_answer and not final_answer.startswith("❌"):
-        # We successfully got an answer
         buttons = [
             [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
@@ -604,14 +578,11 @@ async def _handle_research_agent_leased_impl(
         if isinstance(delivery, (FailedDelivery, PartialDelivery)):
             mark_operation_failed()
 
-        # ── Auto TTS for research results (fire-and-forget) ──────────
         if len(final_answer) > 200:
             try:
                 from app.voice_engine import fire_voice_reply
                 from app.voice_intent import build_voice_source_key
 
-                # Detached TTS has its own FIFO, dedupe and privacy owner. A
-                # scheduled text claim must not govern its later voice send.
                 _bot = voice_delivery_bot if voice_delivery_bot is not None else placeholder_message.get_bot()
                 _chat_id = placeholder_message.chat.id if placeholder_message.chat else None
                 if _bot and _chat_id:
@@ -630,12 +601,10 @@ async def _handle_research_agent_leased_impl(
             except Exception as tts_err:
                 logging.debug("Auto TTS for research skipped: %s", tts_err)
 
-        # Save to history
         chat_state.history.append({"role": "user", "parts": [actual_search_query]})
         chat_state.history.append({"role": "model", "parts": [final_answer]})
         chat_state.is_deep_dive = True
 
-        # Generate unique thread_id for deep dive session if absent
         import uuid
 
         if not hasattr(chat_state, "deep_dive_thread_id") or not chat_state.deep_dive_thread_id:
@@ -648,7 +617,6 @@ async def _handle_research_agent_leased_impl(
 
         await update_user_chat(user_id, chat_state, expected_epoch=_expected_epoch)
     else:
-        # Agent failed to get an answer or returned an explicit error
         mark_operation_failed()
         error_msg = final_answer if final_answer else "Не удалось сформировать ответ."
         try:
@@ -709,7 +677,6 @@ async def _handle_complex_agent_search_leased_impl(
         await placeholder_message.edit_text("🖼️ Анализирую изображение...")
     except (BadRequest, NetworkError) as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
-        # If не можем отредактировать, отправляем new message
         placeholder_message = await placeholder_message.reply_text("🖼️ Анализирую изображение...")
 
     vision_model = _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL)
@@ -724,7 +691,6 @@ async def _handle_complex_agent_search_leased_impl(
 
     analysis_prompt = get_registry().get("image_analysis").text
 
-    # Create parts for Gemini API: промпт + image
     parts = [analysis_prompt, img] if img else [analysis_prompt]
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
     search_query, _ = await _get_ai_response_with_routing(
@@ -735,7 +701,6 @@ async def _handle_complex_agent_search_leased_impl(
         process_id="vision.search_query",
     )
 
-    # Check ошибки от роутера
     if await handle_ai_response_error(search_query, placeholder_message):
         mark_operation_failed()
         return
@@ -748,7 +713,6 @@ async def _handle_complex_agent_search_leased_impl(
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
-    # Get оригинальное message user for локалfromации
     original_user_message = original_message.caption or "Опиши это изображение."
 
     if search_prefix == "?":

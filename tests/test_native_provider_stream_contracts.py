@@ -260,7 +260,6 @@ async def test_legacy_metrics_use_actual_provider_and_exclude_local_rejections(m
 @pytest.mark.parametrize("kind", ["gemini", "openrouter", "opencode"])
 @pytest.mark.parametrize("empty", [True, False], ids=["empty", "whitespace"])
 async def test_native_empty_or_whitespace_has_one_pre_text_failure_and_closes(monkeypatch, kind, empty):
-    # A wrong visible-text check would turn whitespace into success or leak deltas.
     items = [] if empty else ([sdk_chunk(" \n\t")] if kind == "gemini" else text_frame(kind, " \n\t"))
     provider, stream, request, model = install_native(monkeypatch, kind, items)
     events = [event async for event in provider.stream(request, model_name=model)]
@@ -281,7 +280,6 @@ async def test_native_empty_or_whitespace_has_one_pre_text_failure_and_closes(mo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["gemini", "openrouter", "opencode"])
 async def test_native_finish_without_usage_preserves_text_and_nullable_metadata(monkeypatch, kind):
-    # Invented zero usage or lost finish reason breaks the typed terminal contract.
     if kind == "gemini":
         items = [sdk_chunk("Answer"), sdk_chunk(None, finish="STOP", usage=SimpleNamespace(total_token_count=None))]
     elif kind == "opencode":
@@ -312,7 +310,6 @@ async def test_native_finish_without_usage_preserves_text_and_nullable_metadata(
 @pytest.mark.parametrize("kind", ["gemini", "openrouter", "opencode"])
 @pytest.mark.parametrize("fault", ["transport", "timeout"])
 async def test_native_text_then_transport_failure_retains_partial_and_closes(monkeypatch, kind, fault):
-    # Retrying/penalizing a key after visible text risks a mixed or duplicated answer.
     error = (
         httpx.ReadError("synthetic transport failure")
         if fault == "transport"
@@ -361,7 +358,6 @@ async def test_native_http_rejection_distinguishes_invalid_payload_and_gateway_t
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["gemini", "openrouter", "opencode"])
 async def test_native_cancellation_propagates_and_awaits_response_close(monkeypatch, kind):
-    # Swallowed cancellation or a missing iterator/context close leaks an owned stream.
     provider, stream, request, model = install_native(monkeypatch, kind, [], block=True)
 
     async def consume():
@@ -380,8 +376,6 @@ async def test_native_cancellation_propagates_and_awaits_response_close(monkeypa
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["gemini", "openrouter", "opencode"])
 async def test_native_text_then_upstream_503_keeps_partial_without_retry_or_key_penalty(monkeypatch, kind):
-    # Provider-specific HTTP/SDK error classification must survive visible text;
-    # transport error bodies must not become deltas or diagnostic content.
     if kind == "gemini":
         error = gemini.APIError(503, {"error": {"message": "synthetic unavailable", "status": "UNAVAILABLE"}})
     else:
@@ -408,7 +402,6 @@ async def test_native_text_then_upstream_503_keeps_partial_without_retry_or_key_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["openrouter", "opencode"])
 async def test_sse_malformed_frame_is_skipped_before_valid_text(monkeypatch, kind):
-    # Invalid JSON must not become user-visible text or mask a later valid frame.
     items = ["event: content_block_delta", "data: {malformed}", ""] + text_frame(kind, "Valid")
     provider, stream, request, model = install_native(monkeypatch, kind, items)
     events = [event async for event in provider.stream(request, model_name=model)]
@@ -421,7 +414,6 @@ async def test_sse_malformed_frame_is_skipped_before_valid_text(monkeypatch, kin
 
 @pytest.mark.asyncio
 async def test_messages_sse_multiline_and_final_unterminated_frame_preserve_exact_usage(monkeypatch):
-    # Parsing per-line or dropping the final frame loses text/usage in valid Messages SSE.
     items = [
         "event: message_start",
         'data: {"message":{"usage":{"input_tokens":11,"cache_read_input_tokens":3}}}',
@@ -455,7 +447,6 @@ async def test_messages_sse_multiline_and_final_unterminated_frame_preserve_exac
     ],
 )
 async def test_factory_unknown_slug_uses_actual_provider_identity(monkeypatch, model, provider_kind):
-    # Generic slash routing must not capture known FTA prefixes, even for new models.
     stream = HttpStream(text_frame("openrouter", "Answer"))
     monkeypatch.setattr(openrouter, "_openrouter_http_client", stream)
     provider = get_provider_for_model(model, "synthetic-fta-key")
@@ -470,7 +461,6 @@ async def test_factory_unknown_slug_uses_actual_provider_identity(monkeypatch, m
 
 @pytest.mark.asyncio
 async def test_freetheai_inherited_stream_uses_overrides_and_correlated_header(monkeypatch):
-    # Wrong override dispatch changes endpoint/slug/auth or injects unsupported reasoning.
     model = "cat/unlisted-chat-model"
     stream = HttpStream(text_frame("openrouter", "Answer"))
     monkeypatch.setattr(openrouter, "_openrouter_http_client", stream)
@@ -520,7 +510,6 @@ async def test_freetheai_inherited_stream_uses_overrides_and_correlated_header(m
 async def test_freetheai_http_failure_categories_and_sensitive_body_are_not_exposed(
     monkeypatch, caplog, status, body, code, key, retry
 ):
-    # Model-access rejection must not invalidate a healthy credential or expose a body.
     secret_body = body + " private-prompt-marker Bearer synthetic-fta-key"
     stream = HttpStream([], status=status, body=secret_body)
     monkeypatch.setattr(openrouter, "_openrouter_http_client", stream)
@@ -552,8 +541,6 @@ async def test_freetheai_http_failure_categories_and_sensitive_body_are_not_expo
 async def test_freetheai_legacy_http_override_preserves_identity_without_sensitive_body(
     monkeypatch, caplog, status, body, code
 ):
-    # The legacy consumer must actually execute FTA's HTTP override while keeping
-    # the body/prompt/credential out of logging and the public tagged response.
     model = "cat/unlisted-chat-model"
     sensitive_body = body + " private-prompt-marker Bearer synthetic-fta-key"
     response = httpx.Response(status, text=sensitive_body, request=httpx.Request("POST", "https://offline.invalid"))
@@ -702,8 +689,6 @@ async def test_freetheai_legacy_http_override_preserves_identity_without_sensiti
 async def test_freetheai_access_classification_keeps_credential_denial_distinct_from_model_denial(
     monkeypatch, caplog, consumer, status, body, code, key, retry
 ):
-    # The word "access" alone, or a model mentioned beside an explicitly invalid
-    # credential, must never terminate key fallback as a model-only request error.
     model = "cat/unlisted-chat-model"
     sensitive_body = body + " private-prompt-marker Bearer synthetic-fta-key"
     response = httpx.Response(status, text=sensitive_body, request=httpx.Request("POST", "https://offline.invalid"))
@@ -755,8 +740,6 @@ async def test_freetheai_access_classification_keeps_credential_denial_distinct_
 async def test_freetheai_access_failure_after_text_does_not_retry_or_penalize_key(
     monkeypatch, caplog, status, body, code
 ):
-    # Once text is visible, credential/model/quota/rate errors retain their code
-    # but must not restart generation or change the selected key's disposition.
     model = "cat/unlisted-chat-model"
     sensitive_body = body + " private-prompt-marker Bearer synthetic-fta-key"
     response = httpx.Response(status, text=sensitive_body, request=httpx.Request("POST", "https://offline.invalid"))

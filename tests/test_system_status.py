@@ -16,7 +16,6 @@ class TestSystemStatus(unittest.IsolatedAsyncioTestCase):
         mock_pacific_date,
         mock_get_metrics,
     ):
-        # Setup mocks
         mock_pacific_date.return_value = "2023-10-27"
         mock_current_month.return_value = "2023-10"
         mock_reset_time.return_value = "10:00 28.10.2023"
@@ -24,7 +23,6 @@ class TestSystemStatus(unittest.IsolatedAsyncioTestCase):
         mock_metrics_summary = {"total_requests": 100, "error_rate": 1.5}
         mock_get_metrics.return_value = mock_metrics_summary
 
-        # Setup DB responses
         mock_gemini_keys = [{"api_key": "key1", "key_hash": "hash1"}]
         mock_gemini_usage = [{"key_hash": "hash1", "model_name": "gemini-pro", "request_count": 10}]
         mock_tavily_keys = [{"api_key": "tav1", "key_hash": "thash1"}]
@@ -43,17 +41,13 @@ class TestSystemStatus(unittest.IsolatedAsyncioTestCase):
 
         mock_db_query = AsyncMock(side_effect=db_side_effect)
 
-        # Scope database calls on the real metrics module
         with patch.object(metrics, "db") as mock_db:
             mock_db.db_query = mock_db_query
 
-            # Run function
             result = await metrics.get_system_status_data()
 
-        # Assertions
         self.assertEqual(result["metrics_summary"], mock_metrics_summary)
 
-        # Keys are masked by _mask_key() for security — short keys (< 10 chars) become "****"
         self.assertEqual(result["gemini"]["keys"][0]["key_hash"], "hash1")
         self.assertEqual(result["gemini"]["keys"][0]["api_key"], "****")
 

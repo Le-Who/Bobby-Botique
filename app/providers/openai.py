@@ -242,7 +242,6 @@ class OpenAIProvider(BaseAIProvider):
                                 native_event = await anext(iterator)
                         except StopAsyncIteration:
                             break
-                        # The SDK owns framing, event types, and structured output parsing.
                         kind = native_event.type
                         if not isinstance(kind, str):
                             raise ValueError("Invalid Responses event")
@@ -373,7 +372,6 @@ class OpenAIProvider(BaseAIProvider):
         timeout=120.0,
         thinking_level=None,
     ) -> AIResponse:
-        # Rotation belongs to the router; the transport makes exactly one attempt.
         return await self._execute_request(
             history, model_name, system_instruction, user_id, chat_id, timeout, thinking_level
         )

@@ -23,21 +23,16 @@ def test_split_text_safe_no_split():
 
 
 def test_split_text_safe_simple_split(mock_max_length):
-    # Text longer than mock_max_length
-    text = "Hello world " * 5  # 60 chars
+    text = "Hello world " * 5
     chunks = split_text_safe(text, max_length=mock_max_length)
 
     assert len(chunks) > 1
 
-    # Verify reconstruction (content check)
     reconstructed_content = "".join([strip_tags(c) for c in chunks])
     original_content = strip_tags(text)
-    # Remove spaces for robust comparison as split logic might trim
     assert reconstructed_content.replace(" ", "") == original_content.replace(" ", "")
 
     for chunk in chunks:
-        # Check length (approximate, since tags add length)
-        # For plain text, it should respect max_length
         assert len(chunk) <= mock_max_length
 
 
@@ -46,12 +41,8 @@ def test_split_text_safe_newlines(mock_max_length):
     chunks = split_text_safe(text, max_length=mock_max_length)
 
     assert len(chunks) > 1
-    # Should prefer splitting at newline
-    # Expected: "Line 1\nLine 2\n" (14 chars) or "Line 1\n" (7 chars)
-    # It should not split in the middle of "Line" unless forced
     assert "\n" in chunks[0]
 
-    # Verify full content
     reconstructed = "".join(chunks)
     assert reconstructed == text
 
@@ -62,14 +53,10 @@ def test_split_text_safe_tag_balance(mock_max_length):
 
     assert len(chunks) > 1
 
-    # First chunk should have closing </b>
     assert chunks[0].endswith("</b>")
-    # Second chunk should start with <b>
     assert chunks[1].startswith("<b>")
 
-    # Verify content
     full_content = "".join([strip_tags(c) for c in chunks])
-    # The original text has content "Hello world this is a long bold text"
     original_content = strip_tags(text)
     assert full_content.replace(" ", "") == original_content.replace(" ", "")
 
@@ -80,13 +67,8 @@ def test_split_text_safe_nested_tags(mock_max_length):
 
     assert len(chunks) > 1
 
-    # First chunk should close both
-    # Note: Order of closing tags depends on stack popping.
-    # Stack: [b, i]. Pop i -> </i>. Pop b -> </b>.
     assert chunks[0].endswith("</i></b>")
 
-    # Second chunk should open both
-    # Stack reconstruction: <b><i>
     assert chunks[1].startswith("<b><i>")
 
     full_content = "".join([strip_tags(c) for c in chunks])
@@ -94,25 +76,16 @@ def test_split_text_safe_nested_tags(mock_max_length):
 
 
 def test_split_text_safe_code_block():
-    # Code block splitting
     code = 'def foo():\n    return "bar"\n'
     text = f'<pre><code class="python">{code}</code></pre>'
 
-    # Force split
-    # Length of start tag: <pre><code class="python"> is 25 chars.
-    # Text is longer.
     chunks = split_text_safe(text, max_length=30)
 
     assert len(chunks) > 1
 
-    # Check if tags are preserved in first chunk
     assert chunks[0].startswith("<pre><code")
-    # It should close tags
     assert "</code></pre>" in chunks[0] or ("</pre>" in chunks[0] and "</code>" in chunks[0])
 
-    # Check subsequent chunks have context (reopened tags)
-    # The implementation attempts to reconstruct tags.
-    # We expect some form of reconstruction.
     found_reopen = False
     for chunk in chunks[1:]:
         if "<pre>" in chunk or "<code>" in chunk or "<code" in chunk:
@@ -120,7 +93,6 @@ def test_split_text_safe_code_block():
             break
     assert found_reopen, "Subsequent chunks should reopen code block tags"
 
-    # Check content preservation
     content = "".join([strip_tags(c) for c in chunks])
     content_stripped = content.replace(" ", "")
     assert "deffoo" in content_stripped
@@ -134,9 +106,6 @@ def test_split_text_safe_hard_split():
     assert len(chunks[0]) == 20
     assert len(chunks[1]) == 20
     assert len(chunks[2]) == 10
-
-
-# --- New tests for format_text ---
 
 
 def test_format_text_basic():
@@ -160,21 +129,16 @@ def test_format_text_non_html():
 
 
 def test_markdown_to_html_formatting():
-    # Bold
     assert format_text("**bold**")[0] == "<b>bold</b>"
-    # Italic
     assert format_text("__italic__")[0] == "<i>italic</i>"
     assert format_text("*italic*")[0] == "<i>italic</i>"
     assert format_text("_italic_")[0] == "<i>italic</i>"
-    # Inline code
     assert format_text("`code`")[0] == "<code>code</code>"
-    # Link
     assert format_text("[link](http://example.com)")[0] == '<a href="http://example.com">link</a>'
 
 
 def test_markdown_to_html_escaping():
     text = "<script>alert('xss')</script>"
-    # html.escape escapes single quotes by default
     expected = "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;"
     assert format_text(text)[0] == expected
 
@@ -204,14 +168,9 @@ def test_markdown_to_html_mixed():
 
 
 def test_markdown_to_html_nested():
-    # Testing known behavior: bold first, then italic
-    # **_bold italic_** -> <b>_bold italic_</b> -> <b><i>bold italic</i></b>
     text = "**_bold italic_**"
     result, _ = format_text(text)
     assert result == "<b><i>bold italic</i></b>"
-
-
-# --- Tests for sanitize_html_tags (streaming HTML balancer) ---
 
 
 def test_sanitize_already_balanced():
@@ -238,10 +197,8 @@ def test_sanitize_code_italic_mismatch():
     """
     html_input = "<code>some code <i>italic text</code>"
     result = sanitize_html_tags(html_input)
-    # All tags should be balanced
     assert result.count("<code>") == result.count("</code>")
     assert result.count("<i>") == result.count("</i>")
-    # Verify strict nesting via stack walk
     import re as _re
 
     stack = []
@@ -263,7 +220,6 @@ def test_sanitize_misnested_produces_valid_nesting():
     html_input = "<code>E = <i>mc²</code> rest"
     result = sanitize_html_tags(html_input)
 
-    # Walk the result and verify strict nesting
     import re as _re
 
     stack = []
@@ -276,7 +232,6 @@ def test_sanitize_misnested_produces_valid_nesting():
             assert stack, f"Orphaned </{tag}> in: {result}"
             assert stack[-1] == tag, f"Misnested: expected </{stack[-1]}>, got </{tag}> in: {result}"
             stack.pop()
-    # After the close tags appended at end, stack should be empty
     assert not stack, f"Unclosed tags {stack} in: {result}"
 
 
@@ -285,7 +240,6 @@ def test_sanitize_reopen_after_misnested_close():
     html_input = "<b><i>text</b> more italic</i>"
     result = sanitize_html_tags(html_input)
 
-    # Verify valid nesting
     import re as _re
 
     stack = []
@@ -298,7 +252,6 @@ def test_sanitize_reopen_after_misnested_close():
             assert stack and stack[-1] == tag, f"Bad nesting in: {result}"
             stack.pop()
     assert not stack, f"Unclosed tags {stack} in: {result}"
-    # The word "more italic" should still be present
     assert "more italic" in result
 
 
@@ -322,14 +275,10 @@ def test_sanitize_pre_code_unclosed():
 
 def test_markdown_to_html_partial_streaming():
     """Simulate incomplete markdown during streaming: bold open, italic open."""
-    # This is what happens mid-stream when AI sends "Hello **bold and *italic"
     text = "Hello **bold and *italic"
     result, _ = format_text(text)
-    # After markdown_to_html, bold becomes <b> but italic * stays as text
-    # The result may have unclosed tags — sanitize should fix them
     sanitized = sanitize_html_tags(result)
 
-    # Verify valid nesting via stack walk
     import re as _re
 
     stack = []
@@ -342,11 +291,6 @@ def test_markdown_to_html_partial_streaming():
             assert stack and stack[-1] == tag, f"Bad nesting in: {sanitized}"
             stack.pop()
     assert not stack, f"Unclosed tags {stack} in: {sanitized}"
-
-
-# ===================================================================
-# Tests for headings, blockquotes, strikethrough (new features)
-# ===================================================================
 
 
 class TestMarkdownToHtmlHeadings:
@@ -367,13 +311,11 @@ class TestMarkdownToHtmlHeadings:
 
     def test_heading_with_inline_formatting(self):
         result, _ = format_text("## **Bold heading**")
-        # The heading itself becomes <b>, and ** also becomes <b>
         assert "<b>" in result
         assert "Bold heading" in result
 
     def test_heading_does_not_match_mid_line(self):
         result, _ = format_text("This is not # a heading")
-        # Should NOT convert mid-line # to heading
         assert "<b>a heading</b>" not in result
 
     def test_multiple_headings(self):
@@ -394,7 +336,6 @@ class TestMarkdownToHtmlBlockquotes:
 
     def test_multiline_blockquote(self):
         result, _ = format_text("> Line 1\n> Line 2\n> Line 3")
-        # Should be a single blockquote wrapping all lines
         assert result.count("<blockquote>") == 1
         assert "Line 1" in result
         assert "Line 2" in result
@@ -404,7 +345,6 @@ class TestMarkdownToHtmlBlockquotes:
         result, _ = format_text("> Quote\nNormal text")
         assert "<blockquote>" in result
         assert "Normal text" in result
-        # Normal text should be outside the blockquote
         bq_end = result.index("</blockquote>")
         normal_pos = result.index("Normal text")
         assert normal_pos > bq_end

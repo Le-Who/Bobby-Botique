@@ -102,12 +102,9 @@ class ObservedAdmission:
 
 
 async def test_queued_admission_uses_execution_time_and_keeps_first_scope_capacity(server):
-    # Sampling before an awaited send can insert an already expired holder,
-    # allowing a second real client into a still active limit-one provider scope.
     clients, router, key = server
     owner = GlobalLLMSemaphore(1, timeout=1, redis_key=key)
     contender = GlobalLLMSemaphore(1, timeout=1, redis_key=key)
-    # Inspect admission itself before the first renewal can hide a stale score.
     owner._renew_interval = 1
     blocked, send, decided, entered, release_owner = (asyncio.Event() for _ in range(5))
     other = ObservedAdmission(clients[1])
@@ -174,8 +171,6 @@ async def test_queued_admission_uses_execution_time_and_keeps_first_scope_capaci
 async def test_host_clock_skew_does_not_change_server_capacity_or_lease_age(
     server, monkeypatch, owner_skew, contender_skew
 ):
-    # A slow owner or fast contender must not prune a live holder, and a fast
-    # owner must not pin capacity for an hour after its configured lease.
     clients, router, key = server
     skew = contextvars.ContextVar("semaphore_host_clock_skew", default=0)
     clock = SimpleNamespace(
@@ -215,8 +210,6 @@ async def test_host_clock_skew_does_not_change_server_capacity_or_lease_age(
 
 @pytest.mark.parametrize("skew", [-3600, 3600], ids=["slow-clock", "fast-clock"])
 async def test_renewal_uses_server_time_despite_host_clock_skew(server, monkeypatch, skew):
-    # Admission alone is insufficient: a client-timestamp renewal can expire or
-    # pin an otherwise healthy server lease when a replica's wall clock differs.
     clients, router, key = server
     clock = SimpleNamespace(time=lambda: time.time() + skew, monotonic=time.monotonic, monotonic_ns=time.monotonic_ns)
     monkeypatch.setattr("app.adapters.concurrency.time", clock)
@@ -460,7 +453,6 @@ async def test_cancel_at_real_admission_await_releases_only_request_token(server
 
 async def test_unreachable_redis_has_scoped_bounded_local_fallback(server):
     clients, router, key = server
-    # Owned local service's adjacent unused port fails via the real transport.
     broken = Redis(
         host="127.0.0.1", port=56480, db=15, socket_connect_timeout=0.1, socket_timeout=0.1, retry=Retry(NoBackoff(), 0)
     )

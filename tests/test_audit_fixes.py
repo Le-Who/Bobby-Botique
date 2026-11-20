@@ -8,10 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# ===========================================================================
-# M4 — is_encrypted hardening (base64url validation)
-# ===========================================================================
-
 
 class TestIsEncryptedHardened:
     """Test the strengthened is_encrypted heuristic (M4 fix)."""
@@ -33,14 +29,12 @@ class TestIsEncryptedHardened:
         """A string starting with gAAAAA but containing invalid base64 chars."""
         from app.crypto import is_encrypted
 
-        # Contains spaces and special chars — not valid base64url
         bad = "gAAAAA" + " not valid!!%&*() " * 5
         assert is_encrypted(bad) is False
 
     def test_accepts_real_fernet_token(self):
         from app.crypto import is_encrypted
 
-        # Valid Fernet token structure (base64url)
         token = "gAAAAABnQOeA" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" + "=="
         assert is_encrypted(token) is True
 
@@ -59,11 +53,6 @@ class TestIsEncryptedHardened:
             ciphertext = encrypt_api_key("AIzaSyB_test123")
             assert is_encrypted(ciphertext) is True
             reset_fernet()
-
-
-# ===========================================================================
-# M3 — Narrowed is_key_related_error
-# ===========================================================================
 
 
 class TestIsKeyRelatedErrorNarrowed:
@@ -89,7 +78,6 @@ class TestIsKeyRelatedErrorNarrowed:
         """M3 fix: bare 'limit' should NOT trigger key rotation."""
         from app.errors import is_key_related_error
 
-        # Message length limit — should NOT trigger key rotation
         assert is_key_related_error("Message exceeds the limit of 4096 characters") is False
 
     def test_quota_is_key_related(self):
@@ -109,11 +97,6 @@ class TestIsKeyRelatedErrorNarrowed:
         assert is_key_related_error("🔄 Server unavailable") is False
 
 
-# ===========================================================================
-# M1 — safe_handler and safe_callback decorators
-# ===========================================================================
-
-
 class TestSafeHandlerDecorator:
     """Test the DRY safe_handler error decorator (M1 fix)."""
 
@@ -131,10 +114,8 @@ class TestSafeHandlerDecorator:
         async def boom(update, context):
             raise RuntimeError("Something broke!")
 
-        # Should not raise
         await boom(mock_update, mock_context)
 
-        # Should have sent the error message
         mock_update.message.reply_text.assert_awaited_once_with("❌ Custom error message")
 
     @pytest.mark.asyncio
@@ -170,11 +151,6 @@ class TestSafeHandlerDecorator:
         mock_update.callback_query.answer.assert_awaited_once_with("❌ Callback error", show_alert=True)
 
 
-# ===========================================================================
-# C2 — Media group max-size guard
-# ===========================================================================
-
-
 class TestMediaGroupMaxSize:
     """Test the MEDIA_GROUPS_MAX_SIZE guard (C2 fix)."""
 
@@ -191,7 +167,6 @@ class TestMediaGroupMaxSize:
             cleanup_old_media_groups,
         )
 
-        # Save originals
         orig_groups = MEDIA_GROUPS.copy()
         orig_ttl = MEDIA_GROUPS_TTL.copy()
 
@@ -199,11 +174,9 @@ class TestMediaGroupMaxSize:
             MEDIA_GROUPS.clear()
             MEDIA_GROUPS_TTL.clear()
 
-            # Add an expired group
             MEDIA_GROUPS["expired-1"] = ["photo1"]
-            MEDIA_GROUPS_TTL["expired-1"] = time.monotonic() - 600  # 10 min ago
+            MEDIA_GROUPS_TTL["expired-1"] = time.monotonic() - 600
 
-            # Add a fresh group
             MEDIA_GROUPS["fresh-1"] = ["photo2"]
             MEDIA_GROUPS_TTL["fresh-1"] = time.monotonic()
 
@@ -217,11 +190,6 @@ class TestMediaGroupMaxSize:
             MEDIA_GROUPS.update(orig_groups)
             MEDIA_GROUPS_TTL.clear()
             MEDIA_GROUPS_TTL.update(orig_ttl)
-
-
-# ===========================================================================
-# H2 — Config reload debouncing
-# ===========================================================================
 
 
 class TestConfigReloadDebounce:
@@ -248,13 +216,7 @@ class TestConfigReloadDebounce:
         cm = ConfigManager()
         s1 = cm.settings
         s2 = cm.settings
-        # Accessing .settings twice quickly should return same object (no reload triggered)
         assert s1 is s2, "Within reload interval, settings should be the cached instance"
-
-
-# ===========================================================================
-# H1 — UserStateStore race condition fix
-# ===========================================================================
 
 
 class TestUserStateStoreSetdefault:
@@ -269,11 +231,6 @@ class TestUserStateStoreSetdefault:
         assert s1 is s2, "get_user_state must return identity-equal objects for same user"
 
 
-# ===========================================================================
-# H5 — httpx logger suppression
-# ===========================================================================
-
-
 class TestHttpxLoggerSuppression:
     """Test that httpx/httpcore loggers are actually suppressed at runtime (H5 fix)."""
 
@@ -285,18 +242,12 @@ class TestHttpxLoggerSuppression:
         setup_detailed_logging(log_level="DEBUG", enable_structured_logging=False)
         httpx_logger = logging.getLogger("httpx")
         httpcore_logger = logging.getLogger("httpcore")
-        # httpx/httpcore should be WARNING or higher to prevent token leakage
         assert httpx_logger.level >= logging.WARNING, (
             f"httpx logger level is {httpx_logger.level}, expected >= WARNING ({logging.WARNING})"
         )
         assert httpcore_logger.level >= logging.WARNING, (
             f"httpcore logger level is {httpcore_logger.level}, expected >= WARNING ({logging.WARNING})"
         )
-
-
-# ===========================================================================
-# L4 — httpx client close function
-# ===========================================================================
 
 
 class TestHttpClientClose:
@@ -307,7 +258,6 @@ class TestHttpClientClose:
         """close_http_clients must execute successfully (not just be callable)."""
         from app.providers import close_http_clients
 
-        # Actually invoke it — should not raise
         await close_http_clients()
 
     @pytest.mark.asyncio
@@ -318,23 +268,15 @@ class TestHttpClientClose:
 
         _original_client = aip_or._openrouter_http_client
 
-        # Close
         await close_http_clients()
         assert aip_or._openrouter_http_client is None
 
-        # Close again — should not raise
         await close_http_clients()
         assert aip_or._openrouter_http_client is None
 
-        # Restore for other tests
         from app.utils.network import NetworkErrorHandler
 
         aip_or._openrouter_http_client = NetworkErrorHandler.create_robust_http_client()
-
-
-# ===========================================================================
-# M2 — No lock in RoleConversationMetricsCollector
-# ===========================================================================
 
 
 class TestMetricsCollectorNoLock:
@@ -363,11 +305,6 @@ class TestMetricsCollectorNoLock:
         assert "roles" in summary
         assert "conversations" in summary
         assert "summarization" in summary
-
-
-# ===========================================================================
-# H4 — migrate_invalid_models in repos/chats.py
-# ===========================================================================
 
 
 class TestMigrateInvalidModels:
@@ -412,13 +349,9 @@ class TestMigrateInvalidModels:
             )
 
             assert count == 2
-            # Verify the update calls
             calls = mock_query.call_args_list
-            # First call is the SELECT, next 2 are batch UPDATEs
             assert len(calls) == 3
-            # Gemini batch (user 1, no "/" → gemini default)
             assert calls[1][0][1] == ("gemini-flash", [1])
-            # OpenRouter batch (user 2, "/" present → openrouter default)
             assert calls[2][0][1] == ("vendor/gpt-4", [2])
 
     @pytest.mark.asyncio
@@ -468,11 +401,6 @@ class TestMigrateInvalidModels:
         assert mock_migrate.await_args.kwargs["default_freetheai_model"] == "cat/kat-coder-pro-v1"
 
 
-# ===========================================================================
-# M8 — database.py unused imports removed
-# ===========================================================================
-
-
 class TestDatabaseCleanImports:
     """Test that database module doesn't carry dead-weight top-level imports (M8 fix)."""
 
@@ -482,14 +410,8 @@ class TestDatabaseCleanImports:
         from app.repos import keys
 
         assert keys.db_manager is db_mod.db_manager
-        # Verify key public API exists
         assert hasattr(db_mod, "db_query"), "db_query must be a top-level function"
         assert callable(db_mod.db_query)
-
-
-# ===========================================================================
-# L3 — validate_file_upload removed from security.py
-# ===========================================================================
 
 
 class TestValidateFileUploadRemoved:
@@ -501,11 +423,6 @@ class TestValidateFileUploadRemoved:
         assert not hasattr(sec, "validate_file_upload")
 
 
-# ===========================================================================
-# I3 — pydantic-settings replaced with pydantic in requirements.txt
-# ===========================================================================
-
-
 class TestRequirementsPydantic:
     """Test that pydantic is importable and pydantic-settings is not used (I3 fix)."""
 
@@ -513,12 +430,10 @@ class TestRequirementsPydantic:
         """Verify pydantic works at runtime — more reliable than checking requirements.txt."""
         import pydantic
 
-        # Must have BaseModel (core dependency of Settings)
         assert hasattr(pydantic, "BaseModel")
 
     def test_settings_uses_base_settings_from_pydantic(self):
         """Settings class should not depend on pydantic-settings package."""
-        # Settings should be a pydantic model, not from pydantic_settings
         import pydantic
 
         from app.config import Settings

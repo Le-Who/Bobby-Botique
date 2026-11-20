@@ -34,11 +34,9 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       const paused = playbackCtx.suspend(.25);
       const rendering = playbackCtx.startRendering();
       await paused;
-      // Offline rendering runs faster than wall time. Resume only after the
-      // packet's automation is scheduled, keeping this timing oracle stable.
       const resume = playbackCtx.resume.bind(playbackCtx);
       playbackCtx.resume = () => Promise.resolve();
-      enqueueAudio(pcm); // the next packet arrived after the queue drained
+      enqueueAudio(pcm);
       finishPlaybackTurn();
       await resume();
       const samples = (await rendering).getChannelData(0);
@@ -58,7 +56,7 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       const paused = playbackCtx.suspend(.218);
       const rendering = playbackCtx.startRendering();
       await paused;
-      flushPlayback(); // Stop while the queue-tail fade is already in progress.
+      flushPlayback();
       await playbackCtx.resume();
       const samples = (await rendering).getChannelData(0);
       let jump = 0;

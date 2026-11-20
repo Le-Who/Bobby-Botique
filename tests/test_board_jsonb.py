@@ -33,8 +33,6 @@ async def test_summary_preserves_closed_or_newer_board(monkeypatch, state):
         )
 
         async def query(sql, params=()):
-            # Keep the production predicate; only PostgreSQL's scalar type cast
-            # needs translation for this isolated SQL execution.
             sql = sql.replace("::int", "")
             bindings = {str(index): value for index, value in enumerate(params, start=1)}
             return [dict(row) for row in connection.execute(sql, bindings).fetchall()]
@@ -80,8 +78,6 @@ async def test_board_append_sends_json_array_through_configured_codec(monkeypatc
     async def query(_sql, params=()):
         encoded = codec["encoder"](params[1])
         with closing(sqlite3.connect(":memory:")) as connection:
-            # PostgreSQL's JSONB || appends a scalar as one array element.
-            # Check the actual wire shape before any legacy reader repairs it.
             assert connection.execute("SELECT json_type(?)", (encoded,)).fetchone() == ("array",)
         return [{"entries": codec["decoder"](encoded), "entries_since_last_synthesis": 1}]
 

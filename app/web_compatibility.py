@@ -112,7 +112,6 @@ async def submit_compatibility(user_id: int):
     try:
         value = await asyncio.to_thread(parse_pair_input, body)
     except ValueError as exc:
-        # Validation exceptions can contain untrusted input; return fixed copy.
         lang = "en" if isinstance(body, dict) and "_e_" in str(body.get("pair", "")) else "ru"
         key = exc.key if isinstance(exc, PairInputError) else "form_error"
         return jsonify({"error": "invalid_birth_input", "detail": t(f"compat.form.{key}", lang)}), 400
@@ -148,7 +147,6 @@ async def _send_pair_result(bot: Any, application: Any, user_id: int, value: Pai
                 reply_markup=keyboard if index == len(chunks) - 1 else None,
             )
     except Exception as exc:
-        # Do not log exception text/locals: resolvers handle private birth data.
         logger.warning("Compatibility delivery failed user=%s error_type=%s", user_id, type(exc).__name__)
         try:
             if await is_authorized(user_id):

@@ -1,11 +1,5 @@
--- Migration 029: Add multimodal support to memory nodes
--- Purpose: Stores Telegram file_id on memory nodes for image/audio/document retrieval.
---          When a matching node has a file_id, the bot can re-send the original media.
---
--- Idempotency: All statements guarded by IF NOT EXISTS / conditional checks.
 
 DO $$ BEGIN
-    -- Step 1: Add file_id column for Telegram file references
     IF NOT EXISTS (
         SELECT 1
         FROM information_schema.columns
@@ -20,7 +14,6 @@ DO $$ BEGIN
             'Telegram file_id for media retrieval (images, audio, documents)';
     END IF;
 
-    -- Step 2: Add file_type to distinguish media types
     IF NOT EXISTS (
         SELECT 1
         FROM information_schema.columns
@@ -35,7 +28,6 @@ DO $$ BEGIN
             'Media type: photo, audio, voice, document, video, video_note';
     END IF;
 
-    -- Step 3: Add chat_id for group chat memory isolation (Phase 3 prep)
     IF NOT EXISTS (
         SELECT 1
         FROM information_schema.columns
@@ -50,7 +42,6 @@ DO $$ BEGIN
             'Telegram chat_id for group memory isolation (NULL = private chat)';
     END IF;
 
-    -- Step 4: Add actor_user_id for social graph attribution (Phase 3 prep)
     IF NOT EXISTS (
         SELECT 1
         FROM information_schema.columns
@@ -66,7 +57,6 @@ DO $$ BEGIN
     END IF;
 END $$;
 
--- Step 5: Add chat_id and actor_user_id to memory_edges for group isolation
 DO $$ BEGIN
     IF NOT EXISTS (
         SELECT 1
@@ -97,12 +87,10 @@ DO $$ BEGIN
     END IF;
 END $$;
 
--- Step 6: Index for multimodal retrieval (find nodes with attached media)
 CREATE INDEX IF NOT EXISTS idx_memory_nodes_file_id
     ON memory_nodes (user_id, file_type)
     WHERE file_id IS NOT NULL;
 
--- Step 7: Index for group chat memory isolation
 CREATE INDEX IF NOT EXISTS idx_memory_nodes_chat_id
     ON memory_nodes (chat_id, user_id)
     WHERE chat_id IS NOT NULL;
@@ -111,7 +99,6 @@ CREATE INDEX IF NOT EXISTS idx_memory_edges_chat_id
     ON memory_edges (chat_id, user_id)
     WHERE chat_id IS NOT NULL;
 
--- Step 8: Add is_public flag for group chat privacy isolation
 DO $$ BEGIN
     IF NOT EXISTS (
         SELECT 1

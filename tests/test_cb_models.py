@@ -37,7 +37,6 @@ class TestModelButtonCallback:
         ):
             await model_button_callback(update, MagicMock())
 
-        # answer() is called, but edit_message_text should NOT be called
         query.answer.assert_awaited_once()
         query.edit_message_text.assert_not_awaited()
 
@@ -52,7 +51,6 @@ class TestModelButtonCallback:
             await model_button_callback(update, MagicMock())
 
         query.answer.assert_awaited()
-        # Should show alert toast
         call_kwargs = query.answer.call_args
         assert call_kwargs[1].get("show_alert") is True or (len(call_kwargs[0]) >= 1 and call_kwargs[0][0])
 

@@ -25,15 +25,13 @@ import pytest
 
 from app.providers import ProviderRouter
 
-# ── Fake helpers ──────────────────────────────────────────────────────────────
-
 
 class FakeKeyStatusManager:
     """In-memory KeyStatusManager that tracks suspended keys by state."""
 
     def __init__(self) -> None:
-        self.suspended: dict[str, str] = {}  # key_hash → error_category
-        self.successes: list[str] = []  # key_hashes recorded successful
+        self.suspended: dict[str, str] = {}
+        self.successes: list[str] = []
 
     async def suspend_key(
         self,
@@ -59,15 +57,11 @@ def _make_use_case(resolve_side_effects: list, response_side_effects: list):
         assert not key or model == preferred_model, "Exact resolution cannot switch models"
         return result
 
-    # Both selectors consume the same ordered pool; companions stay on-model.
     uc.resolve_exact_ai_request = AsyncMock(side_effect=resolve_exact)
     uc.get_ai_response = AsyncMock(side_effect=response_side_effects)
     uc.increment_key_usage = AsyncMock()
     uc.reserve_key_usage = AsyncMock(return_value=True)
     return uc
-
-
-# ── OC-01: get_response Opencode cascade ──────────────────────────────────────
 
 
 class TestOpencodeGetResponseCascade:
@@ -79,11 +73,9 @@ class TestOpencodeGetResponseCascade:
         fake_status = FakeKeyStatusManager()
         history = [{"role": "user", "parts": ["hello"]}]
 
-        # First call (Opencode): keys exhausted immediately
-        # Second call (Gemini fallback after re-entering get_response):
         resolve_effects = [
-            (None, None, "all_exhausted"),  # opencode → exhausted
-            ({"api_key": "gk1", "key_hash": "ghash1"}, "gemini-3.5-flash", None),  # gemini ok
+            (None, None, "all_exhausted"),
+            ({"api_key": "gk1", "key_hash": "ghash1"}, "gemini-3.5-flash", None),
         ]
         response_effects = [
             ("Fallback answer!", 42),
@@ -109,10 +101,8 @@ class TestOpencodeGetResponseCascade:
                 max_key_retries=1,
             )
 
-        # State-based assertions: confirmed successful response from fallback
         assert text == "Fallback answer!"
         assert tokens == 42
-        # The Gemini key should have been marked successful (not suspended)
         assert "ghash1" in fake_status.successes
         assert "ghash1" not in fake_status.suspended
 
@@ -123,7 +113,7 @@ class TestOpencodeGetResponseCascade:
         history = [{"role": "user", "parts": ["describe image"]}]
 
         resolve_effects = [
-            (None, None, "all_exhausted"),  # opencode exhausted
+            (None, None, "all_exhausted"),
             ({"api_key": "gk2", "key_hash": "ghash2"}, "gemini-3.5-flash", None),
         ]
         response_effects = [("Vision result", 10)]
@@ -158,7 +148,6 @@ class TestOpencodeGetResponseCascade:
                 max_key_retries=1,
             )
 
-        # Second call must be the Gemini vision fallback model
         assert len(captured_fallback_model) >= 2
         assert captured_fallback_model[1] == "gemini-3.5-flash"
 
@@ -188,13 +177,11 @@ class TestOpencodeGetResponseCascade:
                 "opencode-go/minimax-m2.7",
                 [{"role": "user", "parts": ["hi"]}],
                 max_key_retries=1,
-                _is_fallback=True,  # Already in fallback — must not recurse
+                _is_fallback=True,
             )
 
-        # Should get an error message, not a response
         assert "🚫" in text
         assert tokens is None
-        # resolve_ai_request should only have been called once
         assert use_case.resolve_ai_request.call_count == 1
 
     @pytest.mark.asyncio
@@ -218,7 +205,6 @@ class TestOpencodeGetResponseCascade:
                 max_key_retries=1,
             )
 
-        # Error must mention "Gemini" — not Opencode
         assert "Gemini" in text or "🚫" in text
         assert tokens is None
 
@@ -228,8 +214,8 @@ class TestOpencodeGetResponseCascade:
         fake_status = FakeKeyStatusManager()
 
         resolve_effects = [
-            (None, None, "all_exhausted"),  # Opencode exhausted
-            (None, None, "all_exhausted"),  # Gemini fallback also exhausted
+            (None, None, "all_exhausted"),
+            (None, None, "all_exhausted"),
         ]
         use_case = _make_use_case(resolve_effects, [])
 
@@ -253,9 +239,6 @@ class TestOpencodeGetResponseCascade:
 
         assert "🚫" in text
         assert tokens is None
-
-
-# ── OC-02: typed Opencode stream cascade ─────────────────────────────────────
 
 
 class TestOpencodeStreamCascade:

@@ -4,7 +4,7 @@ Run in the bot image with SOURCE_REDIS_URL/DESTINATION_REDIS_URL supplied throug
 a protected env file. The operator must stop every writer first. Never logs keys.
 """
 
-# ruff: noqa: T201 -- counts/errors only; snapshot content never reaches stdout.
+# ruff: noqa: T201
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def copy_verified(source: Redis, destination: Redis, snapshot: Path) -> dict:
         if row is None:
             continue
         payload, expires_at = row
-        value_fingerprint(source, key)  # Reject unsupported types before any copy.
+        value_fingerprint(source, key)
         total_bytes += len(payload)
         if len(records) >= 100000 or total_bytes > 256 * 1024 * 1024:
             raise RuntimeError("Migration snapshot exceeds bounded copy capacity")
@@ -77,7 +77,6 @@ def copy_verified(source: Redis, destination: Redis, snapshot: Path) -> dict:
             }
         )
     snapshot.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    # Exclusive creation preserves previous recovery material on reruns.
     with snapshot.open("x", encoding="utf-8") as output:
         json.dump({"version": 1, "records": records}, output, separators=(",", ":"))
     snapshot.chmod(0o600)
@@ -89,8 +88,6 @@ def copy_verified(source: Redis, destination: Redis, snapshot: Path) -> dict:
             continue
         destination.restore(key, expires if expires >= 0 else 0, payload, absttl=expires >= 0)
         copied += 1
-    # Compare live values/expirations with the source again: writes during the
-    # copy cause a failure, never a completed migration marker.
     checked = 0
     for key in source.scan_iter(count=100):
         original = source.eval(_SNAPSHOT, 1, key)

@@ -123,8 +123,6 @@ class FixtureBoundaries:
         scenario = self.case.get("fixture_scenario", "available")
         if parsed.host == "api.weatherapi.com" and parsed.path == "/v1/current.json":
             self.requests.append({"kind": "weather"})
-            # Only literal synthetic cities resolve. Unknown/ambiguous candidates
-            # receive no location; this does not claim the router disambiguates cities.
             known_cities = {"лондоне", "лондон", "london", "париже", "париж", "paris", "киеве", "киев", "kyiv"}
             if query.get("q", "").casefold() in known_cities:
                 data = {
@@ -199,8 +197,6 @@ def offline_boundaries():
             key: os.environ[key] for key in ("SystemRoot", "WINDIR", "TEMP", "TMP") if key in os.environ
         }
         stack.enter_context(patch.dict(os.environ, {**system_environment, **SAFE_ENV}, clear=True))
-        # Windows platform discovery can shell out to `ver` during dependency
-        # imports. Supply metadata so even that subprocess remains unnecessary.
         stack.enter_context(patch("platform.win32_ver", lambda *args, **kwargs: ("10", "10.0.0", "", "")))
         for target, boundary in (
             ("socket.socket.connect", "network"),
@@ -217,7 +213,6 @@ def offline_boundaries():
         ):
             if target != "os.posix_spawn" or hasattr(os, "posix_spawn"):
                 stack.enter_context(patch(target, fixture.deny(boundary)))
-        # Proactor/uvloop transports can connect without socket.connect().
         loop = asyncio.get_running_loop()
         for method in ("create_connection", "create_datagram_endpoint", "sock_connect", "sock_sendto"):
             stack.enter_context(patch.object(loop, method, fixture.deny("network")))
@@ -230,8 +225,6 @@ def offline_boundaries():
                 return _original(file, *args, **kwargs)
 
             stack.enter_context(patch.object(module, "open", guarded_open))
-        # Import only after inherited configuration and all socket/process access
-        # have been isolated. No dotenv loader is used by this command.
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
         import httpx

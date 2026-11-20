@@ -362,9 +362,6 @@ async def test_telegram_file_reference_error_preserves_existing_art_without_new_
     prepare.assert_not_awaited()
 
 
-# Managed Daily worker revision-conflict/other-slot contract lives in test_daily_preparation.py.
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["hints", "prompt", "image"])
 async def test_reset_during_each_provider_await_rejects_stale_assets_and_prepared_stamp(monkeypatch, stage):

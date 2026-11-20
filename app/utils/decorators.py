@@ -20,12 +20,10 @@ def authorized_only(func):
         user_id = update.effective_user.id
         chat_id = getattr(update.effective_chat, "id", None)
         set_user_context(user_id, chat_id)
-        # Generate request_id: callbacks use query.id, messages use update_id
         if update.callback_query:
             set_request_id(f"tgcb-{user_id}-{update.callback_query.id}")
         else:
             set_request_id(f"tgcmd-{chat_id}-{getattr(update, 'update_id', 'na')}")
-            # Protect against state leakage: clear volatile UI mode flags on any new command
             user_data = context.user_data
             if update.message and update.message.text and update.message.text.startswith("/") and user_data is not None:
                 volatile_keys = [

@@ -14,7 +14,6 @@ pytestmark = pytest.mark.asyncio
 
 async def test_configured_redis_outage_never_admits_local_game_mutation(monkeypatch):
     redis = SimpleNamespace(set=AsyncMock(side_effect=ConnectionError("synthetic outage")))
-    # The former implementation called Redis.lock and then fell back locally.
     redis.lock = lambda *_args, **_kwargs: SimpleNamespace(acquire=redis.set)
     monkeypatch.setattr(runtime, "redis_client", redis)
     with pytest.raises(TimeoutError):

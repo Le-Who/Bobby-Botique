@@ -465,7 +465,6 @@ async def test_queue_script_is_loaded_once_and_reloaded_after_cache_loss():
     assert admitted.state is AdmissionState.ACCEPTED
     assert (await store.read_job("first")).task_id == "first"
     assert len(redis.script_loads) == 1
-    # Only the first request may upload the script; subsequent commands carry its SHA.
     assert len(redis.evalsha_calls) == 3
     assert all(len(sha) == 40 and number == 1 for sha, number, _ in redis.evalsha_calls)
     assert all(len(arguments[1].encode("utf-8")) < 2048 for _, _, arguments in redis.evalsha_calls)

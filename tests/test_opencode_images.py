@@ -13,8 +13,6 @@ async def test_anthropic_image_payload_encodes_supported_inputs_as_jpeg(monkeypa
     from app.providers.opencode import OpencodeGoProvider
     from app.utils import image_utils
 
-    # Keep the real conversion worker and async handoff, using its supported
-    # thread-executor fallback instead of spawning a process in this unit test.
     monkeypatch.setattr(image_utils, "_get_image_process_pool", lambda: None)
     image = Image.new("RGB", (8, 6), "navy")
     encoded = io.BytesIO()

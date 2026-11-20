@@ -63,7 +63,6 @@ async def test_permanent_http_status_is_not_retried_despite_transient_words(stat
 
 
 async def test_provider_retry_fallback_preserves_permanent_http_status(monkeypatch):
-    # The provider-specific text matcher must not override a typed HTTP denial.
     breaker = CircuitBreaker("provider-status-test")
     monkeypatch.setattr("app.resilience_policy.get_circuit_breaker", lambda name: breaker)
     monkeypatch.setattr(ResiliencePolicy, "compute_delay", lambda self, attempt: 0)

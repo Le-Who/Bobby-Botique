@@ -1,4 +1,3 @@
-/* Durable job IDs survive reload; drafts and provider inputs never enter storage. */
 (function (root) {
   'use strict';
   const api=root.AdminApi;
@@ -13,7 +12,7 @@
     try {
       sessionStorage.setItem(storageKey,JSON.stringify([...jobs.values()].slice(-32).map(({operationId,jobId,kind,date,difficulty,part})=>
         ({operationId,jobId,kind,date,difficulty,part}))));
-    } catch (_) { /* Job IDs remain visible even when browser storage is unavailable. */ }
+    } catch (_) {  }
   }
 
   function announce(value) {
@@ -135,9 +134,6 @@
     jobs.set(operationId,record); save(); render();
     try {
       const accepted=await api.adminRequest('/api/admin/daily/jobs',{method:'POST',body:command,operationId});
-      // A conflict alias may point to another command (including a different
-      // Trivia section). Only confirmed fresh admission owns submitted drafts.
-      // Unknown admissions are reconciled as external updates until compared.
       if(accepted.state === 'accepted' && onTerminal) callbacks.set(operationId,onTerminal);
       record.jobId=accepted.job_id;
       if(record.snapshot?.task_id !== accepted.job_id) record.snapshot={state:'queued',storage_mode:accepted.storage_mode};
@@ -190,7 +186,7 @@
       for(const saved of JSON.parse(sessionStorage.getItem(storageKey)||'[]').slice(-32)) {
         if(typeof saved.operationId === 'string' && typeof saved.kind === 'string' && typeof saved.date === 'string') jobs.set(saved.operationId,saved);
       }
-    } catch(_) { /* Ignore malformed browser-local metadata. */ }
+    } catch(_) {  }
     render(); calendar(); tick();
     document.getElementById('daily-readiness-refresh')?.addEventListener('click',calendar);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden) {delay=2000;tick();}});

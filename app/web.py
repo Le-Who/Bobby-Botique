@@ -51,10 +51,8 @@ from app.repos.metrics_repo import (
 from app.repos.settings_repo import set_global_setting
 from app.utils.json_compat import json
 
-# --- QUART APP SETUP ---
-quart_app = Quart(__name__)  # kept as `quart_app` for backward compat with bot.py
+quart_app = Quart(__name__)
 
-# Register Telegram Mini App blueprint
 from app.web_miniapp import miniapp_blueprint  # noqa: E402
 
 quart_app.register_blueprint(miniapp_blueprint, url_prefix="/webapp")
@@ -68,14 +66,12 @@ from app.web_compatibility import compatibility_bp  # noqa: E402
 quart_app.register_blueprint(compatibility_bp, url_prefix="/webapp")
 
 
-# Derive a secret key for sessions from ADMIN_SECRET
 def _get_admin_secret():
     """Returns the configured admin secret."""
     return getattr(settings, "ADMIN_SECRET", None) or os.environ.get("ADMIN_SECRET")
 
 
-# Placeholder — overridden at server startup via @before_serving
-quart_app.secret_key = os.urandom(32)  # Secure fallback — overridden at startup
+quart_app.secret_key = os.urandom(32)
 
 
 @quart_app.before_serving
@@ -89,17 +85,11 @@ async def _init_secret_key():
         logging.warning("ADMIN_SECRET is empty — dashboard password and session authentication are disabled")
 
 
-# Session configuration
 quart_app.config["SESSION_COOKIE_NAME"] = "gembot_session"
 quart_app.config["SESSION_COOKIE_HTTPONLY"] = True
 quart_app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-quart_app.config["SESSION_COOKIE_SECURE"] = bool(os.environ.get("DATABASE_URL"))  # True in production
+quart_app.config["SESSION_COOKIE_SECURE"] = bool(os.environ.get("DATABASE_URL"))
 quart_app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=7)
-
-
-# =============================================================================
-# SECURITY HEADERS
-# =============================================================================
 
 
 @quart_app.before_request
@@ -179,8 +169,6 @@ async def add_security_headers(response):
         )
         response.headers["X-Frame-Options"] = "DENY"
     elif is_webapp:
-        # Telegram Mini App: allow telegram.org SDK script, inline styles,
-        # and framing by Telegram's WebView
         csp = (
             "default-src 'self'; "
             "script-src 'self' https://telegram.org 'unsafe-inline' "
@@ -191,7 +179,6 @@ async def add_security_headers(response):
             "connect-src 'self' wss:; "
             "frame-ancestors https://web.telegram.org https://*.telegram.org;"
         )
-        # Allow Telegram to embed this page
         response.headers["X-Frame-Options"] = "ALLOWALL"
     else:
         csp = (
@@ -240,24 +227,14 @@ async def finish_observability_request(error: BaseException | None) -> None:
             scope.__exit__(None, None, None)
 
 
-# =============================================================================
-# AUTHENTICATION
-# =============================================================================
-
-# _get_admin_secret() is defined above (before session key derivation).
-
-
 def _is_authenticated():
     """Check if current request has a valid session, header token, or Telegram admin initData."""
     expected = _get_admin_secret()
-    # Check session cookie first
     if expected and session.get("authenticated"):
         return True
-    # Fallback: check X-Auth-Token header (for API/monitoring tools)
     token = request.headers.get("X-Auth-Token")
     if token and expected and hmac.compare_digest(token.encode("utf-8"), expected.encode("utf-8")):
         return True
-    # Fallback: check Authorization header for Telegram WebApp initData (tma <initData>)
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("tma "):
         init_data = auth_header[4:]
@@ -279,10 +256,8 @@ def require_auth(f):
     @wraps(f)
     async def decorated_function(*args, **kwargs):
         if not _is_authenticated():
-            # For API endpoints, return 401 JSON
             if request.path.startswith("/api/"):
                 return jsonify({"error": "Unauthorized"}), 401
-            # For pages, redirect to login
             return redirect(url_for("login_page"))
         return await f(*args, **kwargs)
 
@@ -294,7 +269,6 @@ from app.security import SyncRateLimiter, rate_limit  # noqa: E402
 _login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
 _api_limiter = SyncRateLimiter(max_requests=60, window_seconds=60)
 
-# Rate-limit decorator for API endpoints (60 req/min per IP)
 rate_limit_api = rate_limit(_api_limiter, use_json=True)
 
 from app.web_controls import register_controls  # noqa: E402
@@ -317,7 +291,6 @@ async def login_page():
     client_ip = request.remote_addr or "unknown"
 
     if request.method == "POST":
-        # Check brute-force rate limit
         if not _login_limiter.check(client_ip):
             logging.warning("Login rate limit exceeded for IP %s", client_ip)
             error = "Слишком много попыток входа. Повторите через 5 минут."
@@ -333,7 +306,6 @@ async def login_page():
         csrf_token = form.get("csrf_token", "")
         expected = _get_admin_secret()
 
-        # Validate CSRF token
         expected_csrf = session.get("csrf_token", "")
         if (
             not csrf_token
@@ -344,7 +316,7 @@ async def login_page():
         elif not expected:
             error = "Server misconfiguration: ADMIN_SECRET not set."
         elif hmac.compare_digest(password.encode("utf-8"), expected.encode("utf-8")):
-            session.pop("csrf_token", None)  # Consume the token
+            session.pop("csrf_token", None)
             session["authenticated"] = True
             session.permanent = True
             return redirect(url_for("dashboard"))
@@ -352,7 +324,6 @@ async def login_page():
             _login_limiter.record(client_ip)
             error = "Invalid password."
 
-    # Generate fresh CSRF token for the form
     csrf_token = secrets.token_hex(32)
     session["csrf_token"] = csrf_token
 
@@ -366,11 +337,6 @@ async def logout():
     return redirect(url_for("login_page"))
 
 
-# =============================================================================
-# DASHBOARD PAGE
-# =============================================================================
-
-
 @quart_app.route("/")
 @require_auth
 async def dashboard():
@@ -380,11 +346,6 @@ async def dashboard():
     except Exception as e:
         logging.error("Dashboard error: %s", e, exc_info=True)
         return "Internal Server Error", 500
-
-
-# =============================================================================
-# HEALTH CHECK (UNAUTHENTICATED — for Docker)
-# =============================================================================
 
 
 @quart_app.route("/health")
@@ -405,7 +366,6 @@ async def health_check_endpoint():
             },
         }
 
-        # Check Redis without blocking (ping_safe never throws or warns)
         try:
             from app.cache import ping_safe, redis_client
 
@@ -442,11 +402,6 @@ async def prometheus_metrics():
         return "# error generating metrics\n", 500
 
 
-# =============================================================================
-# API ENDPOINTS — JSON data for dashboard (native async, no bridge needed)
-# =============================================================================
-
-
 @quart_app.route("/api/overview")
 @require_auth
 @rate_limit_api
@@ -463,7 +418,6 @@ async def api_overview():
             "disk_percent": 0,
         }
 
-    # Metrics summary
     try:
         from app.metrics import metrics_collector
 
@@ -471,10 +425,8 @@ async def api_overview():
     except Exception:
         metrics = {}
 
-    # Database status
     db_status = database.is_database_connected()
 
-    # Redis status (ping_safe never throws or warns)
     try:
         from app.cache import ping_safe
 
@@ -482,7 +434,6 @@ async def api_overview():
     except Exception:
         redis_ok = False
 
-    # Summarization metrics
     summarization = {}
     try:
         from app.metrics import role_conv_metrics
@@ -518,12 +469,10 @@ async def api_keys():
 
         key_stats = await get_gemini_key_usage_stats()
 
-        # Get Tavily key stats
         tavily_stats = []
         with contextlib.suppress(Exception):
             tavily_stats = await get_tavily_key_usage_stats()
 
-        # Get active keys per model (batched to avoid N+1)
         active_keys = {}
         models = list(dict.fromkeys(row["model_name"] for row in key_stats if row.get("model_name")))
 
@@ -684,10 +633,6 @@ async def api_memory():
         return jsonify({"error": "internal_error"}), 500
 
 
-# =============================================================================
-# BATCH DASHBOARD ENDPOINT — 1 RTT instead of 8
-# =============================================================================
-
 _DASHBOARD_SOURCE_TIMEOUT = 5.0
 
 
@@ -708,8 +653,6 @@ def _sample_system_metrics() -> dict:
 async def _safe_fetch(name: str, coro):
     """Run a coroutine and return (name, result) or (name, error_dict)."""
     try:
-        # One stalled dependency must not hide healthy sections or leave work
-        # running after the browser's ten-second request deadline.
         async with asyncio.timeout(_DASHBOARD_SOURCE_TIMEOUT):
             return name, await coro
     except TimeoutError:
@@ -925,8 +868,6 @@ def _get_dashboard_sources() -> DashboardSourceCache:
         return multi_layer_cache.get_memory_stats()
 
     async def redis_cache_stats():
-        # The existing combined reader catches Redis failures inside this field.
-        # Memory has an independent process reader and cannot be blocked by Redis.
         value = (await get_multi_layer_cache_stats()).get("redis")
         if not isinstance(value, dict) or value.get("error"):
             raise SourceUnavailable()
@@ -1087,9 +1028,6 @@ async def api_dashboard():
     return jsonify(await _build_dashboard_snapshot())
 
 
-# ── Key health endpoint ──────────────────────────────────────────────────────
-
-
 @quart_app.route("/api/key-health")
 @require_auth
 @rate_limit_api
@@ -1117,9 +1055,6 @@ async def api_key_health():
         return jsonify({"error": "source_unavailable"}), 500
 
 
-# ── SSE live updates ─────────────────────────────────────────────────────────
-
-
 @quart_app.route("/api/events")
 @require_auth
 async def api_events():
@@ -1145,9 +1080,6 @@ async def api_events():
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     }
-
-
-# ── Unified Admin Daily & Broadcast Center ───────────────────────────────────
 
 
 @quart_app.route("/admin_daily")
@@ -1684,17 +1616,14 @@ async def api_admin_dailycroc_stats():
         today = repo.today_puzzle_date(now)
         stats = await repo.get_delivery_status(today)
 
-        # Get delivery enabled status
         delivery_on = await get_global_setting(repo.DAILY_DELIVERY_SETTING_KEY, "on")
         stats["delivery_enabled"] = delivery_on.strip().lower() != "off"
 
-        # Get configured image model
         from app.games.crocodile_daily import get_daily_image_model
 
         image_model = await get_daily_image_model()
         stats["image_model"] = image_model.strip()
 
-        # Get placeholder banner setting
         placeholder = await get_global_setting("daily_croc_placeholder_file_id", "")
         stats["placeholder_set"] = bool(placeholder)
 
@@ -1722,9 +1651,6 @@ async def api_admin_dailycroc_toggle_delivery():
     except Exception as exc:
         logging.error("Failed to toggle daily croc delivery: %s", exc, exc_info=True)
         return jsonify({"error": "toggle_failed", "detail": str(exc)}), 500
-
-
-# ── Admin Daily 2048 Sprint Dashboard ───────────────────────────────────
 
 
 def _serialize_daily2048_puzzle(puzzle: daily_2048_repo.Daily2048Puzzle) -> dict:
@@ -2155,9 +2081,6 @@ async def api_admin_dailytrivia_clear_used_keys():
     return jsonify({"success": True, "deleted": deleted})
 
 
-# ── Broadcast Center API ──────────────────────────────────────────────────────
-
-
 @quart_app.route("/api/admin/broadcast/overview", methods=["GET"])
 @require_auth
 async def api_admin_broadcast_overview():
@@ -2169,7 +2092,6 @@ async def api_admin_broadcast_overview():
         now = datetime.datetime.now(datetime.UTC)
         today = croc_repo.today_puzzle_date(now)
 
-        # --- Daily Challenge (Croc + 2048 unified subscription) ---
         delivery_on_raw = await get_global_setting(croc_repo.DAILY_DELIVERY_SETTING_KEY, "on")
         croc_enabled = delivery_on_raw.strip().lower() != "off"
 
@@ -2184,7 +2106,6 @@ async def api_admin_broadcast_overview():
             mode_emoji = "🐊"
             mode_label = "Daily Croc"
 
-        # Count total + pending for daily challenge
         total_subs_rows = await database.db_query(
             "SELECT COUNT(*) AS cnt FROM public.crocodile_daily_preferences WHERE is_subscribed = TRUE"
         )
@@ -2215,7 +2136,6 @@ async def api_admin_broadcast_overview():
             "last_sent_at": None,
         }
 
-        # --- Horoscope ---
         horo_enabled_raw = await get_global_setting("horoscope_delivery_enabled", "on")
         horo_enabled = horo_enabled_raw.strip().lower() != "off"
 
@@ -2267,7 +2187,6 @@ async def api_admin_broadcast_overview():
             "last_sent_at": None,
         }
 
-        # --- Tarot ---
         tarot_enabled_raw = await get_global_setting("tarot_daily_delivery_enabled", "off")
         tarot_enabled = tarot_enabled_raw.strip().lower() != "off"
 
@@ -2313,8 +2232,8 @@ async def api_admin_broadcast_subscribers():
     """Unified subscriber list across all channels with filters."""
     from app.repos import crocodile_daily as croc_repo
 
-    channel = request.args.get("channel", "")  # croc, horoscope, all
-    status_filter = request.args.get("status", "")  # active, snoozed, error
+    channel = request.args.get("channel", "")
+    status_filter = request.args.get("status", "")
     tz_filter = request.args.get("timezone", "")
     user_id_filter = request.args.get("user_id", "")
     try:
@@ -2328,7 +2247,6 @@ async def api_admin_broadcast_subscribers():
         today = croc_repo.today_puzzle_date(now)
         rows_out: list[dict] = []
 
-        # --- Daily Challenge subscribers ---
         if not channel or channel in ("croc", "daily_challenge", "all"):
             where_clauses = ["p.is_subscribed = TRUE"]
             params: list = []
@@ -2383,7 +2301,6 @@ async def api_admin_broadcast_subscribers():
                     }
                 )
 
-        # --- Horoscope subscribers ---
         if not channel or channel in ("horoscope", "all"):
             horo_rows = await database.db_query(
                 """
@@ -2402,7 +2319,6 @@ async def api_admin_broadcast_subscribers():
                 badge = "⭐ Horoscope"
                 last_sent_val = r.get("last_today_sent") or r.get("last_tomorrow_sent")
                 if uid in croc_user_ids:
-                    # Merge: update existing entry's channels list
                     for entry in rows_out:
                         if entry["user_id"] == uid:
                             entry["channels"].append(badge)
@@ -2468,9 +2384,6 @@ async def api_admin_broadcast_errors():
         return jsonify(error="journal_unavailable", available=False), 503
 
 
-# ── Broadcast Offer History & Manual Send ─────────────────────────────────────
-
-
 @quart_app.route("/api/admin/broadcast/offer-history", methods=["GET"])
 @require_auth
 async def api_admin_broadcast_offer_history():
@@ -2502,7 +2415,6 @@ async def api_admin_broadcast_offer_history():
         now = datetime.datetime.now(datetime.UTC)
         rows_out: list[dict] = []
 
-        # ── Daily Challenge (Croc / 2048) ────────────────────────────────────
         if channel in ("daily_challenge", "all"):
             where: list[str] = []
             params: list = []
@@ -2565,7 +2477,6 @@ async def api_admin_broadcast_offer_history():
                     }
                 )
 
-        # ── Horoscope ────────────────────────────────────────────────────────
         if channel in ("horoscope", "all"):
             where_h: list[str] = []
             params_h: list = []
@@ -2625,7 +2536,6 @@ async def api_admin_broadcast_offer_history():
                 if uid not in existing_ids:
                     rows_out.append(entry)
 
-        # ── Tarot ────────────────────────────────────────────────────────────
         if channel in ("tarot", "all"):
             where_t: list[str] = []
             params_t: list = []
@@ -2708,9 +2618,6 @@ async def api_admin_broadcast_send_offer_batch():
     return await legacy_enqueue()
 
 
-# ── Horoscope Admin API ───────────────────────────────────────────────────────
-
-
 @quart_app.route("/api/admin/horoscope/stats", methods=["GET"])
 @require_auth
 async def api_admin_horoscope_stats():
@@ -2729,7 +2636,6 @@ async def api_admin_horoscope_stats():
         )
         stats = dict(rows[0]) if rows else {}
 
-        # Per-sign breakdown
         sign_rows = await database.db_query(
             """
             SELECT sign, COUNT(*) AS cnt
@@ -2756,9 +2662,6 @@ async def api_admin_horoscope_stats():
     except Exception as exc:
         logging.error("Horoscope stats error: %s", exc, exc_info=True)
         return jsonify({"error": str(exc)}), 500
-
-
-# ── Tarot Admin API ───────────────────────────────────────────────────────────
 
 
 @quart_app.route("/api/admin/tarot/status", methods=["GET"])
@@ -2801,7 +2704,6 @@ async def api_admin_tarot_status():
             _reading_counts(tomorrow),
         )
 
-        # Tarot subscriber count
         try:
             sub_rows = await database.db_query(
                 "SELECT COUNT(*) AS cnt FROM public.tarot_daily_subscriptions WHERE is_subscribed = TRUE"

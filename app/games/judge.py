@@ -1,4 +1,3 @@
-# /app/games/judge.py
 """Semantic judge for the Crocodile game.
 
 Evaluation pipeline (fastest-first):
@@ -46,7 +45,6 @@ from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
-# ── Models ────────────────────────────────────────────────────────────────────
 
 _PRIMARY_MODEL = "gemini-3.5-flash-lite"
 _FALLBACK_MODEL = "gemini-3.6-flash"
@@ -60,10 +58,7 @@ _HINTS_OPENCODE_MODEL_CANDIDATES = (
     "opencode-go/qwen3.5-plus",
 )
 
-# Primary race: concurrent across up to 3 keys + optional Vertex AI — wall time = timeout of
-# the fastest winner, so 7s is safe even under degraded conditions.
 _LLM_TIMEOUT_S = 7.0
-# Fallback: single key, last resort — give it twice as long; player waits, not retypes.
 _LLM_FALLBACK_TIMEOUT_S = 14.0
 _JUDGE_TOTAL_TIMEOUT_S = 30.0
 _OPENAI_JUDGE_TIMEOUT_S = 12.0
@@ -71,16 +66,8 @@ _JUDGE_MAX_ATTEMPTS = 2
 _JUDGE_RETRY_DELAY_S = 0.5
 _HINTS_TIMEOUT_S = 18.0
 
-# ── Circuit breaker for _PRIMARY_MODEL ────────────────────────────────────────
-# When _PRIMARY_MODEL is experiencing a model-level 503 outage (all keys return
-# UNAVAILABLE), every judge call burns 3 keys × 3s timeout before falling back.
-# The circuit short-circuits that: after any all-fail race, we skip the primary
-# for _PRIMARY_CIRCUIT_COOLDOWN_S and go straight to the fallback model.
-# After the cooldown one probe attempt is made; the circuit closes on success.
-#
-# asyncio is single-threaded — float reassignment is safe without a Lock.
-_primary_circuit_open_until: float = 0.0  # monotonic timestamp; 0.0 = closed
-_PRIMARY_CIRCUIT_COOLDOWN_S: float = 120.0  # 2 min between probes
+_primary_circuit_open_until: float = 0.0
+_PRIMARY_CIRCUIT_COOLDOWN_S: float = 120.0
 
 
 def _budget_provider_for_model(model_name: str, lane_type: str | None = None) -> str:
@@ -97,9 +84,6 @@ def _budget_provider_for_model(model_name: str, lane_type: str | None = None) ->
     return "ai_studio"
 
 
-# ── Pydantic schemas ──────────────────────────────────────────────────────────
-
-
 class GuessJudgement(BaseModel):
     """Structured output from the semantic judge."""
 
@@ -108,7 +92,7 @@ class GuessJudgement(BaseModel):
     hint: str = Field(max_length=255)
     interpreted_domain: str | None = None
     ambiguity_flag: bool = False
-    cached: bool = False  # Set by caller; not part of LLM output
+    cached: bool = False
 
 
 class HintsOutput(BaseModel):
@@ -116,8 +100,6 @@ class HintsOutput(BaseModel):
 
     hints: list[str] = Field(min_length=3, max_length=3)
 
-
-# ── System prompts ────────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT = (
     "Ты — последовательный судья игры «Крокодил» с разнообразными короткими комментариями.\n"
@@ -164,9 +146,6 @@ _HINTS_PROMPT = (
 register_controlled_text("crocodile.hints.classic", _HINTS_PROMPT, "Крокодил: три подсказки")
 
 
-# ── Damerau-Levenshtein typo check ───────────────────────────────────────────
-
-
 _EN_TO_RU_HOMOGLYPHS = {
     "a": "а",
     "c": "с",
@@ -196,27 +175,21 @@ def _homogenize_pair(target: str, guess: str) -> tuple[str, str]:
     * «Ё» vs «Е» (ёжик == ежик for game purposes).
     * Trailing punctuation a user might accidentally type ("кот." → "кот").
     """
-    # 1. Lowercase + strip outer whitespace
     t, g = target.lower().strip(), guess.lower().strip()
 
-    # 2. Ё → Е normalisation (Cyrillic-agnostic, applies to both)
     t = t.translate(_YO_MAP)
     g = g.translate(_YO_MAP)
 
-    # 3. Strip common punctuation characters that sneak into guesses
     t = t.translate(_STRIP_PUNCT).strip()
     g = g.translate(_STRIP_PUNCT).strip()
 
-    # 4. Homoglyph normalization (Cyrillic/Latin)
     t_ru = sum(1 for c in t if "\u0400" <= c <= "\u04ff")
     g_ru = sum(1 for c in g if "\u0400" <= c <= "\u04ff")
 
     if t_ru > 0 or g_ru > 0:
-        # Treat as Cyrillic: convert any Latin homoglyphs to Cyrillic
         t_clean = "".join(_EN_TO_RU_HOMOGLYPHS.get(c, c) for c in t)
         g_clean = "".join(_EN_TO_RU_HOMOGLYPHS.get(c, c) for c in g)
     else:
-        # Treat as Latin: convert any Cyrillic homoglyphs to Latin
         t_clean = "".join(_RU_TO_EN_HOMOGLYPHS.get(c, c) for c in t)
         g_clean = "".join(_RU_TO_EN_HOMOGLYPHS.get(c, c) for c in g)
 
@@ -247,11 +220,10 @@ def _damerau_levenshtein(s: str, t: str) -> int:
             t_char = t[j - 1]
             cost = 0 if s_char == t_char else 1
             current[j] = min(
-                previous[j] + 1,  # deletion
-                current[j - 1] + 1,  # insertion
-                previous[j - 1] + cost,  # substitution
+                previous[j] + 1,
+                current[j - 1] + 1,
+                previous[j - 1] + cost,
             )
-            # Adjacent transposition (Damerau extension)
             if i > 1 and j > 1 and s_char == t[j - 2] and s_previous_char == t_char:
                 current[j] = min(current[j], previous_previous[j - 2] + cost)
 
@@ -292,9 +264,6 @@ def _local_check(target: str, guess: str) -> str | None:
     return None
 
 
-# ── Key suspension helper ────────────────────────────────────────────────────
-
-
 async def _suspend_key_safe(key_hash: str, model: str, category: str, error_text: str) -> None:
     """Suspend a key in the background; swallows exceptions so the caller never crashes.
 
@@ -307,9 +276,6 @@ async def _suspend_key_safe(key_hash: str, model: str, category: str, error_text
         await get_key_status_manager().suspend_key(key_hash, model, category, error_text)
     except Exception as exc:  # noqa: BLE001
         logger.debug("Judge: key suspension task failed for %s: %s", key_hash[:8], exc)
-
-
-# ── Race×3 non-streaming generate_content ────────────────────────────────────
 
 
 async def _race_generate(
@@ -415,8 +381,6 @@ async def _race_generate(
             provider_failed = True
             err_text = str(exc)
             logger.warning("Judge race call failed (model=%s): %s", model, exc)
-            # Classify error and suspend key — prevents the same exhausted key
-            # from being re-used in subsequent resolve_ai_request() calls.
             category = classify_key_error(exc)
             submit_task(
                 record_result(
@@ -451,9 +415,6 @@ async def _race_generate(
             await asyncio.gather(*pending, return_exceptions=True)
         return result
 
-    # ── Circuit-breaker check ─────────────────────────────────────────────────
-    # When _PRIMARY_MODEL is globally 503-ing, the circuit is open and we skip
-    # straight to fallback to save ~9s of guaranteed-fail latency per guess.
     global _primary_circuit_open_until
     _now = time.monotonic()
     _circuit_open = _now < _primary_circuit_open_until
@@ -463,7 +424,6 @@ async def _race_generate(
             _primary_circuit_open_until - _now,
         )
 
-    # ── Primary model race (Gemini API keys + optional Vertex AI) ───────────────
     if not _circuit_open:
         from app.config import settings as app_settings
         from app.providers.gemini import get_vertex_client
@@ -510,7 +470,6 @@ async def _race_generate(
                 submit_task(record_result("vertex_express", _PRIMARY_MODEL, "transient", reason=str(exc)[:500]))
                 return None
 
-        # Resolve up to 3 Gemini API keys
         keys: list[dict] = []
         resolved_model: str | None = None
         for _ in range(3):
@@ -528,8 +487,6 @@ async def _race_generate(
         primary_pairs = [(kd["api_key"], kd["key_hash"]) for kd in keys]
         keys.clear()
 
-        # Concurrent task list: Gemini API key pool + Vertex AI.
-        # _one_vertex_call() returns None instantly when Vertex AI is not configured.
         all_tasks: list[asyncio.Task] = [  # type: ignore[type-arg]
             asyncio.create_task(_one_call(ak, kh, resolved_model)) for ak, kh in primary_pairs
         ]
@@ -556,7 +513,6 @@ async def _race_generate(
                 _primary_circuit_open_until = 0.0
             return result
 
-        # All Gemini keys + Vertex AI failed — open circuit
         if provider_failed:
             _primary_circuit_open_until = time.monotonic() + _PRIMARY_CIRCUIT_COOLDOWN_S
         logger.debug(
@@ -566,9 +522,6 @@ async def _race_generate(
             _FALLBACK_MODEL,
         )
 
-    # ── Fallback model race ───────────────────────────────────────────────────
-    # Primary model race returned nothing (503 / 429 / all keys failed).
-    # resolve_ai_request will skip keys already suspended by _one_call above.
     fallback_kd, fallback_mdl, _ = await use_case.resolve_ai_request(_FALLBACK_MODEL)
     if fallback_kd and fallback_mdl:
         fallback_pair = [(fallback_kd["api_key"], fallback_kd["key_hash"])]
@@ -582,8 +535,6 @@ async def _race_generate(
 
     return None
 
-
-# ── Progressive hint generation ───────────────────────────────────────────────
 
 _HINT_SPACES_RE = re.compile(r"\s+")
 _HINT_LIST_STRIP_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)]|подсказка\s*\d+\s*[:.)-]?)\s*", flags=re.IGNORECASE)
@@ -1028,9 +979,6 @@ async def generate_hints(
     return fallback_hints
 
 
-# ── Score UX helpers ─────────────────────────────────────────────────────────
-
-
 def score_emoji(score: float) -> str:
     """Return a single emoji representing the semantic temperature of a score.
 
@@ -1058,9 +1006,6 @@ def score_bar(score: float, width: int = 10) -> str:
     """
     filled = round(score * width)
     return "[" + "█" * filled + "░" * (width - filled) + "]"
-
-
-# ── Public entry point ────────────────────────────────────────────────────────
 
 
 async def _generate_judgement(
@@ -1159,7 +1104,6 @@ async def judge_guess(
     """
     from app.games.judgement_cache import cache_judgement, get_cached_judgement
 
-    # 1. Local exact / near-match (<1ms, no I/O)
     local = _local_check(target, guess)
     if local:
         j = GuessJudgement(status="hot", score=1.0, hint="Угадано! 🎉")
@@ -1171,7 +1115,6 @@ async def judge_guess(
     cache_topic = await cache_identity(
         "crocodile.judge", model_cache_topic(topic_id, category, selected_model), "crocodile.judge.classic"
     )
-    # 2. Judgement cache (<5ms, local file)
     cached = await get_cached_judgement(
         target,
         guess,
@@ -1182,13 +1125,11 @@ async def judge_guess(
     if cached is not None:
         cached.cached = True
 
-        # Retroactive fix for already cached hot synonyms:
         if cached.score >= 0.92:
             return "exact_match", cached
 
         return cached.status, cached
 
-    # 3. Configured model plan / Auto race, with a bounded retry of the same guess.
     result = await _generate_judgement(
         target,
         guess,
@@ -1198,11 +1139,6 @@ async def judge_guess(
         sense_context=sense_context,
     )
 
-    # 4. LLM unavailable — deliberately NO character-similarity fallback.
-    #    String metrics (Levenshtein, SequenceMatcher) measure orthographic
-    #    distance, not semantic distance. Using them to say "warm" or "cold"
-    #    is factually wrong and unfair to the player.
-    #    Instead: return a sentinel so the caller skips counting the attempt.
     if result is None:
         logger.info("Judge: LLM unavailable — returning judge_unavailable sentinel")
         sentinel = GuessJudgement(
@@ -1219,7 +1155,6 @@ async def judge_guess(
         result.score = 1.0
         result.hint = "Угадано! 🎉"
 
-    # Cache result for future identical guesses (fire-and-forget)
     submit_task(
         cache_judgement(
             target,

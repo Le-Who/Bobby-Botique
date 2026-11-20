@@ -168,7 +168,6 @@ async def test_confirmed_redis_update_is_not_requeued_during_outage(webhook_clie
     assert origins.consume(replay["update_id"]) is None
     application.process_update.assert_not_awaited()
 
-    # A distinct message must wait for distributed admission to recover.
     fresh = _payload(44)
     fresh["message"]["message_id"] = 1112
     if command:

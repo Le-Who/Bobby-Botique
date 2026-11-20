@@ -1,4 +1,3 @@
-# /app/handlers/cb_voice.py
 """Callback handlers for voice message confirmation flow.
 
 Handles: voice:confirm, voice:edit, voice:cancel, voice:transcribe_only, voice:deep_search
@@ -87,7 +86,6 @@ async def prepare_voice_edit(user_data, user_id: int, chat_id: int) -> _VoiceEdi
     from app.repos.memory_consent import is_private_data_snapshot_current
 
     current = await is_private_data_snapshot_current(user_id, pending.get("memory_epoch"), require_ltm=False)
-    # A newer edit or cancellation can supersede this selection during the check.
     if user_data.get("voice_edit_pending") is not selection:
         return None
     if user_data.get(selection.pending_key) is not pending:
@@ -151,7 +149,6 @@ async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     data_parts = (query.data or "").split(":")
     action = data_parts[1] if len(data_parts) == 2 and data_parts[0] == "voice" else ""
 
-    # Retrieve pending voice data bound EXACTLY to this message UI
     pending_key = f"voice_pending_{query.message.message_id}" if query.message else "voice_pending"
     pending = context.user_data.get(pending_key) if context.user_data else None
     operation = _voice_operations.get(_voice_operation_key(query.from_user.id, query.message))
@@ -293,7 +290,6 @@ async def _handle_cancel(query, context, lang: str) -> None:
             try:
                 await asyncio.shield(task)
             except asyncio.CancelledError as exc:
-                # Owner completion can precede delivery of the caller's cancellation.
                 if caller_task is not None and caller_task.cancelling():
                     caller_cancel = caller_cancel or exc
             except Exception:
@@ -320,7 +316,6 @@ async def _handle_transcribe_only(query, context, pending: dict | None, lang: st
     from app.handlers.msg_voice import _show_transcript_only
     from app.repos.memory_consent import private_data_lease
 
-    # Consume before awaiting; a repeated callback cannot store this turn twice.
     context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
     async with private_data_lease(
         pending["user_id"], pending["memory_epoch"], purpose="conversation:voice-transcript", require_ltm=False
@@ -340,7 +335,6 @@ async def _handle_transcribe_only(query, context, pending: dict | None, lang: st
             chat_state=chat_state,
         )
 
-    # Clean up
     if context.user_data and query.message:
         context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
 
@@ -360,7 +354,6 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
     user_id = pending["user_id"]
     await query.answer()
 
-    # Update placeholder to show processing, leaving transcript intact
     from app.utils.formatting import TelegramFormatter
 
     final_text = f"{t('voice.transcript_label', lang)}\n\n{pending['transcript']}\n\n✅ _(Принято)_"
@@ -375,7 +368,6 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
     transcript = pending["transcript"]
     attached_image = pending.get("attached_image")
 
-    # Clean up pending BEFORE starting the task
     if context.user_data and query.message:
         context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
 
@@ -390,9 +382,6 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
                 if not await _pending_current(pending):
                     return
 
-                # Keep multimodal content in the current canonical user turn.
-                # Pre-appending it to history would make the chat pipeline add
-                # the same transcript a second time.
                 from app.i18n import t as _t
 
                 parts: list = [f"{_t('voice.history_marker', lang)}\n{transcript}"]
@@ -414,9 +403,6 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
                         user_id,
                     )
 
-                # Voice-for-Voice: source is a voice message, but we ONLY reply
-                # with voice if the user specifically asked for it (parsed intent).
-                # This flag is per-request and NOT persisted.
                 reply_with_voice = pending.get("reply_with_voice", False)
                 async with MetricsMiddleware("voice_confirm", user_id=user_id):
                     await _handle_regular_chat(
@@ -446,7 +432,6 @@ async def _handle_edit(query, context, pending: dict | None, lang: str) -> None:
 
     transcript = pending["transcript"]
 
-    # Show original transcript as reference + prompt for corrected text
     from app.utils.formatting import TelegramFormatter
 
     edit_text = f"{t('voice.edit_original', lang)}\n\n_{transcript}_\n\n{t('voice.edit_prompt', lang)}"
@@ -455,7 +440,6 @@ async def _handle_edit(query, context, pending: dict | None, lang: str) -> None:
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
-    # Mark that we're waiting for an edited text from the user
     pending_key = f"voice_pending_{query.message.message_id}"
     if (
         context.user_data is not None
@@ -486,7 +470,6 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
     user_id = pending["user_id"]
     await query.answer()
 
-    # Update placeholder to finalize transcript
     from app.utils.formatting import TelegramFormatter
 
     final_text = f"{t('voice.transcript_label', lang)}\n\n{pending['transcript']}\n\n🔍 _Deep Search_"
@@ -500,7 +483,6 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
         return
     transcript = pending["transcript"]
 
-    # Clean up pending
     if context.user_data and query.message:
         context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
 
@@ -515,7 +497,6 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
                 if not await _pending_current(pending):
                     return
 
-                # Store only after admission and exact generation validation.
                 from app.i18n import t as _t
 
                 chat_state.history.append(
@@ -550,14 +531,11 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
     user_id = pending["user_id"]
     await query.answer()
 
-    # Update UI to show processing
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text("⚡ _Идёт повторная транскрибация..._")
 
     placeholder_message = query.message
     voice_bytes = pending["voice_bytes"]
-
-    # We DO NOT pop the pending data here, because we want to update it!
 
     async def _retranscribe_wrapper() -> None:
         try:
@@ -578,7 +556,6 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
                 ):
                     context.user_data.pop(pending_key, None)
                     return
-                # Retranscribe with the specific premium model requested
                 new_transcript, new_intent, new_draw_prompt = await transcribe_voice(
                     voice_bytes, model="gemini-3.5-flash"
                 )
@@ -587,11 +564,9 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
                     return
 
                 if new_transcript is None:
-                    # Revert nicely
                     await query.edit_message_text("❌ _Не удалось перерасшифровать. Попробуйте снова или отмените._")
                     return
 
-                # We need to update the transcript in the context so the user can Confirm the NEW transcript
                 from app.voice_intent import detect_tts_intent
 
                 voice_decision = await detect_tts_intent(user_text=new_transcript)

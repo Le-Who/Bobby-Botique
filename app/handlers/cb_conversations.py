@@ -34,7 +34,6 @@ async def send_conversation_selection(
         action_prefix: The prefix for the callback data (e.g. 'conv_switch_to', 'conv_delete_ask')
         title: The title text to display
     """
-    # Get list бесед for выбора
     conversations = await get_user_conversations(user_id, 10, 0)
     if not conversations:
         from app.utils.keyboards import error_with_back_keyboard
@@ -124,7 +123,6 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
 
             await leave_tarot_for_chat(user_id, query.message)
             await role_conv_metrics.record_conversation_switched()
-            # Показываем list бесед с тостом
             text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
             await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
             await query.answer(f"✅ Переключились на беседу ID: {conv_id}")
@@ -259,7 +257,6 @@ async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEF
     if success:
         await role_conv_metrics.record_conversation_deleted()
 
-        # Update list
         text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
 

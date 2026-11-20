@@ -97,8 +97,6 @@ class DashboardSourceCache:
             return SourceSnapshot(
                 None, None, None, False, False, "cache_closed", self._source_scopes.get(name, self._scope)
             )
-        # A save during an in-flight read invalidates that read. One joined retry
-        # reconciles a burst without spawning a refresh for each mutation/reader.
         for _ in range(2):
             entry = self._cache.get(name)
             if entry is not None and self._clock() - entry.attempted_clock < max_age_seconds:
@@ -191,7 +189,7 @@ class BotLifecycle:
         if state not in self.STATES:
             raise ValueError("Unsupported bot lifecycle state")
         if self.state == "failed" and state != "starting":
-            return  # Cleanup cannot erase evidence of a failed supervisor.
+            return
         self.state = state
         self.changed_at = time.time()
 

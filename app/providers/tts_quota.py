@@ -54,7 +54,6 @@ class TTSMinuteQuota:
             return ((token, redis_client), 0.0) if admitted else (None, float(retry_ms) / 1000)
 
         now = time.monotonic()
-        # Prune idle scopes too: retired keys/models must not accumulate forever.
         for key, entries in tuple(self._local.items()):
             live = {item: expires for item, expires in entries.items() if expires > now}
             if live:
@@ -64,8 +63,6 @@ class TTSMinuteQuota:
         entries = self._local.setdefault(scope, {})
         if len(entries) >= limit:
             return None, min(60.0, min(entries.values()) - now)
-        # Hold admission through the request deadline while RPD is pending.
-        # commit() starts the actual usage window immediately before dispatch.
         entries[token] = now + pending_for + 60.0
         return (token, None), 0.0
 
@@ -93,11 +90,8 @@ class TTSMinuteQuota:
                 async with asyncio.timeout(5.0):
                     await self.release(scope, reservation)
             except Exception as error:
-                # Redis will expire an uncertain token; do not replace a local
-                # admission refusal with a provider/key-health failure.
                 logging.warning("TTS minute refund unavailable type=%s", type(error).__name__)
 
-        # Always await the owned cleanup, including repeated cancellation.
         cleanup = asyncio.create_task(release_bounded())
         cancelled = False
         while not cleanup.done():

@@ -13,8 +13,6 @@ from app.documents.repository import (
     save_document_content,
 )
 
-# ── check_duplicate_file ─────────────────────────────────────────────────────
-
 
 class TestCheckDuplicateFile:
     @pytest.mark.asyncio
@@ -51,9 +49,6 @@ class TestCheckDuplicateFile:
         assert result is None
 
 
-# ── save_document_content ────────────────────────────────────────────────────
-
-
 class TestSaveDocumentContent:
     @pytest.mark.asyncio
     @patch("app.documents.repository.database")
@@ -79,9 +74,6 @@ class TestSaveDocumentContent:
         )
 
 
-# ── delete_document ──────────────────────────────────────────────────────────
-
-
 class TestDeleteDocument:
     @pytest.mark.asyncio
     @patch("app.documents.repository.database")
@@ -100,9 +92,6 @@ class TestDeleteDocument:
         assert result is False
 
 
-# ── delete_all_user_documents ────────────────────────────────────────────────
-
-
 class TestDeleteAllUserDocuments:
     @pytest.mark.asyncio
     @patch("app.documents.repository.database")
@@ -117,9 +106,6 @@ class TestDeleteAllUserDocuments:
         mock_db.db_query = AsyncMock(return_value=None)
         count = await delete_all_user_documents(1)
         assert count == 0
-
-
-# ── get_document_stats ───────────────────────────────────────────────────────
 
 
 class TestGetDocumentStats:
@@ -149,9 +135,6 @@ class TestGetDocumentStats:
         stats = await get_document_stats()
         assert stats["total_documents"] == 0
         assert stats["total_size_mb"] == 0
-
-
-# ── get_user_document_stats ──────────────────────────────────────────────────
 
 
 class TestGetUserDocumentStats:

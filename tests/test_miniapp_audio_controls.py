@@ -177,7 +177,7 @@ def test_voice_picker_preserves_catalog_order_default_and_literal_text():
     template = (Path(__file__).parents[1] / "app/templates/miniapp.html").read_text(encoding="utf-8")
     render = template[template.index("function renderSettings(") : template.index("async function loadSettings(")]
     draft = template[template.index("function settingsDraft(") : template.index("async function saveSettings(")]
-    choose = template[template.index("function setVoice(") : template.index("// ── Temperature Controller")]
+    choose = template[template.index("function setVoice(") : template.index("function syncTempControls(")]
     script = r"""
 const assert = require('node:assert/strict');
 class Element {

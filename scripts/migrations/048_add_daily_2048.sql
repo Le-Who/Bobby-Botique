@@ -1,5 +1,3 @@
--- 048_add_daily_2048.sql
--- Daily 2048 Sprint: one prepared board per day plus first-solution results.
 
 CREATE TABLE IF NOT EXISTS public.daily_2048_puzzles (
     puzzle_date DATE PRIMARY KEY,

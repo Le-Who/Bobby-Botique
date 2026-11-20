@@ -50,7 +50,6 @@ def _expire_input(user_data: dict, flow_id: str) -> None:
         flow.pop("first_date", None)
         flow["expired"] = True
         user_data.pop(_EXPIRY_TIMER_KEY, None)
-        # Keep public routing metadata so a late date never falls into AI chat.
 
 
 def _remember_birth_message(user_data: dict, message_id: int) -> None:
@@ -183,8 +182,6 @@ class OrphanBirthDateFilter(filters.MessageFilter):
 
 @safe_handler()
 async def handle_orphan_birth_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # No generic auth decorator: it can forward denied message text to admins.
-    # The owning form has already had a chance to handle this input.
     await update.effective_message.reply_text(t("compat.orphan_date", "ru"))
 
 
@@ -231,8 +228,6 @@ async def handle_compatibility_date(update: Update, context: ContextTypes.DEFAUL
     set_user_context(update.effective_user.id, update.effective_chat.id)
     ensure_request_id(f"tgcompat-{update.effective_chat.id}-{update.update_id}")
     if not await is_authorized(update.effective_user.id):
-        # The generic auth decorator forwards denied message text to admins;
-        # a birth date must never take that path.
         clear_compatibility_input(context.user_data)
         await message.reply_text(t("compat.access_required", lang))
         return
@@ -375,7 +370,6 @@ def register_compatibility_handlers(application: Application) -> None:
         ),
         group=-89,
     )
-    # Dates precede both natal conversations and ordinary chat/memory routing.
     private_dates = (filters.UpdateType.MESSAGE & pending) | (
         filters.UpdateType.EDITED_MESSAGE & CompatibilityEditedFilter(application)
     )

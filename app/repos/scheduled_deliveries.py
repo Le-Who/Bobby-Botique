@@ -57,8 +57,6 @@ async def _claim_result(conn, row):
 
 async def claim_reminder(reminder_id):
     async with transaction() as conn:
-        # /remind is available before a user's first AI conversation. Legacy
-        # chatless rows still need a durable generation before any work starts.
         await conn.execute(
             """INSERT INTO public.chats(user_id)
                SELECT user_id FROM public.user_reminders WHERE id=$1
@@ -237,8 +235,6 @@ async def release_unstarted(claim):
 
 async def finish_delivery(claim, result):
     async with transaction() as conn:
-        # Privacy barriers take this lock before changing the generation.
-        # Source markers and the final epoch check share that ordering.
         await conn.execute("SELECT pg_advisory_xact_lock($1)", claim["user_id"])
         row = await conn.fetchrow(
             """UPDATE public.scheduled_deliveries d SET state=$3,reason_code=$4,message_id=$5,
@@ -273,8 +269,6 @@ async def finish_delivery(claim, result):
         )
         if result.outcome != "sent":
             return True
-        # The same source/version and account generation must still authorize
-        # acknowledgment. A confirmed external send never becomes retryable.
         current = await conn.fetchval(
             f"SELECT 1 FROM public.scheduled_deliveries d WHERE delivery_id=$1 AND {_CURRENT_SOURCE}",
             claim["delivery_id"],
@@ -309,8 +303,6 @@ async def finish_delivery(claim, result):
 async def recover_abandoned():
     """An expired owner cannot acknowledge late receipts or resume sending."""
     async with transaction() as conn:
-        # Lock claims first, as settlement does. Never race an in-flight receipt
-        # into a fresh claim; any possibly visible effect is quarantined.
         await conn.fetch(
             "SELECT delivery_id FROM public.scheduled_deliveries WHERE state='started' "
             "AND expires_at<=clock_timestamp() FOR UPDATE"

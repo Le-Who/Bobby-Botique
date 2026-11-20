@@ -73,8 +73,6 @@ async def test_cold_script_cache_loads_once_then_uses_sha_for_all_queue_commands
     from app import queue_store
 
     _, redis, prefix = v2_store
-    # A unique comment produces a real NOSCRIPT response without clearing the
-    # server-wide script cache used by concurrent tests or other namespaces.
     script = queue_store._QUEUE_SCRIPT + f"\n-- cache-test:{uuid.uuid4().hex}\n"
     assert await redis.script_exists(hashlib.sha1(script.encode("utf-8")).hexdigest()) == [False]
     monkeypatch.setattr(queue_store, "_QUEUE_SCRIPT", script)

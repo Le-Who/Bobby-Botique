@@ -82,7 +82,6 @@ async def test_daily_keyboard_dialog_labels_server_day_and_responsive_layout(tmp
         }
       }
     }
-    // 200% CSS zoom in Chromium preserves a local table scroller.
     await page.setViewportSize({width:768,height:900});
     await page.evaluate(()=>document.documentElement.style.zoom='2');
     for(const name of ['croc','2048','trivia','tarot','jobs']){

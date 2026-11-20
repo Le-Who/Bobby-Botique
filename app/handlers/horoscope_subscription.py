@@ -58,14 +58,12 @@ from app.utils.background_tasks import submit_task
 
 logger = logging.getLogger(__name__)
 
-# ── Conversation states ───────────────────────────────────────────────────────
 CHOOSE_SIGN: Final = "HS_SIGN"
 CHOOSE_TIME_TODAY: Final = "HS_TIME_TODAY"
 CHOOSE_TIME_TOMORROW: Final = "HS_TIME_TOMORROW"
 CHOOSE_TZ: Final = "HS_TZ"
 CONFIRM: Final = "HS_CONFIRM"
 
-# ── Zodiac signs ──────────────────────────────────────────────────────────────
 SIGNS: dict[str, str] = {
     "aries": "♈ Овен",
     "taurus": "♉ Телец",
@@ -177,9 +175,6 @@ def _horoscope_invite_text() -> str:
     )
 
 
-# ── Entry: deep link /start subscribe_horoscope_{sign} ───────────────────────
-
-
 async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     """Called from /start handler when payload starts with 'subscribe_horoscope_' or via callback."""
     if not update.effective_message:
@@ -202,7 +197,7 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
             sign = ""
 
     if sign not in SIGNS:
-        sign = ""  # Ask user to pick
+        sign = ""
 
     context.user_data["horo_sign"] = sign
 
@@ -236,9 +231,6 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
     return CHOOSE_SIGN
 
 
-# ── State: CHOOSE_SIGN ────────────────────────────────────────────────────────
-
-
 async def on_sign_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
@@ -256,9 +248,6 @@ async def on_sign_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply_markup=_time_keyboard("today", _COMMON_TIMES_MORNING),
     )
     return CHOOSE_TIME_TODAY
-
-
-# ── State: CHOOSE_TIME_TODAY ──────────────────────────────────────────────────
 
 
 async def on_time_today_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
@@ -299,9 +288,6 @@ async def on_time_today_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=_time_keyboard("tomorrow", _COMMON_TIMES_EVENING),
     )
     return CHOOSE_TIME_TOMORROW
-
-
-# ── State: CHOOSE_TIME_TOMORROW ───────────────────────────────────────────────
 
 
 async def on_time_tomorrow_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
@@ -353,9 +339,6 @@ async def on_time_tomorrow_text(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="HTML",
     )
     return CHOOSE_TZ
-
-
-# ── State: CHOOSE_TZ ──────────────────────────────────────────────────────────
 
 
 async def _show_summary(message, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -436,9 +419,6 @@ async def on_tz_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return CONFIRM
 
 
-# ── State: CONFIRM ────────────────────────────────────────────────────────────
-
-
 async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
@@ -447,14 +427,12 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
 
     action = query.data.replace("horo_confirm:", "")
     if action == "edit":
-        # Restart from sign selection
         await query.edit_message_text(
             "✨ Выберите ваш знак зодиака:",
             reply_markup=_sign_keyboard(),
         )
         return CHOOSE_SIGN
 
-    # Save subscription
     user_id = update.effective_user.id if update.effective_user else None
     if not user_id:
         await query.edit_message_text("❌ Не удалось определить пользователя.")
@@ -495,14 +473,10 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
     else:
         await query.edit_message_text("❌ Ошибка при сохранении подписки. Попробуйте позже.")
 
-    # Clean up conversation state
     for key in ("horo_sign", "horo_time_today", "horo_time_tomorrow", "horo_utc_offset", "horo_payload"):
         context.user_data.pop(key, None)
 
     return ConversationHandler.END
-
-
-# ── /horoscope_settings command ───────────────────────────────────────────────
 
 
 async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
@@ -618,8 +592,6 @@ async def horoscope_now_callback(update: Update, context: ContextTypes.DEFAULT_T
         await message.reply_text("Прогноз уже отправлен. Новый запрос будет доступен через несколько секунд.")
         return ConversationHandler.END
 
-    # Keep the PTB user lane free while the provider works. Inline queries from
-    # this user must be answered before Telegram expires their query IDs.
     context.user_data["horo_now_busy"] = True
 
     async def deliver_in_background() -> None:
@@ -650,9 +622,6 @@ async def horoscope_now_callback(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 
-# ── /horoscope_settings callbacks ────────────────────────────────────────────
-
-
 async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query or not update.effective_user:
@@ -677,7 +646,6 @@ async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFA
         return CHOOSE_SIGN
 
     if action == "dismiss":
-        # User declined the invite — quietly close the keyboard
         await query.edit_message_text(
             "Хорошо, больше не буду предлагать 🙏",
             reply_markup=InlineKeyboardMarkup([]),
@@ -701,9 +669,6 @@ async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFA
     return ConversationHandler.END
 
 
-# ── /horoscope_stop command ───────────────────────────────────────────────────
-
-
 async def horoscope_stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.effective_user:
         return ConversationHandler.END
@@ -712,8 +677,6 @@ async def horoscope_stop_command(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("🗑 Подписка на гороскоп отменена.")
     return ConversationHandler.END
 
-
-# ── Build ConversationHandler ─────────────────────────────────────────────────
 
 import re
 
@@ -771,7 +734,6 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
     with suppress_hybrid_conversation_handler_warning():
         return ConversationHandler(
             entry_points=[
-                # Deep link entry — called programmatically from start_command
                 CommandHandler("horoscope_settings", horoscope_settings_command),
                 CommandHandler("horoscope", horoscope_settings_command),
                 MessageHandler(private_text & filters.Regex(HOROSCOPE_INTENT_RE), horoscope_settings_command),

@@ -36,11 +36,6 @@ def mock_deps():
         yield {"query": m_query, "mgr": m_mgr, "conn": mock_conn}
 
 
-# ---------------------------------------------------------------------------
-# is_admin
-# ---------------------------------------------------------------------------
-
-
 class TestIsAdmin:
     def test_admin_user(self):
         from app.repos.users import is_admin
@@ -48,11 +43,6 @@ class TestIsAdmin:
         with patch("app.repos.users.settings", _MockSettings(ADMIN_ID=42)):
             assert is_admin(42) is True
             assert is_admin(99) is False
-
-
-# ---------------------------------------------------------------------------
-# is_authorized
-# ---------------------------------------------------------------------------
 
 
 class TestIsAuthorized:
@@ -86,11 +76,6 @@ class TestIsAuthorized:
         mock_deps["query"].assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# invalidate_user_auth_cache
-# ---------------------------------------------------------------------------
-
-
 class TestInvalidateCache:
     @pytest.mark.asyncio
     async def test_removes_from_cache(self, mock_deps):
@@ -105,12 +90,7 @@ class TestInvalidateCache:
     async def test_noop_if_not_cached(self, mock_deps):
         from app.repos.users import invalidate_user_auth_cache
 
-        await invalidate_user_auth_cache(999)  # Should not raise
-
-
-# ---------------------------------------------------------------------------
-# load_user_state
-# ---------------------------------------------------------------------------
+        await invalidate_user_auth_cache(999)
 
 
 class TestLoadUserState:
@@ -142,11 +122,6 @@ class TestLoadUserState:
         assert await load_user_state(42) is None
 
 
-# ---------------------------------------------------------------------------
-# save_user_state
-# ---------------------------------------------------------------------------
-
-
 class TestSaveUserState:
     @pytest.mark.asyncio
     async def test_upsert_query_called(self, mock_deps):
@@ -157,11 +132,6 @@ class TestSaveUserState:
         query = mock_deps["query"].call_args[0][0]
         assert "INSERT INTO user_state" in query
         assert "ON CONFLICT" in query
-
-
-# ---------------------------------------------------------------------------
-# save_feedback
-# ---------------------------------------------------------------------------
 
 
 class TestSaveFeedback:

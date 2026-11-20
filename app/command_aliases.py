@@ -105,7 +105,7 @@ def validate_alias_values(application: Any, values: Mapping[str, Any]) -> None:
         identity = key.removeprefix(PREFIX)
         row = rows.get(identity)
         if row is None:
-            continue  # Retired registrations remain inactive in historical revisions.
+            continue
         if not row["editable"]:
             raise ValueError("Сохранённый алиас ссылается на общий или текстовый обработчик")
         aliases = _validated_aliases(identity, value)
@@ -125,7 +125,6 @@ def validate_alias_values(application: Any, values: Mapping[str, Any]) -> None:
                     continue
                 for rule in other["text_patterns"]:
                     pattern = re.compile(rule["pattern"], rule["flags"])
-                    # Menu guards share another callback but the same input rule.
                     if any(pattern.search(default) for default in row["aliases"]):
                         continue
                     if pattern.search(alias):
@@ -221,7 +220,6 @@ class AliasCommandHandler(CommandHandler):
         native = super().check_update(update)
         if native:
             return native
-        # Existing text rules retain their original placement and access filters.
         if alias in self.defaults or (not alias.startswith("/") and self.has_text_rules):
             return None
         if update.message is None or (not alias.startswith("/") and update.message.chat.type != "private"):
@@ -267,8 +265,6 @@ class AliasCommandFilter(filters.MessageFilter):
     def filter(self, message: Message) -> bool:
         if filters.COMMAND.filter(message):
             return True
-        # Like Telegram's entity filter, classify commands for any bot. The
-        # handler and guards independently validate who the command addresses.
         parsed = alias_message_input(message, check_mention=False)
         if parsed is None:
             return False

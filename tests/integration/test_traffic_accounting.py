@@ -26,7 +26,6 @@ async def test_traffic_round_trip_two_processes_and_restart(db_conn_with_user, m
     for _ in range(2):
         await first._save_traffic_to_db()
         await second._save_traffic_to_db()
-    # Replay the same high water after a lost local acknowledgement.
     first._api_flushed.clear()
     await first._save_traffic_to_db()
     first._api_daily["2026-10-25"] += 1

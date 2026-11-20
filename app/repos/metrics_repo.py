@@ -81,8 +81,6 @@ async def get_tavily_key_usage_stats() -> list[dict[str, Any]]:
     return await db_query(
         query,
         (
-            # The monthly manager is created at startup; settings reload does
-            # not replace it. Display the configuration its reader enforces.
             policy["credit_limit"],
             policy["threshold_percent"],
             current_month,
@@ -202,9 +200,6 @@ async def get_gemini_key_usage_stats(
                 configured_limits,
             ),
         )
-    # Compute the displayed admission state from the same precedence and
-    # integer threshold used by keys.py; SQL's historical model_configuration
-    # value cannot represent a runtime null override (unlimited).
     rows = []
     for result in results:
         row = dict(result)

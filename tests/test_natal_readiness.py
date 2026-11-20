@@ -614,7 +614,6 @@ async def test_readiness_cli_stops_before_storage_and_smoke_after_failed_gate(
             hosted_html_contains_sections=True,
         )
 
-    # Preserve real-check pool initialization semantics without opening any service.
     fake_check_storage_ready.__module__ = "app.natal.storage"
     fake_run_natal_smoke.__module__ = "app.natal.smoke"
     monkeypatch.setattr(natal_readiness, "load_golden_cases_from_json", lambda path: loaded_cases)

@@ -1,4 +1,3 @@
-# /app/utils/json_compat.py
 """High-performance JSON drop-in replacement backed by orjson.
 
 orjson (Rust/PyO3) is 2-6× faster than stdlib json for both
@@ -17,18 +16,16 @@ from typing import Any
 
 import orjson
 
-# ── Public API ───────────────────────────────────────────────────────────────
-
 _DEFAULT_OPTS = orjson.OPT_NON_STR_KEYS
 
 
 def dumps(
     obj: Any,
     *,
-    ensure_ascii: bool = False,  # ignored — orjson always emits UTF-8
+    ensure_ascii: bool = False,
     indent: int | None = None,
     default: Any = None,
-    separators: tuple[str, str] | None = None,  # ignored — orjson uses compact
+    separators: tuple[str, str] | None = None,
     sort_keys: bool = False,
 ) -> str:
     """Serialize *obj* to a JSON ``str`` (stdlib-compatible signature).
@@ -54,9 +51,6 @@ def loads(s: str | bytes | bytearray | memoryview) -> Any:
     return orjson.loads(s)
 
 
-# ── Namespace object for `import json_compat as json` style usage ────────────
-
-
 class _JsonNamespace:
     """Provides ``json.dumps`` / ``json.loads`` compatible namespace."""
 
@@ -64,7 +58,6 @@ class _JsonNamespace:
     loads = staticmethod(loads)
     dumps_bytes = staticmethod(dumps_bytes)
 
-    # stdlib json aliases for rare usages
     JSONDecodeError = orjson.JSONDecodeError
 
 

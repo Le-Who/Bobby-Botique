@@ -162,7 +162,6 @@ class TestProviderRouterIntegration:
 
         router = ProviderRouter()
 
-        # Create a tiny image for multimodal detection
         img = Image.new("RGB", (1, 1))
         history = [{"role": "user", "parts": ["describe this", img]}]
 
@@ -194,7 +193,6 @@ class TestProviderRouterIntegration:
             )
 
         assert text == "Image desc"
-        # resolve_ai_request should have been called with use_openrouter=False
         mock_use_case.resolve_ai_request.assert_awaited_once_with(
             "gemini-3.1-flash-lite", use_openrouter=False, excluded_key_hashes=set()
         )
@@ -206,7 +204,6 @@ class TestProviderRouterIntegration:
 
         router = ProviderRouter()
 
-        # First call: returns error → retry; second call: succeeds
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[

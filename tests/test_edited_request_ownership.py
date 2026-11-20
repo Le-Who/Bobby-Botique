@@ -69,8 +69,6 @@ async def ownership(monkeypatch):
 
     monkeypatch.setattr("app.middleware.debounce.debounce_message", debounce)
     monkeypatch.setattr(messages, "_send_busy_ephemeral", AsyncMock())
-    # Replace only this router's scheduling delay with a controlled checkpoint.
-    # The assertions below concern ownership after cleanup, not a timer duration.
     router_asyncio = SimpleNamespace(**vars(asyncio))
     router_asyncio.sleep = lambda _delay: checkpoint()
     monkeypatch.setattr(messages, "asyncio", router_asyncio)
@@ -174,8 +172,6 @@ async def ownership(monkeypatch):
             if not task.done():
                 task.cancel()
         await asyncio.gather(*owners, *workers, return_exceptions=True)
-        # Own captured inputs even when a RED assertion identifies an unstarted
-        # coroutine that its production outer task failed to close.
         for coroutine in submitted_coroutines.values():
             coroutine.close()
         for task in heartbeat_tasks:
@@ -231,7 +227,6 @@ async def test_superseded_cleanup_cannot_erase_replacement(monkeypatch, ownershi
         placeholder.edit_text.side_effect = gated_error
         replacement_handler = ownership.launch(ownership.update("replacement", edited=True))
         await cleanup_started.wait()
-        # Allow all runnable owners to reach their next event. No elapsed-time oracle.
         await settle()
         await ownership.launch(ownership.update("other user", uid=22))
         await other_started.wait()
@@ -596,8 +591,6 @@ async def test_completed_prestart_cleanup_cannot_stop_replacement_heartbeat(monk
         await intent_started.wait()
         edit = ownership.launch(ownership.update("replacement", edited=True))
         await edit_preflight_started.wait()
-        # Queue the edit continuation after worker completion but before its
-        # resource callback, using real handler preflight and task submission.
         release_intent.set()
         asyncio.get_running_loop().call_soon(release_preflight.set)
         await original

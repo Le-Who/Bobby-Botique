@@ -1,4 +1,3 @@
-# /app/repos/memory_consolidation.py
 """Just-In-Time Memory Consolidation (Change 5).
 
 Triggers consolidation when raw memories exceed a token threshold
@@ -46,11 +45,10 @@ from app.runtime_settings.gemini_execution import run_gemini_override
 from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.utils.json_compat import json
 
-# ── Debounce gate constants ─────────────────────────────────────────────
-_MSG_GATE = 20  # check should_consolidate every Nth message
-_TIME_GATE = 900.0  # or every 15 minutes (seconds)
+_MSG_GATE = 20
+_TIME_GATE = 900.0
 _EXTRACTION_TIMEOUT_SECONDS = 120.0
-_consolidation_state: dict[int, dict] = {}  # {user_id: {"msg_count": int, "last_check_ts": float}}
+_consolidation_state: dict[int, dict] = {}
 
 
 def should_check_consolidation(user_id: int) -> bool:
@@ -70,13 +68,11 @@ def should_check_consolidation(user_id: int) -> bool:
 
     state["msg_count"] += 1
 
-    # Message count gate
     if state["msg_count"] >= _MSG_GATE:
         state["msg_count"] = 0
         state["last_check_ts"] = now
         return True
 
-    # Time gate
     if (now - state["last_check_ts"]) >= _TIME_GATE:
         state["msg_count"] = 0
         state["last_check_ts"] = now
@@ -173,7 +169,6 @@ async def should_consolidate(user_id: int) -> bool:
     if not raw_memories:
         return False
 
-    # Token threshold
     total_tokens = sum(m["est_tokens"] for m in raw_memories)
     if total_tokens >= TOKEN_THRESHOLD:
         logging.info(
@@ -184,11 +179,9 @@ async def should_consolidate(user_id: int) -> bool:
         )
         return True
 
-    # Temporal threshold
     last_ts = await get_last_consolidation_time(user_id)
     now = datetime.now(UTC)
     if last_ts is None:
-        # Never consolidated — check if oldest memory is old enough
         oldest = raw_memories[0]["created_at"]
         if oldest and (now - oldest) > timedelta(days=TEMPORAL_THRESHOLD_DAYS):
             logging.info(
@@ -237,7 +230,6 @@ async def maybe_consolidate(
     if not raw_memories:
         return 0
 
-    # Check token threshold against the already-fetched rows
     total_tokens = sum(m["est_tokens"] for m in raw_memories)
     triggered = False
 
@@ -250,8 +242,6 @@ async def maybe_consolidate(
         )
         triggered = True
     else:
-        # Temporal threshold: one extra DB query, but cheaper than the second
-        # full re-fetch that consolidate_memories would have done otherwise.
         last_ts = await get_last_consolidation_time(user_id)
         now = datetime.now(UTC)
         if last_ts is None:
@@ -274,7 +264,6 @@ async def maybe_consolidate(
     if not triggered:
         return 0
 
-    # Pass the already-fetched memories -- no second SELECT
     return await consolidate_memories(
         user_id,
         api_key,
@@ -294,8 +283,6 @@ async def _extract_persona_facts(memories_text: str, api_key: str) -> list[str]:
         for fact in graph.get("facts", [])[:MAX_PERSONA_FACTS]
     ]
 
-
-# ── GraphRAG extraction prompt ───────────────────────────────────────────────
 
 _GRAPH_EXTRACTION_PROMPT = """Analyze these memory entries and extract a knowledge graph.
 
@@ -429,9 +416,6 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
                     timeout=_EXTRACTION_TIMEOUT_SECONDS * 2 / 3,
                 )
             except ValueError:
-                # Repair output structure only. Each repair dispatch has its own
-                # quota admission and selected-key health owner, within the same
-                # extraction deadline and unchanged configured model chain.
                 override = await run_gemini_override(
                     "memory.consolidate",
                     (_CONSOLIDATION_MODEL,),
@@ -606,7 +590,6 @@ async def _consolidate_memories_impl(
 
     Returns number of new persona facts created, or 0 on failure.
     """
-    # ⚡ Reuse pre-fetched data when available; fall back to DB fetch for direct calls.
     raw_memories = (
         _prefetched_memories
         if _prefetched_memories is not None
@@ -626,14 +609,12 @@ async def _consolidate_memories_impl(
         return 0
     snapshot_epoch = expected_epoch if expected_epoch is not None else next(iter(snapshot_epochs), None)
 
-    # Build text block for LLM
     lines = []
     for m in raw_memories:
         date_str = str(m["created_at"])[:10] if m.get("created_at") else "?"
         lines.append(f"[memory_id={int(m['id'])} date={date_str}] {m['content']}")
     memories_text = "\n".join(lines)
 
-    # Extract graph (facts + entities + relations)
     graph = await _extract_graph(memories_text, api_key)
     if not await _preflight_consolidation_snapshot(user_id, raw_memories, snapshot_epoch):
         logging.info("Skipping stale consolidation after extraction for user %d", user_id)
@@ -655,13 +636,9 @@ async def _consolidate_memories_impl(
         len(relations),
     )
 
-    # Store consolidated facts + graph data in a transaction
     try:
         from app.repos.memory import _get_embedding
 
-        # Pre-fetch all embeddings concurrently to avoid N+1 queries during transaction
-
-        # Helper to gather with concurrency limit
         async def bounded_gather(tasks, limit=20):
             sem = asyncio.Semaphore(limit)
 
@@ -671,11 +648,8 @@ async def _consolidate_memories_impl(
 
             return await asyncio.gather(*(run_task(t) for t in tasks))
 
-        # Build tasks for facts
         fact_tasks = [_get_embedding(fact, api_key, task_type="RETRIEVAL_DOCUMENT") for fact in facts]
 
-        # Persist only entities that can be connected to a provenance-backed edge.
-        # Entity-only model output has no retention anchor and must not create nodes.
         extracted_entity_names = {ent.get("name", "").strip() for ent in entities if ent.get("name", "").strip()}
         valid_relations = [
             rel
@@ -687,20 +661,14 @@ async def _consolidate_memories_impl(
             endpoint for rel in valid_relations for endpoint in (rel.get("from", "").strip(), rel.get("to", "").strip())
         }
         valid_entities = [ent for ent in entities if ent.get("name", "").strip() in relation_endpoint_names]
-        # The consolidation schema provides exact support indexes for facts and
-        # relations, but not for free-form entity descriptions. Embed/persist only
-        # the relation endpoint name so an uncited description cannot leak across
-        # source deletion boundaries.
         entity_texts = [ent.get("name", "").strip() for ent in valid_entities]
         entity_tasks = [_get_embedding(text, api_key, task_type="RETRIEVAL_DOCUMENT") for text in entity_texts]
 
-        # Build tasks for relations
         relation_tasks = [
             _get_embedding(rel.get("predicate", "related_to").strip(), api_key, task_type="RETRIEVAL_DOCUMENT")
             for rel in valid_relations
         ]
 
-        # Gather all embeddings
         all_embeddings = await bounded_gather(fact_tasks + entity_tasks + relation_tasks)
 
         if len(all_embeddings) != len(fact_tasks) + len(entity_tasks) + len(relation_tasks) or any(
@@ -712,18 +680,15 @@ async def _consolidate_memories_impl(
             )
             return 0
 
-        # Unpack embeddings
         fact_embeddings = all_embeddings[: len(fact_tasks)]
         all_embeddings = all_embeddings[len(fact_tasks) :]
         entity_embeddings = all_embeddings[: len(entity_tasks)]
         all_embeddings = all_embeddings[len(entity_tasks) :]
         relation_embeddings = all_embeddings
 
-        # Map entity and relation embeddings
         ent_emb_map = {
             ent.get("name", "").strip(): emb for ent, emb in zip(valid_entities, entity_embeddings, strict=False)
         }
-        # Use relation tuple as key
         rel_emb_map = {
             (rel.get("from", "").strip(), rel.get("to", "").strip(), rel.get("predicate", "related_to").strip()): emb
             for rel, emb in zip(valid_relations, relation_embeddings, strict=False)
@@ -812,8 +777,6 @@ async def _consolidate_memories_impl(
                 user_id,
             )
 
-            # Consolidated entity descriptions do not carry entity-level
-            # support indexes, so only endpoint names and types are projected.
             entity_support_fact_ids: dict[str, set[int]] = {}
             for relation in valid_relations:
                 support_ids = {inserted_fact_ids[index] for index in relation["support_fact_indexes"]}

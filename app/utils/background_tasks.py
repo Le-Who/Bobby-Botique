@@ -1,4 +1,3 @@
-# /app/utils/background_tasks.py
 """Shared background task management utilities.
 
 Provides consistent start/cancel semantics for asyncio background tasks
@@ -63,7 +62,7 @@ class TaskManager:
     ``task_manager`` is provided for production use.
     """
 
-    MAX_TASKS = 2500  # Elevated limit to prevent dropping valid DB/metrics tasks (AI backpressure handled by global semaphore limits)
+    MAX_TASKS = 2500
 
     def __init__(self) -> None:
         self._tasks: set[asyncio.Task] = set()
@@ -162,14 +161,12 @@ class TaskManager:
         operation: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> asyncio.Task:
-        # ── Audit Fix 2: guard against bare-coroutine + retry > 0 ────────
         if retry > 0 and coro_factory is None:
             raise ValueError(
                 "Retryable tasks require coro_factory (not a bare coroutine). "
                 "Use submit_retryable() with a factory function."
             )
 
-        # Determine task name for logging
         name_source = coro_factory if coro_factory else coro
         coro_name = getattr(name_source, "__name__", getattr(name_source, "__qualname__", type(name_source).__name__))
         operation_name = operation or f"background.{coro_name}"
@@ -208,8 +205,6 @@ class TaskManager:
             **safe_metadata,
         )
 
-        # Preserve the caller's tracing/privacy context. A persistent worker
-        # captures runtime settings separately for each job, not at enqueue.
         ctx = _detached_context()
         execution_id = uuid.uuid4().hex
         started_ns = time.monotonic_ns()
@@ -219,7 +214,7 @@ class TaskManager:
 
         def _emit_cancelled() -> None:
             if terminal_emitted:
-                return  # A cancelled error callback must not replace a recorded failure.
+                return
             emit(
                 "job.finished",
                 level="warning",
@@ -253,7 +248,6 @@ class TaskManager:
                         try:
                             attempts_started += 1
                             target = coro_factory() if coro_factory else coro
-                            # Note: bare coroutines can only be awaited once, but retry is 0 for them.
                             await target  # type: ignore[misc]
                             emit(
                                 "job.finished",
@@ -310,9 +304,6 @@ class TaskManager:
                                 if self._error_callback:
                                     try:
                                         res = self._error_callback(e, f"Task {coro_name}")
-                                        # The failing job owns notification cleanup.
-                                        # A separate child can escape drain's snapshot
-                                        # and leave callback failures unobserved.
                                         if inspect.isawaitable(res):
                                             await res
                                     except Exception as cb_err:
@@ -327,7 +318,6 @@ class TaskManager:
                     _emit_cancelled()
                     raise
 
-        # Run wrapper within the captured context snapshot for trace propagation
         task = ctx.run(asyncio.create_task, _wrapper(), name=f"background:{coro_name}")
         self._tasks.add(task)
 
@@ -335,9 +325,6 @@ class TaskManager:
             self._tasks.discard(done)
             if wrapper_started:
                 self._running_count -= 1
-            # Cancellation can finish the wrapper before its first instruction,
-            # leaving an accepted bare coroutine unawaited. The completed owner
-            # can safely close it; already-awaited coroutines are closed already.
             if coro is not None:
                 coro.close()
             if done.cancelled() and not wrapper_started:
@@ -370,8 +357,6 @@ class TaskManager:
             self._tasks.difference_update(done)
             if pending or loop.time() >= deadline:
                 break
-            # Accepted jobs can enqueue dependent writes. Include those jobs in
-            # the original deadline rather than returning after one snapshot.
 
         self._accepting_tasks = False
         logging.warning("Timeout draining background tasks. Cancelling %d tasks.", len(self._tasks))
@@ -397,10 +382,8 @@ class TaskManager:
                 return False
 
 
-# ── Global singleton ─────────────────────────────────────────────────────────
 _task_manager = TaskManager()
 
-# Public API: module-level functions delegate to the singleton.
 submit_task = _task_manager.submit
 try_submit_task = _task_manager.try_submit
 submit_retryable = _task_manager.submit_retryable

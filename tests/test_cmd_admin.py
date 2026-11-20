@@ -17,9 +17,6 @@ def make_admin_update(user_id=1, args=None):
     return update, context
 
 
-# ── /admin ────────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_admin_command_shows_help():
     """admin_command returns help text with list of commands."""
@@ -110,9 +107,6 @@ async def test_admin_command_includes_cover_commands_and_dashboard_buttons():
     assert urls == ["https://bot.example.test/", "https://bot.example.test/admin_daily"]
 
 
-# ── /adduser ──────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_add_user_no_args():
     """add_user_command with no args shows usage."""
@@ -158,9 +152,6 @@ async def test_add_user_success():
     mock_auth.assert_awaited_once_with(999)
 
 
-# ── /deluser ──────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_del_user_no_args():
     """del_user_command with no args shows usage."""
@@ -180,9 +171,6 @@ async def test_del_user_no_args():
 
     reply_text = update.message.reply_text.call_args[0][0]
     assert "Использование" in reply_text or "ID" in reply_text
-
-
-# ── /listusers ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -210,9 +198,6 @@ async def test_list_users_command():
     update.message.reply_text.assert_awaited_once()
 
 
-# ── /clearcache ───────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_clear_cache_command():
     """clear_cache_command clears cache and reports."""
@@ -235,9 +220,6 @@ async def test_clear_cache_command():
     assert "✅" in reply_text or "кэш" in reply_text.lower() or "cache" in reply_text.lower()
 
 
-# ── Non-admin access ─────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_admin_command_denied_for_non_admin():
     """Admin commands deny access for non-admin users."""
@@ -255,12 +237,8 @@ async def test_admin_command_denied_for_non_admin():
 
         await admin_command(update, context)
 
-    # Should reply with access denied
     reply_text = update.message.reply_text.call_args[0][0]
     assert "нет прав" in reply_text.lower() or "❌" in reply_text
-
-
-# ── /reload ───────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

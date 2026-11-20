@@ -11,13 +11,10 @@ from typing import Any
 
 from app.utils.chat_actions import send_chat_action
 
-# Dictionary mapping Telegram message_id to its heartbeat termination Event
 _HEARTBEAT_EVENTS: dict[int, asyncio.Event] = {}
 
-# Dictionary mapping Telegram message_id to its active heartbeat task
 _HEARTBEAT_TASKS: dict[int, asyncio.Task] = {}
 
-# Request identity also distinguishes equal message IDs in different chats.
 _HEARTBEAT_OWNERS: dict[tuple[int, int], asyncio.Event] = {}
 _WAIT_NOTICE_TASKS: dict[asyncio.Event, asyncio.Task] = {}
 
@@ -114,7 +111,6 @@ async def retire_heartbeat(message_id: int, *, chat_id: int | None = None, event
         return
     if not task.done() and not task.cancelling():
         task.cancel()
-    # Include the raw-coroutine closure callback even for an already-done task.
     completion: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     task.add_done_callback(lambda _task: completion.set_result(None))
     cancellation = None

@@ -21,7 +21,6 @@ def metrics_collector():
     from app.metrics import MetricsCollector
 
     collector = MetricsCollector()
-    # Don't start the background event processor
     collector.running = False
     return collector
 
@@ -50,12 +49,10 @@ class TestMetricsSnapshotAtomicity:
         """Core race condition test: events arriving during DB I/O must survive."""
         today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
 
-        # Pre-populate: 5 requests exist before save
         metrics_collector.daily_metrics[today].request_count = 5
         metrics_collector.daily_metrics[today].total_response_time = 2.5
         metrics_collector.daily_metrics[today].cache_hits = 3
 
-        # Simulate: during DB write, 3 more events arrive
         db_write_started = asyncio.Event()
         db_write_done = asyncio.Event()
 
@@ -63,28 +60,22 @@ class TestMetricsSnapshotAtomicity:
 
         async def slow_db_query(*args, **kwargs):
             db_write_started.set()
-            await db_write_done.wait()  # Block until we signal completion
+            await db_write_done.wait()
             return await original_db_query(*args, **kwargs)
 
         with patch("app.metrics.db.db_query", side_effect=slow_db_query):
             with patch("app.metrics.db.db_execute_many", new_callable=AsyncMock):
-                # Start the save in background
                 save_task = asyncio.create_task(metrics_collector._save_metrics_to_db())
 
-                # Wait for DB write to start
                 await asyncio.wait_for(db_write_started.wait(), timeout=2.0)
 
-                # Inject events that arrive DURING the DB write
-                # These go directly to the daily_metrics (simulating _process_event)
                 metrics_collector.daily_metrics[today].request_count += 3
                 metrics_collector.daily_metrics[today].total_response_time += 1.0
                 metrics_collector.daily_metrics[today].cache_hits += 2
 
-                # Release the DB write
                 db_write_done.set()
                 await asyncio.wait_for(save_task, timeout=2.0)
 
-        # The 3 events that arrived during DB write must be preserved
         daily = metrics_collector.daily_metrics[today]
         assert daily.request_count == 3, f"Expected 3 (events during save), got {daily.request_count}"
         assert daily.total_response_time == 1.0
@@ -104,7 +95,6 @@ class TestMetricsSnapshotAtomicity:
         with patch("app.metrics.db.db_query", side_effect=Exception("DB down")):
             await metrics_collector._save_metrics_to_db()
 
-        # After failure: counters must be back to original values
         daily = metrics_collector.daily_metrics[today]
         assert daily.request_count == 10, f"Expected 10 (compensated), got {daily.request_count}"
         assert daily.error_count == 2
@@ -117,7 +107,6 @@ class TestMetricsSnapshotAtomicity:
         """Per-user metrics must be snapshotted and reset together with daily metrics."""
         today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
 
-        # Set up per-user data
         metrics_collector._user_daily[today][42]["request_count"] = 8
         metrics_collector._user_daily[today][42]["model_usage"]["gemini-flash"] = 6
         metrics_collector.daily_metrics[today].request_count = 8
@@ -129,7 +118,6 @@ class TestMetricsSnapshotAtomicity:
         ):
             await metrics_collector._save_metrics_to_db()
 
-        # Per-user counters must be reset after save
         user_data = metrics_collector._user_daily[today][42]
         assert user_data["request_count"] == 0, f"Expected 0 (reset after save), got {user_data['request_count']}"
         assert user_data["model_usage"] == {}
@@ -167,14 +155,13 @@ class TestMetricsSnapshotAtomicity:
         metrics_collector._user_daily[today][99]["model_usage"]["flash"] = 3
         metrics_collector.daily_metrics[today].request_count = 5
 
-        # First DB call (global metrics) succeeds, but db_execute_many (user metrics) fails
         call_count = 0
 
         async def selective_fail(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return None  # db_query succeeds
+                return None
             raise Exception("User metrics write failed")
 
         with (
@@ -183,13 +170,10 @@ class TestMetricsSnapshotAtomicity:
         ):
             await metrics_collector._save_metrics_to_db()
 
-        # Per-user data must be compensated
         user_data = metrics_collector._user_daily[today][99]
         assert user_data["request_count"] == 5
         assert user_data["model_usage"].get("flash") == 3
 
-        # The global upsert already succeeded; retrying user metrics must not
-        # add those five requests to the database a second time.
         assert metrics_collector.daily_metrics[today].request_count == 0
 
     @pytest.mark.asyncio
@@ -321,7 +305,6 @@ class TestMetricsSnapshotAtomicity:
             with patch("app.metrics.db.db_execute_many", new_callable=AsyncMock):
                 await metrics_collector._save_metrics_to_db()
 
-        # db_query should not have been called for metrics insert
         mock_query.assert_not_called()
 
     @pytest.mark.asyncio

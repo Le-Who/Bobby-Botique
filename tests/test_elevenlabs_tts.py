@@ -1,4 +1,3 @@
-# /tests/test_elevenlabs_tts.py
 """Unit tests for the ElevenLabs TTS provider HTTP layer and key rotation router."""
 
 import asyncio
@@ -211,10 +210,6 @@ async def test_cancel_during_error_response_close_has_one_terminal(monkeypatch):
     assert [row["outcome"] for row in terminals] == ["cancelled"]
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Group 1: HTTP requests exercise real httpx framing and response objects.
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", ["", "   \n "])
 async def test_generate_speech_elevenlabs_empty_input(text):
@@ -310,10 +305,6 @@ async def test_late_chunk_failure_discards_preceding_successful_audio(monkeypatc
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
         monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
         assert await generate_speech_with_key_rotation(["first", "second"], ["key"], voice_id="voice") is None
-
-
-# # Group 2: generate_speech_with_key_rotation — Atomic Router
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

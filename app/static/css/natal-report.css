@@ -60,7 +60,6 @@ html[data-natal-theme="dark"] .visual-scroll {
   --matrix-violet: #b6aae1; --matrix-warm: #d7b477; --matrix-teal: #7fcac1;
 }
 @media (prefers-color-scheme: dark) {
-  /* Keep real diagram colors aligned with the page when scripts are disabled. */
   html:not([data-natal-theme]) .visual-scroll {
     --chart-glow: #10363d; --chart-glow-middle: #0d2c32; --chart-glow-edge: #081f24;
     --chart-surface: #10363d; --chart-disk: #0d2c32; --chart-rim: #d7b477; --chart-ring: #a9956d;

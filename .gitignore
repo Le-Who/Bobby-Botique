@@ -1,8 +1,6 @@
-# ── Secrets ───────────────────────────────────────────────────
 .env
 .env.*
 
-# ── Python Caches & Virtual Environments ──────────────────────
 __pycache__/
 *.pyc
 *.pyo
@@ -10,7 +8,6 @@ __pycache__/
 .venv/
 venv/
 
-# ── Test & Coverage Artifacts ─────────────────────────────────
 .coverage
 htmlcov/
 .pytest_cache/
@@ -21,11 +18,9 @@ pytest_output.txt
 tests_output.log
 test_keys_out.txt
 
-# ── Linter / Type Checker Caches ──────────────────────────────
 .ruff_cache/
 .mypy_cache/
 
-# ── IDE, Editor & Agent Configs ───────────────────────────────
 .vscode/
 .cursor/
 .Jules/
@@ -36,23 +31,22 @@ test_keys_out.txt
 *.swp
 *.swo
 skills/
-.agents/
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/delete-comment/
 skills-lock.json
 implementation_plan.md
 walkthrough.md
 task.md
 .playwright-cli/
 
-# ── App Data & Caches ─────────────────────────────────────────
-# Crocodile game local judgement cache
 app/games/data/*.json
 
-# ── Logs & Output ─────────────────────────────────────────────
 output/
 out.log
 out*.log
 
-# ── Dev Artifacts & Scripts ───────────────────────────────────
 verification/
 data/
 test_script.py
@@ -68,7 +62,6 @@ _test_*.py
 scratch*.py
 script.py
 
-# Perf profiling scratch output (keep bench_*.py, ignore everything else)
 artifacts/perf/*.log
 artifacts/perf/*.json
 artifacts/perf/parse_*.py
@@ -76,7 +69,6 @@ artifacts/perf/out*.log
 artifacts/dependency-frontier/
 production-requirements.txt
 
-# ── OS Files ──────────────────────────────────────────────────
 Thumbs.db
 Desktop.ini
 .DS_Store

@@ -66,8 +66,6 @@ async def test_shutdown_utility_awaits_child_finally(monkeypatch, memory_tasks, 
         if repeat_cancel:
             for index in range(2):
                 owner.cancel(f"repeated shutdown {index}")
-                # A queued checkpoint lets the cancellation run before we
-                # examine ownership; the worker's cleanup remains barriered.
                 checkpoint = asyncio.get_running_loop().create_future()
                 asyncio.get_running_loop().call_soon(checkpoint.set_result, None)
                 await checkpoint

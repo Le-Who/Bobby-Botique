@@ -1,4 +1,3 @@
--- Migration 060: Add daily_trivia_used_keys table for tracking used question topics/facts
 CREATE TABLE IF NOT EXISTS public.daily_trivia_used_keys (
     id BIGSERIAL PRIMARY KEY,
     object_norm TEXT NOT NULL,

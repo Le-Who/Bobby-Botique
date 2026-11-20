@@ -159,9 +159,6 @@ async def daily_trivia_command(update: Update, context: ContextTypes.DEFAULT_TYP
     pref = await daily_delivery_repo.get_preference(user_id)
     is_subscribed = bool(pref and pref.get("is_subscribed"))
 
-    # If the user already finished today's trivia, show the result directly
-    # instead of the play-invite. Register the sent message as the new active
-    # prompt so that send_trivia_result_message can keep it up to date.
     result = await trivia_repo.get_result_if_exists(user_id, today)
     if result is not None and result.status == "completed":
         from app.games.daily_trivia_telegram import render_result_body
@@ -276,7 +273,6 @@ async def trivia_monthly_champions_callback(update: Update, context: ContextType
     if not query or not query.data:
         return
 
-    # callback_data = "dailytrivia:month:YYYY-MM"
     raw_month = query.data.rsplit(":", 1)[-1]
     try:
         year_s, month_s = raw_month.split("-", 1)

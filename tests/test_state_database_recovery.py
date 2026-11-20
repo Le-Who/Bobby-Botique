@@ -179,7 +179,6 @@ async def test_failed_debounced_save_retries_latest_fields(state_store, monkeypa
     monkeypatch.setattr(state, "_PERSIST_DEBOUNCE_SEC", 0.01)
     state.set_document_mode(42, True, document_id=5)
     await asyncio.wait_for(failed.wait(), 1)
-    # The failed snapshot is superseded before the retained retry executes.
     state.get_user_state(42).selected_document_id = 6
     await asyncio.wait_for(saved.wait(), 1)
     assert await state_store.drain(timeout=1)

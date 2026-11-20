@@ -1,14 +1,11 @@
-# ruff: noqa: E402
 import asyncio
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Isolate in dedicated xdist worker — setup_module mutates sys.modules.
 pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
 
-# Mock all dependencies (executed only during module execution, not collection)
 _mock_keys = [
     "telegram",
     "telegram.ext",
@@ -38,16 +35,12 @@ def setup_module(module):
 
 
 def teardown_module(module):
-    # 1. Restore original entries
     app_keys_before = _original_modules.pop("__app_keys_before__", set())
     for k in _mock_keys:
         if k in sys.modules:
             del sys.modules[k]
     sys.modules.update(_original_modules)
 
-    # 2. Purge any app.* modules imported DURING the mocked period.
-    #    They hold stale `settings = MagicMock()` bindings that cannot be
-    #    fixed by restoring sys.modules alone.
     for k in list(sys.modules):
         if k.startswith("app.") and k not in app_keys_before:
             del sys.modules[k]
@@ -59,7 +52,6 @@ async def async_test_document_callback_structure():
     """Verify that document_callback exists and can be called."""
     assert hasattr(cb_documents, "document_callback")
 
-    # Create mocks
     update = MagicMock()
     context = MagicMock()
     query = MagicMock()
@@ -70,14 +62,11 @@ async def async_test_document_callback_structure():
     query.answer = AsyncMock()
     query.edit_message_text = AsyncMock()
 
-    # Mock the menus module used by cb_documents
     with patch.object(
         cb_documents.menus, "get_documents_menu_content", AsyncMock(return_value=("text", "mode", "markup"))
     ):
-        # Call the function
         await cb_documents.document_callback(update, context)
 
-        # Assertions
         query.answer.assert_called()
         cb_documents.menus.get_documents_menu_content.assert_called_with(12345)
         query.edit_message_text.assert_called()

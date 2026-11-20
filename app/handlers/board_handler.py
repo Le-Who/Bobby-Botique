@@ -38,14 +38,12 @@ register_controlled_text(
 
 logger = logging.getLogger(__name__)
 
-# ── Debounce configuration ────────────────────────────────────────────────────
 
-_DEBOUNCE_SECONDS = 60  # synthesize at most once per 60s
-_NEW_ENTRY_THRESHOLD = 3  # also synthesize when ≥3 new entries arrive
-_MAX_ENTRIES_PER_BOARD = 50  # hard cap; oldest entries become part of summary
-_BOARD_TTL_HOURS = 24  # boards older than this are considered expired
+_DEBOUNCE_SECONDS = 60
+_NEW_ENTRY_THRESHOLD = 3
+_MAX_ENTRIES_PER_BOARD = 50
+_BOARD_TTL_HOURS = 24
 
-# Per-board debounce tracking: {board_id: next_allowed_float}
 _board_next_synthesis: dict[int, float] = {}
 _board_publication_locks: weakref.WeakValueDictionary[int, asyncio.Lock] = weakref.WeakValueDictionary()
 
@@ -57,9 +55,6 @@ def _board_publication_lock(board_id: int) -> asyncio.Lock:
         lock = asyncio.Lock()
         _board_publication_locks[board_id] = lock
     return lock
-
-
-# ── Keyboard factories ────────────────────────────────────────────────────────
 
 
 def _active_keyboard(board_id: int) -> InlineKeyboardMarkup:
@@ -75,9 +70,6 @@ def _active_keyboard(board_id: int) -> InlineKeyboardMarkup:
 
 def _closed_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔒 Доска закрыта", callback_data="inline_noop")]])
-
-
-# ── Board card renderer ───────────────────────────────────────────────────────
 
 
 def _render_board_card(topic: str, summary: str, entry_count: int, board_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -102,9 +94,6 @@ def _render_board_card(topic: str, summary: str, entry_count: int, board_id: int
     return text, _active_keyboard(board_id)
 
 
-# ── Public: board_link callback (fired on first button press) ─────────────────
-
-
 async def handle_board_link_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -126,11 +115,6 @@ async def handle_board_link_callback(
 
     msg = query.message
     if not msg:
-        # Inline context: message is None (editing an inline message)
-        # The inline_message_id IS the handle — we still don't know
-        # chat_id/message_id here. This path is only entered when the
-        # callback comes from a normal (non-inline) message, which shouldn't
-        # happen for board_link.
         return
 
     chat_id = msg.chat.id
@@ -156,9 +140,6 @@ async def handle_board_link_callback(
     )
 
 
-# ── Public: reply capture ─────────────────────────────────────────────────────
-
-
 async def try_handle_board_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Intercept replies to board messages. Returns True if handled (caller should return).
 
@@ -174,11 +155,9 @@ async def try_handle_board_reply(update: Update, context: ContextTypes.DEFAULT_T
 
     replied = msg.reply_to_message
 
-    # Only care about messages sent via this bot
     if not replied.via_bot or replied.via_bot.id != context.bot.id:
         return False
 
-    # Board lookup by in-chat coordinates
     chat_id = msg.chat.id
     replied_message_id = replied.message_id
 
@@ -190,11 +169,11 @@ async def try_handle_board_reply(update: Update, context: ContextTypes.DEFAULT_T
 
     board = await get_board_by_chat_msg(chat_id, replied_message_id)
     if not board:
-        return False  # Reply to an inline msg that isn't a board
+        return False
 
     text = (msg.text or msg.caption or "").strip()
     if not text:
-        return True  # Still "handled" — avoid processing voice/media replies as board entries
+        return True
 
     user_name = (msg.from_user.first_name or "Аноним") if msg.from_user else "Аноним"
 
@@ -204,7 +183,7 @@ async def try_handle_board_reply(update: Update, context: ContextTypes.DEFAULT_T
         text=text,
     )
     if updated_entries is None:
-        return True  # DB error but don't let the message fall through to general handler
+        return True
 
     logger.debug(
         "Board %s: new entry from %s (%d total)",
@@ -213,7 +192,6 @@ async def try_handle_board_reply(update: Update, context: ContextTypes.DEFAULT_T
         len(updated_entries),
     )
 
-    # ── Debounce + threshold trigger ─────────────────────────────────────────
     new_count = await get_new_entries_count(board["id"])
     await _maybe_synthesize(
         bot=context.bot,
@@ -223,9 +201,6 @@ async def try_handle_board_reply(update: Update, context: ContextTypes.DEFAULT_T
         force=False,
     )
     return True
-
-
-# ── Synthesis engine ──────────────────────────────────────────────────────────
 
 
 async def _maybe_synthesize(
@@ -247,16 +222,12 @@ async def _maybe_synthesize(
     now = time.monotonic()
 
     if not force and new_entry_count < _NEW_ENTRY_THRESHOLD:
-        # Threshold: synthesize immediately when enough new entries accumulated
-        # Debounce: delay until window expires
         next_allowed = _board_next_synthesis.get(board_id, 0.0)
         if now < next_allowed:
-            return  # Still within debounce window — skip
-        # Window expired; only proceed if there are new entries
+            return
         if new_entry_count == 0:
-            return  # No new inputs — nothing to synthesize
+            return
 
-    # Mark next allowed synthesis time
     _board_next_synthesis[board_id] = now + _DEBOUNCE_SECONDS
 
     inline_message_id = board.get("inline_msg_id")
@@ -303,14 +274,12 @@ async def _run_synthesis(topic: str, entries: list[dict]) -> str:
         return ""
 
     entries_text = "\n".join(
-        f"- {e.get('user', 'Аноним')}: {e.get('text', '')}"
-        for e in entries[-_MAX_ENTRIES_PER_BOARD:]  # cap at max entries
+        f"- {e.get('user', 'Аноним')}: {e.get('text', '')}" for e in entries[-_MAX_ENTRIES_PER_BOARD:]
     )
 
     prompt = render_prompt_text(get_prompt_text("board.synthesis"), topic=topic, entries_text=entries_text)
 
     try:
-        # Use the same 3-way race as inline — lightweight, fast, resilient.
         from app.handlers.inline import _stream_inline_fast, get_inline_model
         from app.process_policies import execute_text_process, resolve_process
 
@@ -331,7 +300,7 @@ async def _run_synthesis(topic: str, entries: list[dict]) -> str:
                 history=[{"role": "user", "parts": [prompt]}],
                 system_instruction=None,
                 user_id=None,
-                max_rounds=2,  # fewer rounds — synthesis is non-critical
+                max_rounds=2,
                 enable_web_search=False,
             ),
             timeout=30.0,
@@ -339,12 +308,8 @@ async def _run_synthesis(topic: str, entries: list[dict]) -> str:
         return (result[0] or "").strip()[:3000] if result else ""
     except Exception as exc:
         logger.error("Board synthesis failed: %s", exc, exc_info=True)
-        # Fallback: plain list without AI structuring
         lines = [f"• {e.get('user', '?')}: {e.get('text', '')[:200]}" for e in entries[-20:]]
         return "\n".join(lines)
-
-
-# ── Callbacks: Refresh and Close ──────────────────────────────────────────────
 
 
 async def handle_board_refresh_callback(
@@ -375,7 +340,6 @@ async def handle_board_refresh_callback(
         await query.answer("⚠️ Невозможно обновить — нет доступа к сообщению.", show_alert=True)
         return
 
-    # Re-fetch full board from DB
     board = await get_board_by_inline_msg(inline_message_id)
     if not board:
         await query.answer("ℹ️ Доска уже закрыта или не найдена.", show_alert=True)
@@ -426,7 +390,6 @@ async def handle_board_close_callback(
             await query.answer("ℹ️ Доска уже закрыта или не найдена.", show_alert=True)
             return
 
-        # Only the creator can close
         requester_id = query.from_user.id if query.from_user else None
         creator_id = board.get("creator_id")
         if requester_id is None or creator_id is None or requester_id != creator_id:

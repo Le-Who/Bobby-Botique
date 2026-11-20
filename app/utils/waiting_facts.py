@@ -7,12 +7,9 @@ from app import database as db
 
 logger = logging.getLogger(__name__)
 
-# Simple per-user TTL cache so we don't hit the DB on every status update.
-# Format: {user_id: (timestamp, stat_string)}
 _stat_cache: dict[int, tuple[float, str]] = {}
-_STAT_CACHE_TTL = 120  # seconds — stats survive one full research session
+_STAT_CACHE_TTL = 120
 
-# Static fun facts about technology, science, and AI
 FUN_FACTS = [
     "Первый электронный компьютер ENIAC весил более 27 тонн и занимал 167 квадратных метров.",
     "Слово «робот» придумал чешский писатель Карел Чапек в 1920 году.",
@@ -49,7 +46,6 @@ async def get_personalized_stat(user_id: int) -> str | None:
     Results are cached per-user for _STAT_CACHE_TTL seconds to avoid
     hitting the DB on every status callback during an agentic loop.
     """
-    # Check cache first
     cached = _stat_cache.get(user_id)
     if cached:
         ts, stat_str = cached
@@ -58,7 +54,6 @@ async def get_personalized_stat(user_id: int) -> str | None:
         _stat_cache.pop(user_id, None)
 
     try:
-        # Get approximate start date from earliest metric entry
         user_record = await db.db_query(
             "SELECT MIN(metric_date) as first_seen FROM user_metrics WHERE user_id = $1",
             (user_id,),
@@ -69,23 +64,19 @@ async def get_personalized_stat(user_id: int) -> str | None:
         first_seen = user_record[0].get("first_seen")
         days_together = 0
         if first_seen:
-            # handle timezone-aware or naive datetimes
             if first_seen.tzinfo is not None:
                 days_together = (datetime.datetime.now(first_seen.tzinfo) - first_seen).days
             else:
                 days_together = (datetime.datetime.now() - first_seen).days
 
-            # Show "1 days" as 1 so we don't say 0 days for new users
             days_together = max(1, days_together)
 
-        # Get total requests
         total_req_record = await db.db_query(
             "SELECT SUM(request_count) as total FROM user_metrics WHERE user_id = $1",
             (user_id,),
         )
         total_requests = (total_req_record[0].get("total") or 0) if total_req_record else 0
 
-        # Get today requests
         today = datetime.date.today()
         today_req_record = await db.db_query(
             "SELECT request_count FROM user_metrics WHERE user_id = $1 AND metric_date = $2",
@@ -93,7 +84,6 @@ async def get_personalized_stat(user_id: int) -> str | None:
         )
         today_requests = (today_req_record[0].get("request_count") or 0) if today_req_record else 0
 
-        # Pick a random template if we have data
         templates = []
         if total_requests > 0 and days_together > 0:
             templates.extend(
@@ -130,12 +120,10 @@ async def get_waiting_message(user_id: int | None = None) -> str:
     """
     prefix = "💡 Знаете ли вы?"
 
-    # Try personalized stat (30% chance) if we have a user_id
     if user_id and random.random() < 0.3:
         stat_msg = await get_personalized_stat(user_id)
         if stat_msg:
             return f"💡 Немного статистики:\n{stat_msg}"
 
-    # Fallback to static fun fact (70% chance or if stat generation failed)
     fact = random.choice(FUN_FACTS)
     return f"{prefix} {fact}"

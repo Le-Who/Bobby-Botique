@@ -99,8 +99,6 @@ def apply_chart_palette(svg: str) -> str:
     }
     for color, (token, fallback) in colors.items():
         svg = svg.replace(f'="{color}"', f'="var(--chart-{token}, {fallback})"')
-    # VS15 also repairs the presentation of legacy stored zodiac glyphs on
-    # platforms whose default for these codepoints is a colored emoji tile.
     return re.sub(r"([♈♉♊♋♌♍♎♏♐♑♒♓])(?![︎️])", r"\1︎", svg)
 
 

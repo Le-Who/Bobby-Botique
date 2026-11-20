@@ -99,7 +99,6 @@ async def insert_initial_data(db_query, db_execute_many, settings):
     await db_query("CREATE INDEX IF NOT EXISTS idx_chats_user_id ON chats(user_id)")
     await db_query("CREATE INDEX IF NOT EXISTS idx_key_usage_model_date ON key_usage(model_name, usage_date)")
 
-    # Sync model limits from settings → DB (single source of truth)
     if settings.DAILY_LIMITS:
         limits_data = [(model, limit, "Google") for model, limit in settings.DAILY_LIMITS.items()]
         if limits_data:

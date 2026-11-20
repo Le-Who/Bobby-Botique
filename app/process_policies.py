@@ -492,8 +492,6 @@ async def list_processes() -> list[dict[str, Any]]:
                 ),
             }
         )
-    # A newly introduced reader is visible even before it has the semantic
-    # metadata required for safe editing. The coverage test also rejects it.
     for process_id in sorted(set(inventory.process_consumers) - set(PROCESSES)):
         rows.append(
             {

@@ -98,17 +98,14 @@ class TestWebSocketEvents:
             patch("app.games.crocodile.get_game_history") as hist_mock,
         ):
             load_mock.return_value = game
-            # Make get_game_history return some predefined items
             hist_mock.return_value = [{"event": "guess", "guess": "кот", "result": "cold"}]
 
             async with test_client.websocket(url) as ws:
-                # 1. First event is game_state
                 state_raw = await ws.receive()
                 state = json.loads(state_raw)
                 assert state["event"] == "game_state"
                 assert state["is_creator"] is False
 
-                # 2. Second event should be history_sync
                 hist_raw = await ws.receive()
                 hist = json.loads(hist_raw)
                 assert hist["event"] == "history_sync"
@@ -140,10 +137,8 @@ class TestWebSocketEvents:
             load_mock.return_value = game
 
             async with test_client.websocket(url) as ws:
-                # Initial game_state
                 await ws.receive()
 
-                # Request a hint within bounds
                 await ws.send(json.dumps({"type": "hint", "hint_index": 0}))
                 resp1_raw = await ws.receive()
                 resp1 = json.loads(resp1_raw)
@@ -151,7 +146,6 @@ class TestWebSocketEvents:
                 assert resp1["text"] == "Hint #1"
                 assert resp1["available"] is True
 
-                # Request out of bounds
                 await ws.send(json.dumps({"type": "hint", "hint_index": 5}))
                 resp2_raw = await ws.receive()
                 resp2 = json.loads(resp2_raw)
@@ -230,7 +224,7 @@ class TestWebSocketEvents:
 
     async def test_creator_guard(self, test_client, mock_bot_token):
         """WS-05: Creator cannot guess."""
-        init_data = make_valid_init_data(mock_bot_token, user_id=111)  # Creator ID
+        init_data = make_valid_init_data(mock_bot_token, user_id=111)
         url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=game4"
         game = make_crocodile_game(game_id="game4", creator_id=111)
         game.process_guess = AsyncMock()
@@ -244,7 +238,7 @@ class TestWebSocketEvents:
             async with test_client.websocket(url) as ws:
                 state_raw = await ws.receive()
                 state = json.loads(state_raw)
-                assert state["is_creator"] is True  # Validated as creator
+                assert state["is_creator"] is True
 
                 await ws.send(json.dumps({"type": "guess", "word": "кот"}))
                 resp_raw = await ws.receive()

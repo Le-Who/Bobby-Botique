@@ -77,7 +77,6 @@ def _public_job(snapshot) -> dict[str, Any]:
     from app.queue_contracts import JobState, public_summary
 
     data = snapshot.as_dict()
-    # Do not expose new store fields implicitly or arbitrary result dictionaries.
     fields = {
         "task_id",
         "kind",
@@ -150,9 +149,6 @@ class _ControlsBody(Body):
         self._received_bytes += len(data)
         if self._received_bytes > MAX_CONTROL_BODY_BYTES:
             self._oversized = True
-            # Quart 0.23 checks the bound only after EOF. Wake its reader via
-            # the public completion API; raising here would cancel ASGI's
-            # request task before it could return a 413 response.
             self.set_complete()
             return
         await super().put(data)
@@ -253,7 +249,6 @@ def _validate_restored_values(values: Mapping[str, Any]) -> None:
             try:
                 get_global_registry().get_prompt_text(identity)
             except KeyError:
-                # Retired values remain in history, without being applied.
                 continue
         if section == "catalog_baseline":
             if identity not in models.PROVIDERS or value is not True:
@@ -415,7 +410,7 @@ def register_controls(app, require_auth) -> None:
                         source = await task_queue.read_job(task_id)
                     source_job = _public_job(source) if source is not None else None
                 except Exception:
-                    pass  # An optional read cannot undo confirmed admission.
+                    pass
             return jsonify(
                 confirmed=confirmed,
                 source_job=source_job,
@@ -601,7 +596,6 @@ def register_controls(app, require_auth) -> None:
         except ValueError, KeyError:
             raise
         except Exception:
-            # Provider/DB errors may contain connection details. Never return them.
             return jsonify(
                 error="Не удалось сохранить настройки. Данные не подтверждены; обновите состояние перед повтором."
             ), 503
@@ -709,8 +703,6 @@ def register_controls(app, require_auth) -> None:
             ), 503
         await prompts.refresh_prompts(force=True)
         await models.refresh_catalogs()
-        # A restore can remove overrides as well as add them. Clear all cached
-        # admissions so restored limits take effect on the next attempt.
         from app.repos.keys import db_manager, invalidate_model_limit_cache
 
         for model in set(db_manager._model_config_cache) | {

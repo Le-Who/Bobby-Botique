@@ -1,4 +1,3 @@
-/* Broadcast admission and observed delivery receipts. Never retries a mutation. */
 (function (root) {
   'use strict';
   const PREFIX = '/api/admin/broadcast';
@@ -29,7 +28,7 @@
   function persist() {
     const entries = [...records.values()].slice(-MAX).map(record => ({ operation_id: record.operation, batch_id: record.batch?.batch_id || record.batchId || null }));
     const savedFilters = Object.fromEntries(filters.map(name => [name, el(`broadcast-journal-${name}`)?.value || '']));
-    try { sessionStorage.setItem(KEY, JSON.stringify({ operations: entries, filters: savedFilters })); } catch (_) { /* Storage may be disabled. */ }
+    try { sessionStorage.setItem(KEY, JSON.stringify({ operations: entries, filters: savedFilters })); } catch (_) {  }
   }
   function restore() {
     try {
@@ -41,7 +40,7 @@
         const value = saved.filters?.[name];
         if (typeof value === 'string' && value.length <= 64 && el(`broadcast-journal-${name}`)) el(`broadcast-journal-${name}`).value = value;
       }
-    } catch (_) { /* Ignore invalid or unavailable browser storage. */ }
+    } catch (_) {  }
   }
   function admitSlot(operation) {
     if (records.size >= MAX) {
@@ -51,7 +50,7 @@
     }
     const record = { operation, batch: null, unavailable: false, admission: null };
     records.set(operation, record);
-    persist(); // Operation identity is durable before the first mutation byte.
+    persist();
     render();
     return record;
   }
@@ -63,7 +62,6 @@
     record.batch = batch;
     record.batchId = batch.batch_id;
     record.unavailable = false;
-    // Reconstruct the retry relationship from server IDs after a tab reload.
     for (const candidate of records.values()) {
       if (candidate.batch?.parent_batch_id === batch.batch_id) record.retryOperation = candidate.operation;
       if (batch.parent_batch_id && (candidate.batch?.batch_id || candidate.batchId) === batch.parent_batch_id) candidate.retryOperation = record.operation;
@@ -151,7 +149,6 @@
       record.admission = error.data?.admission || null;
       accept(record, error.data?.batch);
       if (!error.outcomeUnknown && !error.data?.batch) {
-        // A definite refusal did not create a batch. It can safely leave the active set.
         records.delete(record.operation);
         persist();
         notify(error.message, 'error');
@@ -160,7 +157,7 @@
       notify(error.outcomeUnknown ? 'Результат приёма неизвестен. Только проверка по operation ID; повторная отправка не выполняется.' : 'Batch отклонён; подробности и безопасные повторы доступны в журнале.', error.outcomeUnknown ? 'info' : 'error');
     }
     render();
-    await readRecord(record); // Includes rejected admission: its returned batch may precede terminal persistence.
+    await readRecord(record);
   }
   async function start({ channel, userIds, force = false }, { single = false } = {}) {
     const ids = [...new Set(userIds)].sort((a, b) => a - b);

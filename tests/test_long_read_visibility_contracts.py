@@ -147,7 +147,6 @@ def assert_visible_split(outcome, message):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("publication", [False, True], ids=["reader-to-split", "reader-and-telegraph-to-split"])
 async def test_invisible_reader_link_falls_through_to_full_text_without_mirror(long_read, publication):
-    # Returning a Reader receipt after storage alone would silently lose the answer.
     message = TelegramMessageIO(fail_links={"reader", "telegraph"})
     deliver, io, manager = long_read(message, publication=publication)
 

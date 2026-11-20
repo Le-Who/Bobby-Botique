@@ -1,4 +1,3 @@
-# tests/test_game_inline.py
 """Tests for the inline Crocodile game initialization logic.
 
 Tests the regex used to trigger the game and the `_init_croc_game_async` setup logic.
@@ -12,8 +11,6 @@ import pytest
 
 from app.games.word_bank import TopicResolution
 from app.handlers.inline import _CROC_PREFIX_RE, _init_croc_game_async
-
-# ── _CROC_PREFIX_RE ──────────────────────────────────────────────────────────
 
 
 class TestCrocPrefixRegex:
@@ -33,7 +30,6 @@ class TestCrocPrefixRegex:
         match = _CROC_PREFIX_RE.match(query)
         assert match is not None
         assert match.group(0) == expected_prefix
-        # Removing the matched prefix should leave the argument
         assert _CROC_PREFIX_RE.sub("", query).strip() == expected_arg.strip()
 
     @pytest.mark.parametrize(
@@ -43,14 +39,11 @@ class TestCrocPrefixRegex:
             "крокодил",
             "крокодильчик:",
             "crocc:",
-            "крокодил : животные",  # normal space before colon is not matched
+            "крокодил : животные",
         ],
     )
     def test_fails_on_invalid_prefixes(self, query: str):
         assert _CROC_PREFIX_RE.match(query) is None
-
-
-# ── _init_croc_game_async ────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -103,7 +96,6 @@ class TestInitCrocGameAsync:
                 topic_id="special:lol_champions",
                 sense_context="Персонажи League of Legends",
             )
-            # The inline keyboard gets updated
             mock_bot.edit_message_text.assert_awaited_once()
             call_kwargs = mock_bot.edit_message_text.await_args.kwargs
             assert "Слово загадано!" in call_kwargs["text"]
@@ -132,9 +124,7 @@ class TestInitCrocGameAsync:
                 creator_id=42,
             )
 
-            # Execution stops before creating game
             create_mock.assert_not_called()
-            # Bot edits directly to show error text
             mock_bot.edit_message_text.assert_awaited_once()
             call_kwargs = mock_bot.edit_message_text.await_args.kwargs
             assert "Не могу понять тему" in call_kwargs["text"]
@@ -159,11 +149,10 @@ class TestInitCrocGameAsync:
             )
 
             pick_mock.assert_not_called()
-            # Category is a static label — no LLM call needed
             create_mock.assert_awaited_once_with(
                 target_word="секрет",
                 category="Слово игрока (особое)",
-                lang="ru",  # detected via cyrillic check
+                lang="ru",
                 inline_message_id="msg-3",
                 creator_id=42,
                 topic_id="custom_word:8a432c52b3c45ec1",
@@ -189,7 +178,6 @@ class TestInitCrocGameAsync:
             )
 
             pick_mock.assert_not_called()
-            # Category is always static — no waiting, game starts instantly
             create_mock.assert_awaited_once_with(
                 target_word="крокодил",
                 category="Слово игрока (особое)",
@@ -206,7 +194,6 @@ class TestInitCrocGameAsync:
             patch("app.games.word_bank.pick_random_word_for_topic", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
         ):
-            # Pass a 1-character custom word
             await _init_croc_game_async(
                 bot=mock_bot,
                 inline_message_id="msg-4",

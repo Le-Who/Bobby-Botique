@@ -166,7 +166,6 @@ const payload = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 
 @pytest.mark.browser
 def test_date_only_pair_has_editable_review_and_waits_for_server_acceptance():
-    # Catches premature success, extra birth fields, double submission, or lost edits.
     _run_browser(r"""
     assert.equal(await page.title(), 'Совместимость');
     assert.equal(await page.locator('h1').innerText(), 'Совместимость');
@@ -207,7 +206,6 @@ def test_date_only_pair_has_editable_review_and_waits_for_server_acceptance():
 @pytest.mark.browser
 @pytest.mark.parametrize("precision", ["exact", "approximate"])
 def test_known_time_requires_selected_place_and_mixed_pair_preserves_precision(precision):
-    # Catches typed city recognition, dropped known time, and stale city after country edits.
     _run_browser(
         r"""
     await fillDate('first');
@@ -253,7 +251,6 @@ def test_known_time_requires_selected_place_and_mixed_pair_preserves_precision(p
 
 @pytest.mark.browser
 def test_submission_error_retains_inputs_and_allows_one_retry():
-    # Catches discarded drafts, false accepted messages on errors, and disabled retries.
     _run_browser(r"""
     await dateOnlyReview();
     submitHandler = route => route.fulfill({ status: 422, json: { error: 'invalid_input', detail: '<img src=x> Проверка' } });
@@ -285,7 +282,6 @@ def test_validation_refocus_keeps_city_suggestions_open():
     await page.locator('#first-city-results').waitFor({ state: 'visible' });
     await page.locator('#next-button').click();
     assert.equal(await page.locator('#first-city').evaluate(node => node === document.activeElement), true);
-    // A queued blur close must not hide results after validation returns focus.
     await page.waitForTimeout(200);
     assert.equal(await page.locator('#first-city-results').isVisible(), true);
     await page.locator('#first-city-results button').first().click();
@@ -295,7 +291,6 @@ def test_validation_refocus_keeps_city_suggestions_open():
 
 @pytest.mark.browser
 def test_form_has_no_horizontal_overflow_and_theme_changes_keep_dates():
-    # Catches mobile clipping and state resets when the host theme changes.
     _run_browser(r"""
     await fillDate('first');
     for (const scheme of ['dark', 'light']) {
@@ -318,7 +313,6 @@ def test_form_has_no_horizontal_overflow_and_theme_changes_keep_dates():
 
 @pytest.mark.browser
 def test_missing_telegram_auth_never_reports_success_or_sends_birth_data():
-    # Catches submitting unsigned drafts from an ordinary browser tab.
     _run_browser(
         r"""
     await dateOnlyReview();
@@ -334,7 +328,6 @@ def test_missing_telegram_auth_never_reports_success_or_sends_birth_data():
 
 @pytest.mark.browser
 def test_invalid_calendar_date_stays_on_partner_and_focuses_error():
-    # Catches accepting calendar rollovers (31 April, non-leap February) as valid dates.
     _run_browser(r"""
     await page.locator('#next-button').click();
     assert.equal(await page.locator('#first-day').getAttribute('aria-invalid'), 'true');
@@ -355,7 +348,6 @@ def test_invalid_calendar_date_stays_on_partner_and_focuses_error():
 
 @pytest.mark.browser
 def test_range_and_optional_place_use_selected_catalog_ids_with_keyboard():
-    # Catches reversed ranges, inaccessible result selection, and silently dropped optional place.
     _run_browser(r"""
     await fillDate('first');
     await page.locator('[name="first-time-precision"][value="range"]').check();
@@ -392,7 +384,6 @@ def test_range_and_optional_place_use_selected_catalog_ids_with_keyboard():
 
 @pytest.mark.browser
 def test_explicit_unknown_place_omits_retained_selection_without_erasing_the_draft():
-    # Catches submitting stale city despite the explicit skip choice, or losing it on back.
     _run_browser(r"""
     await fillDate('first');
     await page.locator('#first-place-unknown').uncheck();
@@ -420,7 +411,6 @@ def test_explicit_unknown_place_omits_retained_selection_without_erasing_the_dra
 
 @pytest.mark.browser
 def test_success_shaped_response_without_accepted_acknowledgement_keeps_form_editable():
-    # Catches treating any HTTP 2xx or ok flag as acceptance.
     _run_browser(r"""
     await dateOnlyReview();
     submitHandler = route => route.fulfill({ status: 200, json: { ok: true } });

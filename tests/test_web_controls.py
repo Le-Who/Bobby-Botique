@@ -85,7 +85,6 @@ async def test_chunked_oversized_mutation_is_rejected_before_write(chunk_sizes):
         ) as connection:
             for size in chunk_sizes:
                 await connection.send(b" " * size)
-            # Reject an oversized stream without waiting for its end.
             await asyncio.wait_for(connection.receive(), timeout=1)
             await connection.send_complete()
         response = await connection.as_response()

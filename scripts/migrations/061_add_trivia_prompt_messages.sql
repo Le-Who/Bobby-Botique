@@ -1,7 +1,3 @@
--- 059_add_trivia_prompt_messages.sql
--- Track the Telegram message sent to a user with the daily trivia invite so we
--- can edit it in-place to show the result after they finish, mirroring the
--- Daily Crocodile and 2048 Sprint behaviour.
 
 CREATE TABLE IF NOT EXISTS public.daily_trivia_prompt_messages (
     id          BIGSERIAL PRIMARY KEY,

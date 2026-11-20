@@ -48,7 +48,6 @@ class TestCacheRedisUnavailable:
 
             await cache.set("key1", "qna", data)
 
-        # Memory cache should have it
         result = await cache.get("key1", "qna")
         assert result == data
 
@@ -56,7 +55,6 @@ class TestCacheRedisUnavailable:
     async def test_memory_hit_bypasses_redis_entirely(self, cache):
         """If value is in memory cache, Redis is never consulted."""
         data = {"answer": "cached"}
-        # Manually populate memory cache
         cache.qna_cache["test-key"] = data
 
         with patch("app.cache.redis_client") as mock_redis:
@@ -89,7 +87,6 @@ class TestCacheRedisUnavailable:
     async def test_redis_none_client_handled_gracefully(self, cache):
         """If redis_client is None (not configured), cache should work memory-only."""
         with patch("app.cache.redis_client", None):
-            # Set in memory-only mode
             await cache.set("k1", "search", {"data": "value"})
             result = await cache.get("k1", "search")
 
@@ -112,7 +109,6 @@ class TestCacheMultiLayer:
             result = await cache.get("redis-key", "qna")
 
         assert result == data
-        # Now memory cache should have it
         assert "redis-key" in cache.qna_cache
 
     @pytest.mark.asyncio

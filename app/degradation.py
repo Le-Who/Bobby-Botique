@@ -1,4 +1,3 @@
-# /app/degradation.py
 """Degradation matrix — graceful fallbacks when services are unavailable.
 
 Provides health checks and fallback strategies for:
@@ -49,7 +48,6 @@ async def check_system_health() -> SystemHealth:
     """Run all health checks and return system-wide status."""
     health = SystemHealth()
 
-    # ── Database ─────────────────────────────────────────────────────────
     try:
         from app.database import check_database_health
 
@@ -59,7 +57,6 @@ async def check_system_health() -> SystemHealth:
         health.database = ServiceStatus.UNAVAILABLE
         health.details["database_error"] = str(e)
 
-    # ── Redis ────────────────────────────────────────────────────────────
     try:
         from app.cache import ping_safe, redis_client
 
@@ -74,7 +71,6 @@ async def check_system_health() -> SystemHealth:
         health.redis = ServiceStatus.DEGRADED
         health.details["redis_error"] = str(e)
 
-    # ── AI Provider ──────────────────────────────────────────────────────
     try:
         from app.circuit_breaker import CircuitState, _circuit_breakers
 
@@ -84,7 +80,7 @@ async def check_system_health() -> SystemHealth:
             health.ai_provider = ServiceStatus.DEGRADED
             health.details["ai_circuits_open"] = open_count
     except Exception:
-        pass  # No circuit breakers = assume healthy
+        pass
 
     return health
 

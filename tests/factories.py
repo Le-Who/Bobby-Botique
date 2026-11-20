@@ -68,13 +68,11 @@ def make_telegram_message(text="Hello", user_id=123, chat_id=456, chat_type="pri
     msg.id = 999
     msg.message_id = 999
 
-    # Defaults for media
     msg.photo = ()
     msg.document = None
     msg.voice = None
     msg.video = None
 
-    # Async methods
     msg.edit_text = AsyncMock()
     msg.reply_text = AsyncMock()
     msg.edit_reply_markup = AsyncMock()

@@ -1,6 +1,3 @@
--- Scheduled Intelligence Briefs: subscription table
--- Users can subscribe to receive periodic AI-curated summaries
--- based on their LTM data + web search.
 
 CREATE TABLE IF NOT EXISTS brief_subscriptions (
     id BIGSERIAL PRIMARY KEY,
@@ -14,12 +11,10 @@ CREATE TABLE IF NOT EXISTS brief_subscriptions (
     UNIQUE(user_id, subscription_type)
 );
 
--- Index for the scheduler: find active subscriptions that need to run now
 CREATE INDEX IF NOT EXISTS idx_briefs_active
     ON brief_subscriptions(is_active, preferred_hour)
     WHERE is_active = TRUE;
 
--- RLS
 ALTER TABLE brief_subscriptions ENABLE ROW LEVEL SECURITY;
 
 DO $$ BEGIN

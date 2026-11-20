@@ -62,7 +62,6 @@ async def get_day_readiness(puzzle_date: date) -> dict[str, Any]:
                 "hints_ready": hints,
                 "prompt_ready": prompt,
                 "image_ready": image,
-                # Delivery intentionally remains text-capable without an image.
                 "delivery_ready": bool(puzzle and repo.is_puzzle_fully_prepared(puzzle)),
                 "fully_ready": word and hints and prompt and image,
                 "content_revision": puzzle.content_revision if puzzle else 0,

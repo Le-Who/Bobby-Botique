@@ -7,10 +7,8 @@ import pytest
 from app.utils.keyboards import (
     after_response_keyboard,
     ai_response_keyboard,
-    # Button builders
     back_button,
     build_item_list_keyboard,
-    # Keyboard builders
     build_keyboard,
     build_paginated_keyboard,
     cancel_button,
@@ -18,10 +16,8 @@ from app.utils.keyboards import (
     confirm_cancel_row,
     deep_dive_keyboard,
     error_with_back_keyboard,
-    # Common patterns
     feedback_row,
     new_topic_retry_row,
-    # Pagination
     pagination_row,
 )
 
@@ -31,7 +27,6 @@ def setup_module(module):
     import sys
     from unittest.mock import MagicMock
 
-    # Reload telegram to flush mocks
     if "telegram" in sys.modules and isinstance(sys.modules["telegram"], MagicMock):
         del sys.modules["telegram"]
     if "telegram.ext" in sys.modules and isinstance(sys.modules["telegram.ext"], MagicMock):
@@ -86,23 +81,23 @@ class TestPaginationRow:
         """First page should have disabled prev, enabled next."""
         row = pagination_row(0, 5, "page")
         assert len(row) == 3
-        assert row[0].callback_data == "noop"  # Prev disabled
+        assert row[0].callback_data == "noop"
         assert row[1].text == "1/5"
-        assert row[2].callback_data == "page:1"  # Next enabled
+        assert row[2].callback_data == "page:1"
 
     def test_middle_page(self):
         """Middle page should have both buttons enabled."""
         row = pagination_row(2, 5, "page")
-        assert row[0].callback_data == "page:1"  # Prev
+        assert row[0].callback_data == "page:1"
         assert row[1].text == "3/5"
-        assert row[2].callback_data == "page:3"  # Next
+        assert row[2].callback_data == "page:3"
 
     def test_last_page(self):
         """Last page should have disabled next."""
         row = pagination_row(4, 5, "page")
-        assert row[0].callback_data == "page:3"  # Prev
+        assert row[0].callback_data == "page:3"
         assert row[1].text == "5/5"
-        assert row[2].callback_data == "noop"  # Next disabled
+        assert row[2].callback_data == "noop"
 
     def test_single_page(self):
         """Single page should have both disabled."""
@@ -145,7 +140,6 @@ class TestBuildItemListKeyboard:
     def test_basic_list(self):
         items = [("Item 1", "item1"), ("Item 2", "item2")]
         kb = build_item_list_keyboard(items, "back")
-        # 2 items + 1 back = 3 rows
         assert len(kb.inline_keyboard) == 3
         assert kb.inline_keyboard[0][0].text == "Item 1"
         assert kb.inline_keyboard[2][0].callback_data == "back"
@@ -153,7 +147,6 @@ class TestBuildItemListKeyboard:
     def test_multi_column(self):
         items = [("A", "a"), ("B", "b"), ("C", "c"), ("D", "d")]
         kb = build_item_list_keyboard(items, "back", items_per_row=2)
-        # 2 rows of 2 items + 1 back = 3 rows
         assert len(kb.inline_keyboard) == 3
         assert len(kb.inline_keyboard[0]) == 2
 
@@ -165,19 +158,17 @@ class TestBuildPaginatedKeyboard:
         items = [(f"Item {i}", f"item{i}") for i in range(15)]
         kb, total = build_paginated_keyboard(items, 0, 5, "page", "back")
         assert total == 3
-        assert len(kb.inline_keyboard) == 7  # 5 items + pagination + back
+        assert len(kb.inline_keyboard) == 7
 
     def test_page_clamping(self):
         items = [("A", "a"), ("B", "b")]
         kb, total = build_paginated_keyboard(items, 100, 5, "page", "back")
         assert total == 1
-        # Should clamp to page 0
 
     def test_no_pagination_for_single_page(self):
         items = [("A", "a"), ("B", "b")]
         kb, total = build_paginated_keyboard(items, 0, 5, "page", "back")
         assert total == 1
-        # 2 items + back (no pagination row)
         assert len(kb.inline_keyboard) == 3
 
 
@@ -207,7 +198,6 @@ class TestCommonKeyboards:
     def test_ai_response_keyboard(self):
         kb = ai_response_keyboard()
         assert len(kb.inline_keyboard) >= 2
-        # First row should be feedback
         assert kb.inline_keyboard[0][0].callback_data == "feedback:up"
 
     def test_deep_dive_keyboard(self):

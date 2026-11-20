@@ -12,9 +12,6 @@ def _offline_state_hydration(monkeypatch):
     monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
 
 
-# --- Mocks for Telegram Objects ---
-
-
 class MockUser:
     def __init__(self, user_id=123, username="testuser", first_name="Test"):
         self.id = user_id
@@ -65,38 +62,30 @@ class DummyContext:
         self.application = MagicMock()
 
 
-# --- Tests for handle_request ---
-
-
 @pytest.mark.asyncio
 async def test_handle_request_invalid_update():
     """Test handle_request with invalid update object."""
     await messages.handle_request(None, DummyContext())
-    # Should log error and return immediately - no exceptions raised
 
     update = DummyUpdate()
     update.effective_user = None
     await messages.handle_request(update, DummyContext())
-    # Should log error and return immediately
 
 
 @pytest.mark.asyncio
 async def test_handle_request_invalid_user_id():
     """Test handle_request with invalid user_id."""
-    user = MockUser(user_id=0)  # Invalid ID
+    user = MockUser(user_id=0)
     chat = MockChat()
     message = MockMessage(user=user, chat=chat)
     update = DummyUpdate(message=message)
     context = DummyContext()
 
-    # Mocking bind_request_span since it's used as a context manager
     with patch("app.handlers.messages.bind_request_span") as mock_span:
         mock_span.return_value.__enter__.return_value = None
 
-        # Mock set_request_id
         with patch("app.handlers.messages.set_request_id"):
             await messages.handle_request(update, context)
-            # Should log error and return
 
 
 @pytest.mark.asyncio
@@ -119,7 +108,7 @@ async def test_handle_request_rate_limit_exceeded():
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
-        mock_rate_limit.return_value = False  # Rate limit exceeded
+        mock_rate_limit.return_value = False
         mock_is_auth.return_value = True
 
         await messages.handle_request(update, context)
@@ -181,13 +170,12 @@ async def test_handle_request_unauthorized():
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
         mock_rate_limit.return_value = True
-        mock_is_auth.return_value = False  # Not authorized
+        mock_is_auth.return_value = False
 
         await messages.handle_request(update, context)
 
         mock_is_auth.assert_awaited_once_with(123)
         mock_alert.assert_awaited_once()
-        # Should return without doing anything else
         message.reply_text.assert_not_awaited()
 
 
@@ -241,10 +229,6 @@ async def test_handle_request_text_message_happy_path(monkeypatch):
     update = DummyUpdate(message=message)
     context = DummyContext()
 
-    # Capture coroutines passed to submit_task and create_task
-    # so we can drive them deterministically instead of letting them
-    # run as real background tasks (which would block the event loop
-    # waiting on unmocked infrastructure like process_long_request).
     captured_coros = []
     captured_inner = []
     cancelled_tasks = []
@@ -254,7 +238,7 @@ async def test_handle_request_text_message_happy_path(monkeypatch):
         if coro.cr_code.co_name == "observed_worker":
             captured_inner.append(coro.cr_frame.f_locals["coroutine"])
         task = asyncio.get_running_loop().create_task(coro)
-        task.cancel()  # Preserve the admission-only assertion and real done callbacks.
+        task.cancel()
         cancelled_tasks.append(task)
         return task
 
@@ -296,7 +280,6 @@ async def test_handle_request_text_message_happy_path(monkeypatch):
 
         await messages.handle_request(update, context)
 
-        # Verify submit_task was called with the task_wrapper coroutine
         assert mock_submit.called
         received_log = next(
             call for call in mock_log_info.call_args_list if call.args and call.args[0] == "Received Telegram message"
@@ -304,12 +287,10 @@ async def test_handle_request_text_message_happy_path(monkeypatch):
         assert received_log.kwargs["extra"]["content_text"] == "Hello AI"
         assert received_log.kwargs["extra"]["content_policy"] == "full"
 
-        # Clean up: close captured heartbeat coroutines (from create_task)
         for call_args in mock_create_task.call_args_list:
             coro = call_args[0][0]
             coro.close()
 
-        # Real completion callbacks close the nested, unstarted request body.
         await asyncio.gather(*cancelled_tasks, return_exceptions=True)
         for coro in captured_coros:
             coro.close()
@@ -328,7 +309,6 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
-    # Use real task completion callbacks while omitting the notice's timer.
     submitted_tasks = []
 
     def capture_submit(coro, *args, **kwargs):
@@ -370,9 +350,6 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         patch("app.handlers.messages.submit_task", side_effect=capture_submit),
         patch("app.handlers.messages.try_submit_task", side_effect=capture_submit),
         patch("app.handlers.messages.metrics_collector", AsyncMock()),
-        # Prevent xdist cross-test contamination: dedup uses module-level dict
-        # shared across tests on the same worker. Without this mock, an earlier
-        # test with the same user_id+text poisons the 3s dedup window.
         patch("app.middleware.dedup.is_duplicate_request", new_callable=AsyncMock, return_value=False),
         patch("app.middleware.debounce.debounce_message", side_effect=_debounce_passthrough),
     ):
@@ -386,20 +363,15 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
 
         await messages.handle_request(update, context)
 
-        # Verify initial placeholder message
         message.reply_text.assert_awaited_with("🤔 Думаю...")
 
-        # Close heartbeat coroutine (from create_task)
         for call_args in mock_create_task.call_args_list:
             coro = call_args[0][0]
             coro.close()
 
-        # The real worker owns and joins any notice task submitted after entry.
         await asyncio.gather(*submitted_tasks)
 
         mock_agent_process.assert_awaited_once()
-        # Verify arguments passed to process_long_request
-        # args: placeholder_message, update, context
         args, _ = mock_agent_process.await_args
         assert args[1] == update
         assert args[2] == context
@@ -411,7 +383,7 @@ async def test_handle_request_photo_message():
     user = MockUser(user_id=123)
     chat = MockChat(chat_id=456)
     message = MockMessage(text=None, user=user, chat=chat)
-    message.photo = [MagicMock()]  # Assume list of PhotoSize
+    message.photo = [MagicMock()]
     update = DummyUpdate(message=message)
     context = DummyContext()
 
@@ -423,7 +395,6 @@ async def test_handle_request_photo_message():
         noop_task.cancel = MagicMock()
         return noop_task
 
-    # Heartbeat coroutines captured via create_task mock (NOT real tasks)
     heartbeat_coros = []
 
     def mock_create_task(coro, **kwargs):
@@ -460,7 +431,6 @@ async def test_handle_request_photo_message():
         for coro in captured_coros:
             await coro
 
-        # Close heartbeat coroutines to avoid warnings
         for coro in heartbeat_coros:
             coro.close()
 
@@ -519,7 +489,6 @@ async def test_handle_request_exception_handling():
         submitted_tasks.append(task)
         return task
 
-    # Heartbeat coroutines captured via create_task mock (NOT real tasks)
     heartbeat_coros = []
 
     def mock_create_task(coro, **kwargs):
@@ -563,18 +532,15 @@ async def test_handle_request_exception_handling():
         mock_lock.return_value.__aexit__.return_value = None
         mock_lock.return_value.locked.return_value = False
 
-        # Simulate exception
         mock_agent_process.side_effect = Exception("Agent Error")
 
         await messages.handle_request(update, context)
 
         await asyncio.gather(*submitted_tasks)
 
-        # Close heartbeat coroutines to avoid warnings
         for coro in heartbeat_coros:
             coro.close()
 
-        # Verify that placeholder message was edited to show error
         placeholder_mock = message.reply_text.return_value
         call_args = placeholder_mock.edit_text.call_args
         assert "❌ Произошла ошибка при обработке запроса" in call_args[0][0]

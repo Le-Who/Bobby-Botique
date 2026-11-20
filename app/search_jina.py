@@ -26,21 +26,21 @@ from app.observability.workload_events import start_workload_attempt
 _JINA_SEARCH_BASE = "https://s.jina.ai/"
 _JINA_READER_BASE = "https://r.jina.ai/"
 _DEFAULT_TIMEOUT = 15.0
-_MAX_RESULT_CHARS = 12_000  # Truncation cap for the combined search context
+_MAX_RESULT_CHARS = 12_000
 
 
 class JinaSearchResult(NamedTuple):
     query: str
-    content: str  # Markdown-formatted search results
+    content: str
     source_urls: list[str]
 
 
 def _build_jina_headers(api_key: str | None = None) -> dict[str, str]:
     """Build request headers for JINA API calls."""
     headers: dict[str, str] = {
-        "Accept": "text/event-stream",  # JINA's streaming markdown format
-        "X-With-URLs-On-Screen": "true",  # Include source URLs in output
-        "X-No-Cache": "false",  # Allow cache for grounding (often same queries)
+        "Accept": "text/event-stream",
+        "X-With-URLs-On-Screen": "true",
+        "X-No-Cache": "false",
     }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"

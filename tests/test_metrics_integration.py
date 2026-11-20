@@ -27,7 +27,6 @@ class TestMetricsIntegration(unittest.TestCase):
         """Test that asynchronous recording methods place items uniformly in the queue
         and that _save_metrics_to_db performs batched inserts."""
 
-        # Mock the db manager dependencies
         mock_pool = MagicMock()
         mock_pool.acquire = MagicMock()
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
@@ -43,19 +42,13 @@ class TestMetricsIntegration(unittest.TestCase):
             mock_db_manager.is_connected = True
 
             async def simulate_events():
-                # 0. Record a request so request_count > 0 (required for metrics upsert)
                 await self.collector.record_request("test_handler", 0.15, success=True, user_id=42)
-                # 1. Record API Call
                 await self.collector.record_api_call("gemini", model="gemini-2.5-flash")
-                # 2. Record Error (1)
                 await self.collector.record_error("TestError", "Simulated Error 1")
-                # 3. Record Error (2)
                 await self.collector.record_error("AuthError", "Simulated Error 2")
 
-                # Check that queue has 4 items
                 self.assertEqual(self.collector._events_queue.qsize(), 4)
 
-                # Drain the queue manually (simulate the background worker)
                 while not self.collector._events_queue.empty():
                     event = await self.collector._events_queue.get()
                     self.collector._process_event(event)
@@ -63,33 +56,25 @@ class TestMetricsIntegration(unittest.TestCase):
 
                 self.assertEqual(self.collector._events_queue.qsize(), 0)
 
-                # Validate dictionaries have been updated properly
                 self.assertEqual(len(self.collector.daily_metrics), 1)
                 self.assertEqual(next(iter(self.collector.daily_metrics.values())).api_calls["gemini"], 1)
 
-                # We expect 2 items in the error log to be saved
                 self.assertEqual(len(self.collector.error_log), 2)
                 self.assertFalse(self.collector.error_log[0]["saved"])
                 self.assertEqual(self.collector.error_log[0]["request_id"], "test_rid_123")
 
-                # 4. Trigger Batch Save
                 await self.collector._save_metrics_to_db()
 
-                # Verify that db_query was called for daily aggregations (UPSERT logic)
                 self.assertTrue(mock_query.called)
 
-                # Verify that execute_many was called (errors + per-user metrics)
                 self.assertTrue(mock_execute_many.called)
 
-                # First call should be for error_logs batch insert
                 args, _ = mock_execute_many.call_args_list[0]
                 query, params_list, *rest = args
 
                 self.assertIn("INSERT INTO error_logs", query)
                 self.assertEqual(len(params_list), 2)
 
-                # Validate the contents of the parameter list matches the error logs
-                # params structure: (type, message, request_id, occurrence time)
                 self.assertIn("created_at", query)
                 for index, (error_type, message) in enumerate(
                     [("TestError", "Simulated Error 1"), ("AuthError", "Simulated Error 2")]
@@ -97,7 +82,6 @@ class TestMetricsIntegration(unittest.TestCase):
                     occurred_at = datetime.fromisoformat(self.collector.error_log[index]["timestamp"])
                     self.assertEqual(params_list[index], (error_type, message, "test_rid_123", occurred_at))
 
-                # Verify items are marked as saved
                 self.assertTrue(self.collector.error_log[0]["saved"])
                 self.assertTrue(self.collector.error_log[1]["saved"])
 

@@ -87,7 +87,6 @@ def test_direct_dependency_names_are_canonical_for_dependabot_replacement() -> N
     metadata = _metadata()
     requirements = metadata["project"]["dependencies"] + metadata["dependency-groups"]["dev"]
 
-    # Dependabot's uv manifest replacer matches canonical names case-sensitively.
     for item in requirements:
         name = Requirement(item).name
         assert name == canonicalize_name(name), f"Dependabot cannot reliably replace {name!r} in pyproject.toml"
@@ -99,7 +98,7 @@ def test_frontier_trial_dependencies_use_the_validated_major_ranges() -> None:
 
     google_range = requirements["google-genai"].specifier
     structlog_range = requirements["structlog"].specifier
-    assert Version("2.25.0") in google_range  # First SDK supporting current TTS speech metadata.
+    assert Version("2.25.0") in google_range
     assert Version("2.24.99") not in google_range
     assert Version("3.0.0") not in google_range
     assert Version("26.1.0") in structlog_range

@@ -1,6 +1,3 @@
--- Migration 014: Per-model key status tracking
--- Tracks (key_hash, model_name) health to prevent invalid keys from
--- poisoning all requests, while supporting auto-recovery via cooldowns.
 
 CREATE TABLE IF NOT EXISTS key_model_status (
     key_hash       TEXT NOT NULL REFERENCES api_keys(key_hash) ON DELETE CASCADE,
@@ -14,11 +11,8 @@ CREATE TABLE IF NOT EXISTS key_model_status (
     PRIMARY KEY (key_hash, model_name)
 );
 
--- Enable RLS (consistent with other tables)
 ALTER TABLE key_model_status ENABLE ROW LEVEL SECURITY;
 
--- Supabase defines service_role; plain PostgreSQL does not.  Only create the
--- role-targeted policy when the role is present so fresh CI databases remain portable.
 DO $$
 BEGIN
     IF EXISTS (
@@ -34,7 +28,6 @@ BEGIN
 END
 $$;
 
--- Admin access policy
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -54,6 +47,5 @@ BEGIN
 END
 $$;
 
--- Index for efficient lookups by key_hash + model
 CREATE INDEX IF NOT EXISTS idx_key_model_status_lookup
     ON key_model_status (key_hash, model_name, status);

@@ -197,8 +197,6 @@ def parse_compatibility_birth_date(raw: str, *, today: date | None = None) -> da
 
 
 def _birth_signs(birth_date: date) -> dict[str, tuple[int, ...]]:
-    # Without a place/time, the local birthday spans UTC-14h through UTC+36h.
-    # Sample the whole interval, including midnight crossings and retrograde turns.
     day_start = datetime.combine(birth_date, time(), tzinfo=UTC)
     start = day_start - timedelta(hours=14)
     samples = [start + timedelta(hours=hour) for hour in range(0, 50, 2)]
@@ -261,7 +259,6 @@ def build_birth_date_compatibility(
             strength, _, action = _pair_dynamics(signs_a[0], signs_b[0], lang=lang)
             parts.append(f"<b>{t(f'compat.channel.{key}', lang)}</b> {html.escape(strength)} {html.escape(action)}\n")
     centers = " + ".join(f"{position.arcana} — {position.arcana_label}" for position in matrix_centers)
-    # Existing matrix interpretations are Russian; avoid claiming an English translation.
     matrix_copy = t("compat.matrix", lang, centers=centers)
     parts.append(f"<b>{t('compat.matrices', lang)}</b> {html.escape(matrix_copy)}\n")
     derived_context.append(matrix_copy)

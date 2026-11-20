@@ -11,11 +11,6 @@ class _MockSettings:
     ADMIN_SECRET: str = "test-admin-secret-for-unit-tests"
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(autouse=True)
 def _reset_fernet():
     """Ensure each test starts with a fresh Fernet instance."""
@@ -34,11 +29,6 @@ def _mock_settings():
         yield mock
 
 
-# ---------------------------------------------------------------------------
-# Encrypt / Decrypt roundtrip
-# ---------------------------------------------------------------------------
-
-
 class TestEncryptDecryptRoundtrip:
     def test_roundtrip_simple_key(self, _mock_settings):
         from app.crypto import decrypt_api_key, encrypt_api_key
@@ -47,7 +37,7 @@ class TestEncryptDecryptRoundtrip:
         ciphertext = encrypt_api_key(plaintext)
 
         assert ciphertext != plaintext
-        assert len(ciphertext) > 50  # Fernet tokens are long
+        assert len(ciphertext) > 50
         assert decrypt_api_key(ciphertext) == plaintext
 
     def test_roundtrip_empty_string(self, _mock_settings):
@@ -75,12 +65,7 @@ class TestEncryptDecryptRoundtrip:
 
         c1 = encrypt_api_key("same-key")
         c2 = encrypt_api_key("same-key")
-        assert c1 != c2  # Non-deterministic due to timestamp
-
-
-# ---------------------------------------------------------------------------
-# is_encrypted heuristic
-# ---------------------------------------------------------------------------
+        assert c1 != c2
 
 
 class TestIsEncrypted:
@@ -99,11 +84,6 @@ class TestIsEncrypted:
         assert is_encrypted("short") is False
 
 
-# ---------------------------------------------------------------------------
-# safe_decrypt
-# ---------------------------------------------------------------------------
-
-
 class TestSafeDecrypt:
     def test_decrypts_encrypted_value(self, _mock_settings):
         from app.crypto import encrypt_api_key, safe_decrypt
@@ -120,22 +100,15 @@ class TestSafeDecrypt:
 
     def test_raises_on_corrupted_ciphertext(self, _mock_settings):
         """If decryption fails (e.g. wrong key), safe_decrypt raises DecryptionError."""
-        # Encrypt with one secret
         from app.crypto import encrypt_api_key, reset_fernet, safe_decrypt
         from app.errors import DecryptionError
 
         ciphertext = encrypt_api_key("secret-key")
 
-        # Reset and use different secret
         reset_fernet()
         different_mock = _MockSettings(ADMIN_SECRET="completely-different-secret")
         with patch("app.config.settings", different_mock), pytest.raises(DecryptionError):
             safe_decrypt(ciphertext)
-
-
-# ---------------------------------------------------------------------------
-# Error cases
-# ---------------------------------------------------------------------------
 
 
 class TestErrorCases:
@@ -151,7 +124,6 @@ class TestErrorCases:
 
         ciphertext = encrypt_api_key("secret-key")
 
-        # Switch to different secret
         reset_fernet()
         different_mock = _MockSettings(ADMIN_SECRET="wrong-secret")
         with patch("app.config.settings", different_mock), pytest.raises(ValueError, match="Failed to decrypt"):
@@ -164,16 +136,10 @@ class TestErrorCases:
             decrypt_api_key("not-a-valid-fernet-token")
 
 
-# ---------------------------------------------------------------------------
-# reset_fernet
-# ---------------------------------------------------------------------------
-
-
 class TestResetFernet:
     def test_reset_clears_cached_instance(self, _mock_settings):
         from app import crypto
 
-        # Trigger lazy init
         crypto.encrypt_api_key("test")
         assert crypto._fernet_instance is not None
 

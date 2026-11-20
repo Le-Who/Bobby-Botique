@@ -191,9 +191,7 @@ class TestBusyStateToast:
         ):
             await complex_search_callback(update, context)
 
-        # Must be called exactly once — Telegram ignores subsequent calls
         assert query.answer.await_count == 1, f"query.answer() called {query.answer.await_count} times, expected 1"
-        # That single call must carry the toast text
         first_call_args = query.answer.call_args_list[0]
         assert "⏳" in str(first_call_args), f"First answer() must have toast: {first_call_args}"
 
@@ -248,7 +246,6 @@ class TestBusyStateToast:
         assert query.answer.await_count == 1, f"query.answer() called {query.answer.await_count} times, expected 1"
         first_call_args = query.answer.call_args_list[0]
         assert "⏳" in str(first_call_args), f"First answer() must have toast: {first_call_args}"
-        # No placeholder message should have been created
         query.message.reply_text.assert_not_awaited()
 
 

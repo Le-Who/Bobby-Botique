@@ -36,8 +36,6 @@ from app.errors import (
     convert_to_typed_exception,
 )
 
-# ─── Hierarchy Tests ─────────────────────────────────────────────────────────
-
 
 class TestExceptionHierarchy:
     """Verify the class hierarchy is correct."""
@@ -73,9 +71,6 @@ class TestExceptionHierarchy:
         assert issubclass(ConfigurationError, GemaibotBaseException)
 
 
-# ─── Exception Construction Tests ─────────────────────────────────────────────
-
-
 class TestExceptionConstruction:
     """Verify exceptions carry message and details correctly."""
 
@@ -104,16 +99,13 @@ class TestExceptionConstruction:
         exc = APIError("503 Service Unavailable", retryable=True)
         assert exc.retryable is True
         assert exc.key_related is False
-        assert "перегружен" in exc.user_message  # Overloaded message
+        assert "перегружен" in exc.user_message
 
     def test_api_error_from_exception(self):
         original = RuntimeError("daily quota exceeded for model")
         exc = APIError.from_exception(original)
         assert exc.key_related is True
         assert exc.retryable is False
-
-
-# ─── convert_to_typed_exception Tests ────────────────────────────────────────
 
 
 class TestConvertToTypedException:
@@ -157,9 +149,6 @@ class TestConvertToTypedException:
         result = convert_to_typed_exception(original, "legacy_db")
         assert type(result) is DatabaseConnectionError
         assert result.details == {"original_error": "RuntimeError", "context": "legacy_db"}
-
-
-# ─── Database Layer Integration Tests ────────────────────────────────────────
 
 
 class TestDatabaseTypedExceptions:

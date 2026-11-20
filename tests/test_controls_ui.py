@@ -88,7 +88,6 @@ const drafts=createDraftManager();drafts.setSnapshot({revision:7});
 const legacy={models:['openai-direct/gpt-6-luna'],strategy:'sequential',inherit_user_model:false};
 drafts.setDraft('process','chat',legacy);
 const draft=drafts.getDraft('process','chat');
-// The POST outcome is unknown; an unrelated write advanced the server revision.
 const payload={section:'process',id:'chat',value:draft.value,expected_revision:draft.expected_revision};
 const snapshot={revision:8,processes:[{id:'chat',...legacy,service_tier:'flex'}]};
 assert.equal(matchesSubmittedSection(snapshot,payload),false,'legacy absence means Standard, not server Flex');
@@ -155,7 +154,6 @@ assert.equal(drafts.getDraft('prompt', 'system').value, 'typed while saving');
 assert.equal(drafts.getDraft('prompt', 'system').expected_revision, 8);
 assert.equal(drafts.getDraft('prompt', 'other').expected_revision, 7);
 
-// Even returning to the submitted text is a newer edit, not the sent version.
 const second = drafts.getDraft('prompt', 'system');
 drafts.setDraft('prompt', 'system', 'submitted');
 drafts.acceptSavedDraft('prompt', 'system', second, 8, 10);
@@ -165,14 +163,12 @@ const final = drafts.getDraft('prompt', 'system');
 drafts.acceptSavedDraft('prompt', 'system', final, 10, 11);
 assert.equal(drafts.getDraft('prompt', 'system'), undefined);
 
-// A reset may begin without a draft; subsequent typing must survive its result.
 drafts.setSnapshot({{revision: 11}});
 drafts.setDraft('limit', 'gemini-example', 17);
 drafts.acceptSavedDraft('limit', 'gemini-example', undefined, 11, 12);
 assert.equal(drafts.getDraft('limit', 'gemini-example').value, 17);
 assert.equal(drafts.getDraft('limit', 'gemini-example').expected_revision, 12);
 
-// An explicit rebase to a different revision must not be silently undone.
 const prior = drafts.getDraft('limit', 'gemini-example');
 drafts.setSnapshot({{revision: 15}});
 drafts.rebaseDraft('limit', 'gemini-example');

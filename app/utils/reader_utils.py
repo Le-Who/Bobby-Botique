@@ -13,32 +13,22 @@ import html
 import re
 import urllib.parse
 
-# ── Pre-compiled regex constants ──────────────────────────────────────────────
-# ⚡ Perf: all patterns hoisted to module level to avoid repeated re.compile()
-#    and re._cache lookups inside per-line/per-word render loops.
-
-# TOC extraction
 _HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
 
-# _slug() helpers
 _SLUG_STRIP_RE = re.compile(r"[^\w\s-]")
 _SLUG_NORM_RE = re.compile(r"[\s_]+")
 
-# extract_toc() inline markdown strippers
 _TOC_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _TOC_ITALIC_RE = re.compile(r"\*(.+?)\*")
 _TOC_CODE_RE = re.compile(r"`(.+?)`")
 _TOC_FENCE_STRIP_RE = re.compile(r"```.*?```", re.DOTALL)
 
-# apply_bionic_reading() tag skippers
 _SKIP_OPEN_RE = re.compile(r"^<(code|pre|b|strong|a)\b", re.IGNORECASE)
 _SKIP_CLOSE_RE = re.compile(r"^</(code|pre|b|strong|a)\b", re.IGNORECASE)
 _SPLIT_TAGS_RE = re.compile(r"(<[^>]+>)")
 
-# _bionic_text() word scanner
 _WORD_RE = re.compile(r"\w+")
 
-# _inline_markup() patterns
 _INLINE_CODE_SUB_RE = re.compile(r"`([^`]+)`")
 _INLINE_BOLD_SUB_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 _INLINE_ITALIC_STAR_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", re.DOTALL)
@@ -46,7 +36,6 @@ _INLINE_ITALIC_UNDER_RE = re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)", re.DOTA
 _INLINE_STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
 _INLINE_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
-# markdown_to_reader_html() block-level patterns
 _BLOCK_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _BLOCK_HR_RE = re.compile(r"^[-*_]{3,}\s*$")
 _BLOCK_UL_RE = re.compile(r"^[-*+]\s+")
@@ -76,23 +65,19 @@ def extract_toc(markdown: str) -> list[dict[str, str]]:
     Returns:
         Ordered list of TOC entries, or empty list if fewer than 2 headings found.
     """
-    # Strip fenced code blocks before scanning for headings so that
-    # code examples with ``# comment`` style lines are not captured.
     stripped = _TOC_FENCE_STRIP_RE.sub("", markdown)
 
     entries: list[dict[str, str]] = []
     seen_anchors: dict[str, int] = {}
 
     for match in _HEADING_RE.finditer(stripped):
-        level = len(match.group(1))  # 1-3
+        level = len(match.group(1))
         text = match.group(2).strip()
-        # Strip inline markdown from heading text for display
         text = _TOC_BOLD_RE.sub(r"\1", text)
         text = _TOC_ITALIC_RE.sub(r"\1", text)
         text = _TOC_CODE_RE.sub(r"\1", text)
         anchor = _slug(text)
 
-        # Deduplicate anchors
         if anchor in seen_anchors:
             seen_anchors[anchor] += 1
             anchor = f"{anchor}-{seen_anchors[anchor]}"
@@ -101,11 +86,7 @@ def extract_toc(markdown: str) -> list[dict[str, str]]:
 
         entries.append({"level": f"h{level}", "text": text, "anchor": anchor})
 
-    # A TOC with fewer than 2 entries is not useful
     return entries if len(entries) >= 2 else []
-
-
-# ── Bionic Reading transform ──────────────────────────────────────────────────
 
 
 def apply_bionic_reading(html_text: str) -> str:
@@ -127,10 +108,8 @@ def apply_bionic_reading(html_text: str) -> str:
     Returns:
         HTML string with bionic bold markers applied.
     """
-    # Split on tags so we only touch text nodes
-    # ⚡ Perf: _SPLIT_TAGS_RE, _SKIP_OPEN_RE, _SKIP_CLOSE_RE hoisted to module level
     parts = _SPLIT_TAGS_RE.split(html_text)
-    in_skip = 0  # depth counter for code/pre/b/strong blocks
+    in_skip = 0
 
     result: list[str] = []
     for part in parts:
@@ -141,7 +120,6 @@ def apply_bionic_reading(html_text: str) -> str:
                 in_skip = max(0, in_skip - 1)
             result.append(part)
         elif in_skip > 0:
-            # Inside a skip block — pass through unchanged
             result.append(part)
         else:
             result.append(_bionic_text(part))
@@ -165,22 +143,15 @@ def _bionic_text(text: str) -> str:
             k = 4
         return f"<b>{html.escape(word[:k])}</b>{html.escape(word[k:])}"
 
-    # Match sequences of word characters (letters, digits, underscores)
-    # and pass non-word segments through unchanged.
-    # We need to escape the non-word parts too since `text` is already HTML-escaped
-    # by the time it reaches us (rendered from markdown_to_html).
-    # Strategy: split on \w+ tokens, transform tokens, reassemble.
     result_parts: list[str] = []
     last = 0
     for m in _WORD_RE.finditer(text):
-        result_parts.append(text[last : m.start()])  # gap (spaces, punctuation)
+        result_parts.append(text[last : m.start()])
         result_parts.append(_bold_word(m))
         last = m.end()
     result_parts.append(text[last:])
     return "".join(result_parts)
 
-
-# ── Markdown → HTML for Reader (full-featured) ───────────────────────────────
 
 _FENCE_RE = re.compile(r"^```(\w*)\n?(.*?)^```", re.MULTILINE | re.DOTALL)
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
@@ -218,18 +189,13 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
     Returns:
         Rendered HTML string safe for injection via ``innerHTML``.
     """
-    # toc anchors are used implicitly: headings generate their own anchor via
-    # _slug() which produces the same slugs as extract_toc(), ensuring consistent
-    # in-page jump links between the TOC rows and rendered heading elements.
 
-    # ── Step 1: protect fenced code blocks ────────────────────────────────
     placeholders: list[str] = []
 
     def _replace_fence(m: re.Match) -> str:  # type: ignore[type-arg]
         lang = m.group(1).strip() or "plaintext"
         code = html.escape(m.group(2))
         lang_display = html.escape(lang)
-        # We inject data-lang so the client JS can add a download button
         rendered = (
             f'<div class="code-block" data-lang="{lang_display}">'
             f'<div class="code-header">'
@@ -250,7 +216,6 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
 
     text = _FENCE_RE.sub(_replace_fence, markdown)
 
-    # ── Step 2: block-level elements ──────────────────────────────────────
     lines = text.split("\n")
     out_lines: list[str] = []
     i = 0
@@ -260,8 +225,6 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
         if para_buf:
             joined = " ".join(line.strip() for line in para_buf if line.strip())
             if joined:
-                # Apply inline markup AFTER html-escaping so markdown syntax is
-                # converted correctly without double-escaping issues.
                 out_lines.append(f"<p>{_inline_markup(html.escape(joined))}</p>")
             para_buf.clear()
 
@@ -269,35 +232,30 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
         raw = lines[i]
         stripped = raw.strip()
 
-        # Headings
         h_match = _BLOCK_HEADING_RE.match(stripped)
         if h_match:
             _flush_para()
             level = len(h_match.group(1))
-            level = min(level, 3)  # clamp to h1–h3 for visual hierarchy
+            level = min(level, 3)
             tag = f"h{level}"
             heading_text = h_match.group(2).strip()
             heading_text_clean = _HEADING_MD_STRIP_RE.sub("", heading_text).strip()
             anchor = _slug(heading_text_clean)
-            # Find matching anchor in TOC (deduplicated)
             id_attr = f' id="{html.escape(anchor)}"'
             display = _inline_markup(html.escape(heading_text))
             out_lines.append(f"<{tag}{id_attr}>{display}</{tag}>")
             i += 1
             continue
 
-        # Horizontal rule
         if _BLOCK_HR_RE.match(stripped) and stripped:
             _flush_para()
             out_lines.append("<hr>")
             i += 1
             continue
 
-        # Blockquote
         if stripped.startswith("> ") or stripped == ">":
             _flush_para()
             content = stripped[2:] if stripped.startswith("> ") else ""
-            # Collect consecutive blockquote lines
             bq_lines = [content]
             i += 1
             while i < len(lines) and (lines[i].strip().startswith("> ") or lines[i].strip() == ">"):
@@ -307,7 +265,6 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
             out_lines.append(f"<blockquote>{bq_html}</blockquote>")
             continue
 
-        # Unordered list
         if _BLOCK_UL_RE.match(stripped):
             _flush_para()
             items: list[str] = []
@@ -318,7 +275,6 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
             out_lines.append("<ul>" + "".join(items) + "</ul>")
             continue
 
-        # Ordered list
         if _BLOCK_OL_RE.match(stripped):
             _flush_para()
             items = []
@@ -329,27 +285,23 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
             out_lines.append("<ol>" + "".join(items) + "</ol>")
             continue
 
-        # Empty line → paragraph break
         if not stripped:
             _flush_para()
             i += 1
             continue
 
-        # Placeholder line (code block)
         if "\x00CODE" in stripped:
             _flush_para()
             out_lines.append(stripped)
             i += 1
             continue
 
-        # Regular text line — buffer into paragraph
         if stripped:
             para_buf.append(stripped)
         i += 1
 
     _flush_para()
 
-    # ── Step 3: restore code block placeholders ────────────────────────────
     result = "\n".join(out_lines)
     for idx, rendered in enumerate(placeholders):
         result = result.replace(f"\x00CODE{idx}\x00", rendered)
@@ -363,17 +315,11 @@ def _inline_markup(text: str) -> str:
     ⚡ Perf: all regex patterns pre-compiled at module level to avoid
     6× re._cache lookups per call (this fires per paragraph/list item).
     """
-    # Inline code (highest priority — skip further processing inside)
     text = _INLINE_CODE_SUB_RE.sub(lambda m: f"<code>{m.group(1)}</code>", text)
-    # Bold
     text = _INLINE_BOLD_SUB_RE.sub(r"<b>\1</b>", text)
-    # Italic (star)
     text = _INLINE_ITALIC_STAR_RE.sub(r"<i>\1</i>", text)
-    # Italic (underscore)
     text = _INLINE_ITALIC_UNDER_RE.sub(r"<i>\1</i>", text)
-    # Strikethrough
     text = _INLINE_STRIKE_RE.sub(r"<s>\1</s>", text)
-    # Links
     text = _INLINE_LINK_RE.sub(_render_link, text)
     return text
 
@@ -385,13 +331,10 @@ def _render_link(match: re.Match[str]) -> str:
         scheme = urllib.parse.urlsplit(url).scheme.lower()
     except ValueError:
         return label
-    # Markdown is untrusted; HTML escaping alone does not disable active URLs.
     if scheme not in {"", "https", "http", "mailto"}:
         return label
     return f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{label}</a>'
 
-
-# ── Telegraph HTML → plain text extraction ────────────────────────────────────
 
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
 _MULTI_NL_RE = re.compile(r"\n{3,}")
@@ -410,11 +353,7 @@ def extract_text_from_telegraph_html(telegraph_html: str) -> str:
     Returns:
         Plain text suitable for display in the Reader Mini App.
     """
-    # Strip HTML tags FIRST (before unescaping) so that entity-decoded
-    # characters like '&lt;' → '<' are not mistakenly treated as new tags.
     text = _TAG_STRIP_RE.sub("", telegraph_html)
-    # Now decode remaining HTML entities (e.g. &amp; → &, &gt; → >)
     text = html.unescape(text)
-    # Normalise multiple blank lines
     text = _MULTI_NL_RE.sub("\n\n", text)
     return text.strip()

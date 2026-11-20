@@ -20,15 +20,6 @@ import pytest
 
 from app.errors import ErrorCode, extract_error_code
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Fixtures
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# is_opencode_model()
-# ──────────────────────────────────────────────────────────────────────────────
-
 
 class TestIsOpencodeModel:
     def test_opencode_prefixed_returns_true(self):
@@ -59,11 +50,6 @@ class TestIsOpencodeModel:
         from app.providers.base import is_opencode_model
 
         assert is_opencode_model("") is False
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# OpencodeGoProvider
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 class TestOpencodeGoProvider:
@@ -104,7 +90,6 @@ class TestOpencodeGoProvider:
 
     def test_strip_model_prefix_passthrough_unknown(self):
         p = self._make_provider()
-        # Unknown format should pass through unchanged
         assert p._strip_model_prefix("gemini-3.5-flash") == "gemini-3.5-flash"
 
     def test_minimax_uses_messages_transport(self):
@@ -279,11 +264,6 @@ class TestOpencodeGoProvider:
         client.stream.assert_not_called()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Provider factory routing
-# ──────────────────────────────────────────────────────────────────────────────
-
-
 class TestGetProviderForModel:
     def test_opencode_model_returns_opencode_provider(self):
         from app.providers.base import get_provider_for_model
@@ -306,11 +286,6 @@ class TestGetProviderForModel:
         provider = get_provider_for_model("anthropic/claude-opus", "key")
         assert isinstance(provider, OpenRouterProvider)
         assert not isinstance(provider, type(None))
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# JINA search
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 class TestJinaSearch:
@@ -393,16 +368,10 @@ class TestJinaSearch:
         assert "example.com" in result
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Config: get_primary_provider and cache invalidation
-# ──────────────────────────────────────────────────────────────────────────────
-
-
 class TestPrimaryProviderConfig:
     def test_default_returns_opencode(self):
         from app.config import get_primary_provider
 
-        # Default env value is "opencode"
         provider = get_primary_provider()
         assert provider in {"opencode", "gemini", "openrouter"}
 
@@ -421,11 +390,6 @@ class TestPrimaryProviderConfig:
         cfg._primary_provider_cache = "gemini"
         provider = cfg.get_primary_provider()
         assert provider == "gemini"
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# ProviderRouter: _pick_transient_fallback_model
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 class TestPickTransientFallbackModel:
@@ -449,7 +413,6 @@ class TestPickTransientFallbackModel:
         from app.config import DEFAULT_GEMINI_MODELS, settings
 
         result = router._pick_transient_fallback_model("opencode-go/minimax-m2.7", use_openrouter=None)
-        # Should return a Gemini fallback if it's in AVAILABLE_MODELS
         if result is not None:
             assert "opencode" not in result
             available = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else DEFAULT_GEMINI_MODELS
@@ -461,17 +424,11 @@ class TestPickTransientFallbackModel:
         assert result is None
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ProviderRouter: multimodal guard — Opencode vision passthrough
-# ──────────────────────────────────────────────────────────────────────────────
-
-
 class TestMultimodalGuard:
     def test_opencode_vision_model_not_forced_to_gemini(self):
         """Opencode vision models (mimo) should NOT be redirected to Gemini for images."""
         from app.providers.router import _get_opencode_gemini_fallback
 
-        # "opencode-go/mimo-v2-omni" must be in the fallback map as a vision model
         assert "opencode-go/mimo-v2-omni" in _get_opencode_gemini_fallback()
 
     def test_opencode_gemini_fallback_map_is_non_empty(self):
@@ -496,27 +453,20 @@ class TestMultimodalGuard:
         from app.providers.router import _get_opencode_gemini_fallback
 
         _CANONICAL_OPENCODE = {
-            # GLM family
             "opencode-go/glm-5",
             "opencode-go/glm-5.1",
-            # Kimi family
             "opencode-go/kimi-k2.5",
             "opencode-go/kimi-k2.6",
-            # MiMo family (V2 + V2.5)
             "opencode-go/mimo-v2-pro",
             "opencode-go/mimo-v2-omni",
             "opencode-go/mimo-v2.5-pro",
             "opencode-go/mimo-v2.5",
-            # MiniMax family
             "opencode-go/minimax-m2.5",
             "opencode-go/minimax-m2.7",
-            # Qwen family
             "opencode-go/qwen3.5-plus",
             "opencode-go/qwen3.6-plus",
-            # DeepSeek family
             "opencode-go/deepseek-v4-pro",
             "opencode-go/deepseek-v4-flash",
-            # Legacy / routing alias
             "opencode-go/big-pickle",
         }
         for key in _get_opencode_gemini_fallback():
@@ -534,17 +484,11 @@ class TestMultimodalGuard:
 
         canonical_gemini = set(CURRENT_GEMINI_MODELS)
         for opencode_model, gemini_fallback in _get_opencode_gemini_fallback().items():
-            # Values are settings.DEFAULT_MODEL etc. — resolved fresh each call
             assert isinstance(gemini_fallback, str)
             assert gemini_fallback in canonical_gemini, (
                 f"Fallback for {opencode_model!r} is {gemini_fallback!r}, "
                 f"which is not in the canonical Gemini list: {sorted(canonical_gemini)}"
             )
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Model selector: Opencode models are skipped
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 class TestModelSelectorOpencodeSkip:
@@ -564,11 +508,9 @@ class TestModelSelectorOpencodeSkip:
         available = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else DEFAULT_GEMINI_MODELS
         if len(available) < 2:
             pytest.skip("Need at least 2 Gemini models for upgrade suggestions")
-        # A complex coding query with a lite model should potentially suggest an upgrade
         result = select_model(
             "Создай сложный класс на Python с множественным наследованием и метаклассами",
             current_model="gemini-3.1-flash-lite",
         )
-        # Result may be None if only one Gemini model is configured — that's fine
         if result is not None:
             assert "opencode" not in result.model

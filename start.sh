@@ -6,7 +6,6 @@ echo "Container ID: $HOSTNAME"
 echo "Process ID: $$"
 echo "Timestamp: $(date)"
 
-# Validate required environment variables
 echo "Checking environment variables..."
 if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
     echo "ERROR: TELEGRAM_BOT_TOKEN not set"
@@ -18,6 +17,5 @@ if [ -z "$DATABASE_URL" ]; then
 fi
 echo "Environment variables OK"
 
-# Start the bot
 echo "Starting bot..."
 exec python /app/bot.py

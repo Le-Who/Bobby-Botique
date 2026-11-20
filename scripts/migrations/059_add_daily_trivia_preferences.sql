@@ -1,5 +1,3 @@
--- Migration 059: Add Daily Trivia preferences table
--- Stores subscriber state and last delivery dates per user
 
 CREATE TABLE IF NOT EXISTS public.daily_trivia_preferences (
     user_id BIGINT PRIMARY KEY REFERENCES public.users(user_id) ON DELETE CASCADE,

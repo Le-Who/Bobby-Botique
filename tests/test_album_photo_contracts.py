@@ -26,8 +26,6 @@ def photo_message(index, *, user_id=71, is_bot=False):
 
 class AlbumBoundary:
     def __init__(self, monkeypatch, *, current_epoch=9, lease_current=True):
-        # pytest creates a fresh loop per test; retain the production semaphore's
-        # capacity while clearing the previous test loop binding after owned IO ended.
         monkeypatch.setattr(ai_photo._DL_SEMAPHORE, "_loop", None)
         self.state = SimpleNamespace(memory_epoch=8, _has_persisted_chat=True)
         self.placeholder = SimpleNamespace(
@@ -120,8 +118,6 @@ def owned_album_tasks(monkeypatch):
 async def test_album_out_of_order_partial_downloads_keep_exact_images_and_lease_through_delivery(
     monkeypatch, caption, task_type, is_ocr
 ):
-    # gather must preserve original order/filter failed images, and delivery must
-    # use the human identity rather than the bot-authored placeholder identity.
     boundary = AlbumBoundary(monkeypatch)
     owned = owned_album_tasks(monkeypatch)
     messages = [photo_message(index) for index in range(6)]
@@ -186,7 +182,6 @@ async def test_album_out_of_order_partial_downloads_keep_exact_images_and_lease_
 
 @pytest.mark.asyncio
 async def test_album_all_downloads_fail_without_provider_and_progress_is_awaited(monkeypatch):
-    # An empty surviving image set must stop before classification/provider work.
     boundary = AlbumBoundary(monkeypatch)
     owned = owned_album_tasks(monkeypatch)
 
@@ -206,8 +201,6 @@ async def test_album_all_downloads_fail_without_provider_and_progress_is_awaited
 
 @pytest.mark.asyncio
 async def test_album_cancel_awaits_all_downloads_and_progress_before_releasing_lease(monkeypatch):
-    # Cancelling the parent must finish active/queued downloads and the progress
-    # updater before releasing private data ownership or allowing provider work.
     boundary = AlbumBoundary(monkeypatch)
     owned = owned_album_tasks(monkeypatch)
     all_active = asyncio.Event()
@@ -256,8 +249,6 @@ async def test_album_cancel_awaits_all_downloads_and_progress_before_releasing_l
 async def test_album_invalid_identity_rejected_before_chat_or_private_data_access(
     monkeypatch, messages, update_user, diagnostic
 ):
-    # Identity validation must precede the first private chat read, epoch request,
-    # download or provider call, including the public album dispatcher.
     boundary = AlbumBoundary(monkeypatch)
     downloads = AsyncMock(side_effect=AssertionError("No download for invalid identity"))
     monkeypatch.setattr(ai_photo, "get_file_bytes", downloads)
@@ -277,7 +268,6 @@ async def test_album_invalid_identity_rejected_before_chat_or_private_data_acces
 async def test_album_stale_or_denied_private_lease_prevents_download_and_provider(
     monkeypatch, current_epoch, lease_current
 ):
-    # A stale generation/denied lease must terminate before any external input IO.
     boundary = AlbumBoundary(monkeypatch, current_epoch=current_epoch, lease_current=lease_current)
     downloads = AsyncMock(side_effect=AssertionError("No IO outside current private generation"))
     monkeypatch.setattr(ai_photo, "get_file_bytes", downloads)

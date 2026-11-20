@@ -1,4 +1,3 @@
-# app/i18n.py
 """Internationalization module — string registry with content-based language detection.
 
 Language detection:
@@ -15,13 +14,10 @@ Usage::
 
 import re
 
-# Supported languages
 SUPPORTED_LANGS = ("ru", "en")
 DEFAULT_LANG = "ru"
 
-# ── Language Detection ───────────────────────────────────────────────────────
 
-# Cyrillic Unicode range: basic + supplement
 _CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
 
 
@@ -38,15 +34,11 @@ def detect_language(text: str | None) -> str:
     if not text or len(text.strip()) < 3:
         return DEFAULT_LANG
 
-    # Single pass: count cyrillic and total alphabetic chars together.
-    # Avoids: (1) _CYRILLIC_RE.findall() which allocates a list of N strings,
-    #         (2) a second full iteration via sum(1 for ch in text if ch.isalpha()).
     cyrillic_count = 0
     alpha_count = 0
     for ch in text[:500]:
         if ch.isalpha():
             alpha_count += 1
-            # Cyrillic Basic (U+0400–U+04FF) covers Russian, Ukrainian, etc.
             if "\u0400" <= ch <= "\u04ff":
                 cyrillic_count += 1
 
@@ -56,10 +48,7 @@ def detect_language(text: str | None) -> str:
     return "ru" if (cyrillic_count / alpha_count) >= 0.2 else "en"
 
 
-# ── String Registry ──────────────────────────────────────────────────────────
-
 _STRINGS: dict[str, dict[str, str]] = {
-    # ── Compatibility ────────────────────────────────────────────────────
     "compat.title": {"ru": "Совместимость по знакам", "en": "Zodiac compatibility"},
     "compat.pick_first": {
         "ru": "💞 <b>Совместимость пары</b>\n\nВыберите знак первого партнёра, затем второго — я сразу покажу краткую совместимость. Для подробного разбора можно будет заполнить даты рождения: бот рассчитает данные, а нейросеть свяжет их в живую интерпретацию отношений.",
@@ -498,7 +487,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Сделай расклад таро для этой пары: ресурс отношений, напряжение и следующий шаг. Учитывай эти символические ориентиры, не приписывая им гарантированных событий:",
         "en": "Read tarot for this pair: strengths, tensions and the next step. Use these symbolic reference points without treating them as guaranteed events:",
     },
-    # ── Mini App ─────────────────────────────────────────────────────────
     "miniapp.voice.aoede": {"ru": "Нейтральный и естественный", "en": "Neutral and natural"},
     "miniapp.voice.kore": {"ru": "Более энергичный и уверенный", "en": "More energetic and confident"},
     "miniapp.voice.leda": {"ru": "Лёгкий и молодой", "en": "Light and youthful"},
@@ -548,8 +536,6 @@ _STRINGS: dict[str, dict[str, str]] = {
     "miniapp.voice_tag.deep_authoritative": {"ru": "Глубокий/Авторитетный", "en": "Deep/Authoritative"},
     "miniapp.voice_tag.clear_cheerful": {"ru": "Чёткий/Бодрый", "en": "Clear/Cheerful"},
     "miniapp.voice_tag.informative": {"ru": "Информативный", "en": "Informative"},
-    # ── Inline Mode ──────────────────────────────────────────────────────
-    # Tones
     "inline.tone_formal": {"ru": "🧑‍💼 Формальный ответ", "en": "🧑‍💼 Formal reply"},
     "inline.tone_friendly": {"ru": "😊 Дружеский ответ", "en": "😊 Friendly reply"},
     "inline.tone_sarcastic": {"ru": "😏 Саркастичный ответ", "en": "😏 Sarcastic reply"},
@@ -565,7 +551,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Отвечай с приятной иронией и лёгким сарказмом, оставаясь при этом полезным.",
         "en": "Reply with pleasant irony and light sarcasm while remaining helpful.",
     },
-    # Loading / progress
     "inline.loading": {"ru": "⏳ Генерация…", "en": "⏳ Generating…"},
     "inline.search_progress": {
         "ru": "🔎 <b>{bot_name}</b> ищет в интернете…",
@@ -579,14 +564,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⏳ <b>{bot_name}</b> задерживается…",
         "en": "⏳ <b>{bot_name}</b> is taking longer than usual…",
     },
-    # Empty query hint
     "inline.hint_title": {"ru": "💬 Введите запрос после @бота…", "en": "💬 Type a query after @bot…"},
     "inline.hint_desc": {"ru": "Например: какая погода в Москве?", "en": "Example: what's the weather in London?"},
     "inline.empty_query": {
         "ru": "💬 Чтобы использовать <b>{bot_name}</b>, введите запрос после @бота.",
         "en": "💬 To use <b>{bot_name}</b>, type a query after @bot.",
     },
-    # Image models
     "inline.img_turbo": {"ru": "⚡ Турбо", "en": "⚡ Turbo"},
     "inline.img_smart": {"ru": "🧠 Умный", "en": "🧠 Smart"},
     "inline.img_art": {"ru": "🎨 Арт", "en": "🎨 Art"},
@@ -598,7 +581,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "🅰️ Text detected → Meme mode auto-selected",
     },
     "inline.img_caption": {"ru": "🎨 <b>Запрос:</b> {prompt}", "en": "🎨 <b>Prompt:</b> {prompt}"},
-    # Board
     "inline.board_init": {
         "ru": "📋 <b>{topic}</b>\n━━━━━━━━━━━━━━━━━━━━━\n<i>Отвечайте (reply) на это сообщение, чтобы добавить свои идеи.</i>\n\nПока ничего не предложено.",
         "en": "📋 <b>{topic}</b>\n━━━━━━━━━━━━━━━━━━━━━\n<i>Reply to this message to add your ideas.</i>\n\nNothing proposed yet.",
@@ -609,7 +591,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Участники смогут добавлять идеи через reply",
         "en": "Participants can add ideas via reply",
     },
-    # Crocodile
     "inline.croc_custom": {"ru": "🐊 Крокодил: своё слово", "en": "🐊 Crocodile: custom word"},
     "inline.croc_custom_desc": {
         "ru": "Задаёшь своё слово — второй игрок будет отгадывать",
@@ -625,14 +606,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "🐊 <b>Crocodile</b>\n<i>Game loading…</i>",
     },
     "inline.croc_loading": {"ru": "⏳ Загрузка...", "en": "⏳ Loading..."},
-    # Horoscope
     "inline.horoscope_init": {
         "ru": "✨ <b>Гороскоп: {arg}</b>\n<i>Звёзды сходятся…</i>",
         "en": "✨ <b>Horoscope: {arg}</b>\n<i>The stars are aligning…</i>",
     },
     "inline.horoscope_btn": {"ru": "⏳ Анализ...", "en": "⏳ Analyzing..."},
     "inline.horoscope_desc": {"ru": "Астрономически точный прогноз", "en": "Astronomically accurate forecast"},
-    # Tarot — classic (legacy, kept for backward compat)
     "inline.tarot_init": {
         "ru": "🔮 <b>Таро</b>\n<i>Тасуем колоду…</i>",
         "en": "🔮 <b>Tarot</b>\n<i>Shuffling the deck…</i>",
@@ -640,7 +619,6 @@ _STRINGS: dict[str, dict[str, str]] = {
     "inline.tarot_btn": {"ru": "⏳ Тасуем...", "en": "⏳ Shuffling..."},
     "inline.tarot_desc": {"ru": "Расклад на 3 карты", "en": "3-card spread"},
     "inline.tarot_classic_title": {"ru": "🔮 Прошлое / Настоящее / Будущее", "en": "🔮 Past / Present / Future"},
-    # Tarot — card of the day
     "inline.tarot_daily_title": {"ru": "🎴 Карта дня", "en": "🎴 Card of the Day"},
     "inline.tarot_daily_desc": {
         "ru": "Одна карта — совет и энергия на сегодня",
@@ -650,14 +628,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🎴 <b>Карта дня</b>\n<i>Достаём вашу карту…</i>",
         "en": "🎴 <b>Card of the Day</b>\n<i>Drawing your card…</i>",
     },
-    # Tarot — yes/no
     "inline.tarot_yesno_title": {"ru": "🔮 Да или Нет", "en": "🔮 Yes or No"},
     "inline.tarot_yesno_desc": {"ru": "Одна карта отвечает на ваш вопрос", "en": "One card answers your question"},
     "inline.tarot_yesno_init": {
         "ru": "🔮 <b>Да или Нет</b>\n<i>Карта решает…</i>",
         "en": "🔮 <b>Yes or No</b>\n<i>The card decides…</i>",
     },
-    # Tarot — relationship
     "inline.tarot_love_title": {"ru": "💞 Отношения", "en": "💞 Relationship"},
     "inline.tarot_love_desc": {
         "ru": "5 карт: ты, партнёр, связь, препятствие, итог",
@@ -667,20 +643,17 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "💞 <b>Расклад на отношения</b>\n<i>Раскладываем 5 карт…</i>",
         "en": "💞 <b>Relationship Spread</b>\n<i>Laying out 5 cards…</i>",
     },
-    # Tarot — celtic cross
     "inline.tarot_celtic_title": {"ru": "🌙 Кельтский крест", "en": "🌙 Celtic Cross"},
     "inline.tarot_celtic_desc": {"ru": "6 карт: глубокий анализ ситуации", "en": "6 cards: deep situation analysis"},
     "inline.tarot_celtic_init": {
         "ru": "🌙 <b>Кельтский крест</b>\n<i>Раскладываем 6 карт…</i>",
         "en": "🌙 <b>Celtic Cross</b>\n<i>Laying out 6 cards…</i>",
     },
-    # Tarot — fortune cookie (instant, no LLM)
     "inline.tarot_fortune_title": {"ru": "⚡ Мгновенное предсказание", "en": "⚡ Instant Fortune"},
     "inline.tarot_fortune_desc": {
         "ru": "Одна фраза от карт — без ожидания",
         "en": "One fortune phrase — instant, no waiting",
     },
-    # Errors
     "inline.timeout_error": {
         "ru": "⏰ Модель не успела ответить вовремя. Нажмите «Повторить» ниже.",
         "en": "⏰ Model didn't respond in time. Press «Retry» below.",
@@ -711,7 +684,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⏰ Контекст устарел. Задайте новый inline-вопрос.",
         "en": "⏰ Context expired. Start a new inline question.",
     },
-    # ── Voice Handler ────────────────────────────────────────────────────
     "voice.processing": {
         "ru": "🎙️ Обрабатываю голосовое сообщение...",
         "en": "🎙️ Processing voice message...",
@@ -796,7 +768,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🔍 Запускаю глубокий поиск...",
         "en": "🔍 Starting deep search...",
     },
-    # ── General Errors ───────────────────────────────────────────────────
     "error.generic": {
         "ru": "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз.",
         "en": "❌ An error occurred while processing your request. Please try again.",
@@ -837,12 +808,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🚫 Все лимиты для всех моделей на сегодня исчерпаны. Попробуйте позже.",
         "en": "🚫 All model limits have been exhausted for today. Please try later.",
     },
-    # ── Busy/Wait ────────────────────────────────────────────────────────
     "busy.toast": {
         "ru": "⏳ Дождитесь завершения текущего запроса",
         "en": "⏳ Please wait for the current request to finish",
     },
-    # ── Processing Indicators ────────────────────────────────────────────
     "processing.thinking": {
         "ru": "🤔 Думаю...",
         "en": "🤔 Thinking...",
@@ -887,7 +856,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🖼️ Описываю изображение...",
         "en": "🖼️ Describing image...",
     },
-    # ── Navigation / Menus ───────────────────────────────────────────────
     "menu.new_chat": {
         "ru": "💬 Новый чат",
         "en": "💬 New chat",
@@ -924,7 +892,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⬅️ Меню",
         "en": "⬅️ Menu",
     },
-    # ── New Chat / Topic ─────────────────────────────────────────────────
     "chat.new_topic": {
         "ru": "✅ Новый чат создан. История и системная инструкция сброшены.",
         "en": "✅ New chat created. History and system prompt have been reset.",
@@ -957,7 +924,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Супер! Мы готовы *копнуть глубже*! 😉 \nЧто еще вы хотели бы узнать по этой теме?",
         "en": "Great! We're ready to *dig deeper*! 😉 \nWhat else would you like to know about this topic?",
     },
-    # ── Buttons ──────────────────────────────────────────────────────────
     "btn.retry": {
         "ru": "🔄 Попробовать ещё раз",
         "en": "🔄 Try again",
@@ -986,7 +952,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Операция отменена.",
         "en": "Operation cancelled.",
     },
-    # ── Public help and Telegram command menu ────────────────────────────
     "help.overview.title": {
         "ru": "📚 Чем я могу помочь",
         "en": "📚 How I can help",
@@ -1114,7 +1079,6 @@ _STRINGS: dict[str, dict[str, str]] = {
     "help.command.compatibility": {"ru": "Проверить совместимость пары", "en": "Check partner compatibility"},
     "help.command.horoscope_settings": {"ru": "Настроить ежедневный гороскоп", "en": "Set up daily horoscopes"},
     "help.command.horoscope_stop": {"ru": "Остановить доставку гороскопа", "en": "Stop horoscope delivery"},
-    # ── Search Toggle ────────────────────────────────────────────────────
     "search.on": {
         "ru": "ВКЛЮЧЕН",
         "en": "ON",
@@ -1123,7 +1087,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "ВЫКЛЮЧЕН",
         "en": "OFF",
     },
-    # ── Complex Search ───────────────────────────────────────────────────
     "complex.detected": {
         "ru": "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
         "en": "Complex request detected (image + search). This will require multiple steps and take longer. What would you like to do?",
@@ -1136,7 +1099,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🔎 Выполнить сложный поиск",
         "en": "🔎 Perform complex search",
     },
-    # ── Documents ────────────────────────────────────────────────────────
     "doc.error_processing": {
         "ru": "❌ Произошла ошибка при обработке документа. Попробуйте другой файл.",
         "en": "❌ An error occurred while processing the document. Please try another file.",
@@ -1169,7 +1131,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "📄 Обрабатываю документ...",
         "en": "📄 Processing document...",
     },
-    # ── Image Processing ─────────────────────────────────────────────────
     "image.error": {
         "ru": "❌ Произошла ошибка при обработке изображения.",
         "en": "❌ An error occurred while processing the image.",
@@ -1190,12 +1151,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⚠️ Слишком много одновременных медиа-групп. Попробуйте позже.",
         "en": "⚠️ Too many simultaneous media groups. Please try later.",
     },
-    # ── LTM / Memory ────────────────────────────────────────────────────
     "ltm.memories_injected": {
         "ru": "\n\n_🧠 Использован контекст из прошлых бесед ({count})_",
         "en": "\n\n_🧠 Context from past conversations used ({count})_",
     },
-    # ── Settings ─────────────────────────────────────────────────────────
     "settings.title": {
         "ru": "⚙️ **Настройки**",
         "en": "⚙️ **Settings**",
@@ -1260,12 +1219,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Выключен",
         "en": "❌ Disabled",
     },
-    # ── Dedup ────────────────────────────────────────────────────────────
     "dedup.skipping": {
         "ru": "⏳ Запрос уже обрабатывается…",
         "en": "⏳ Request is already being processed…",
     },
-    # ── Fallback Confirmation ────────────────────────────────────────────
     "chat.confirm_fallback": {
         "ru": "Да, использовать {model}",
         "en": "Yes, use {model}",
@@ -1278,7 +1235,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🧠 Модель {model} думает...",
         "en": "🧠 Model {model} is thinking...",
     },
-    # ── Extra Buttons ────────────────────────────────────────────────────
     "btn.listen": {
         "ru": "🔊 Озвучить",
         "en": "🔊 Listen",
@@ -1299,7 +1255,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "▶️ Продолжаю прерванный ответ…",
         "en": "▶️ Continuing interrupted response…",
     },
-    # ── Streaming Status ─────────────────────────────────────────────────
     "stream.blocked_by_safety": {
         "ru": "\n\n⚠️ _Ответ был прерван фильтром безопасности._",
         "en": "\n\n⚠️ _Response was blocked by safety filter._",
@@ -1328,7 +1283,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.",
         "en": "❌ Streaming error. Please try again.",
     },
-    # ── Role Management ──────────────────────────────────────────────────
     "role.prompt_updated": {
         "ru": "✅ Промпт роли обновлён!",
         "en": "✅ Role prompt updated!",
@@ -1449,7 +1403,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Не удалось переименовать роль. Попробуйте позже.",
         "en": "❌ Failed to rename role. Please try later.",
     },
-    # ── Messages / Placeholders ──────────────────────────────────────────
     "msg.processing_image": {
         "ru": "🖼️ Обрабатываю изображение...",
         "en": "🖼️ Processing image...",
@@ -1462,7 +1415,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "✏️ Обновляю ответ...",
         "en": "✏️ Updating answer...",
     },
-    # ── Scheduled Briefs ─────────────────────────────────────────────────
     "brief.morning_title": {
         "ru": "📬 **Утренний бриф**\n\n{summary}",
         "en": "📬 **Morning Brief**\n\n{summary}",
@@ -1483,7 +1435,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Ошибка при отмене подписки.",
         "en": "❌ Error cancelling subscription.",
     },
-    # ── Document Upload ──────────────────────────────────────────────────
     "doc.mode_hint": {
         "ru": "📋 Вы находитесь в режиме работы с документами.\n\n💡 *Доступные действия:*\n• Загрузите новый документ\n• Выберите документ из списка\n• Используйте кнопки под сообщениями\n\n🔄 *Для выхода из режима документов:*\n• Нажмите кнопку '❌ Отменить работу с документами'\n• Или отправьте команду /documents",
         "en": "📋 You are in document mode.\n\n💡 *Available actions:*\n• Upload a new document\n• Select a document from the list\n• Use the buttons below messages\n\n🔄 *To exit document mode:*\n• Press '❌ Cancel document mode'\n• Or send /documents",
@@ -1556,17 +1507,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Отменить работу с документами",
         "en": "❌ Cancel document mode",
     },
-    # ── Draw / Image Generation UX ───────────────────────────────────────
     "draw.copy_prompt_btn": {
         "ru": "📋 Скопировать промпт",
         "en": "📋 Copy prompt",
     },
-    # ── Brief / Digest ───────────────────────────────────────────────────
     "brief.expandable_title": {
         "ru": "<b>📬 Утренний брифинг</b>",
         "en": "<b>📬 Morning Brief</b>",
     },
-    # ── Reaction status hints (shown via answer_callback / log) ──────────
     "reaction.thinking": {
         "ru": "🔍 Обрабатываю...",
         "en": "🔍 Processing...",
@@ -1603,7 +1551,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Короткое продолжение войдёт в аудио предыдущей части. Отдельного голосового для него не будет.",
         "en": "This short continuation will be included in the previous part's audio, without a separate voice message.",
     },
-    # ── Expandable blockquote labels ─────────────────────────────────────
     "blockquote.partial_label": {
         "ru": "Частичный ответ / Сбой сети",
         "en": "Partial response / Network failure",
@@ -1636,6 +1583,6 @@ def t(key: str, lang: str = DEFAULT_LANG, **kwargs: str) -> str:
         try:
             text = text.format(**kwargs)
         except KeyError, IndexError:
-            pass  # Return unformatted if vars mismatch
+            pass
 
     return text

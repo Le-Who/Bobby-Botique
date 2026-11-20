@@ -25,7 +25,6 @@ async def run_natal_smoke(webhook_url: str, user_id: int = 0, chat_id: int = 0) 
     if user_id <= 0:
         raise ValueError("Natal smoke requires a positive registered user id; set ADMIN_ID or pass --user-id.")
     await check_storage_ready()
-    # Check the FK prerequisite before invoking paid generation; never provision users in a smoke check.
     users = await db_query("SELECT user_id FROM public.users WHERE user_id = $1", (user_id,))
     if not users:
         raise ValueError("Natal smoke user is not registered in users; choose an existing user with --user-id.")

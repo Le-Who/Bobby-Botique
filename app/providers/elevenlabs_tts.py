@@ -1,4 +1,3 @@
-# /app/providers/elevenlabs_tts.py
 """ElevenLabs TTS provider — text-to-speech via REST API.
 
 Uses the ElevenLabs Stream speech endpoint to generate speech audio.
@@ -36,8 +35,6 @@ from app.providers.tts_audio import (
 from app.runtime_settings.audio import get_config
 from app.runtime_settings.lifecycle import runtime_settings_scope
 
-# ─── Public exceptions ────────────────────────────────────────────────────────
-
 
 class ElevenLabsQuotaError(Exception):
     """This key lacks access, credit or capacity for the requested synthesis."""
@@ -47,14 +44,9 @@ class ElevenLabsAPIError(Exception):
     """Raised for non-recoverable ElevenLabs errors (HTTP 4xx/5xx that are not quota)."""
 
 
-# ─── Constants ───────────────────────────────────────────────────────────────
-
 _BASE_URL: Final = "https://api.elevenlabs.io"
 _TTS_ENDPOINT: Final = "/v1/text-to-speech/{voice_id}/stream"
 
-# PCM 24kHz — matches Gemini TTS output format exactly.
-# This eliminates all audio-format concerns when concatenating chunks or
-# when pcm_to_ogg_opus() processes the final buffer.
 _OUTPUT_FORMAT: Final = "pcm_24000"
 _KEY_FAILURE_REASONS: Final = {
     401: "auth_error",
@@ -64,10 +56,8 @@ _KEY_FAILURE_REASONS: Final = {
     429: "rate_limited",
 }
 
-# HTTP timeouts: connect fast, allow up to 90 s for speech generation.
 _HTTP_TIMEOUT: Final = httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)
 
-# Documented model limits count characters, not UTF-8 bytes.
 _MODEL_CHARACTER_LIMITS: Final = {
     "eleven_multilingual_v2": 10000,
     "eleven_multilingual_v1": 10000,
@@ -82,11 +72,6 @@ _MODEL_CHARACTER_LIMITS: Final = {
 _STITCH_CONTEXT_CHARS: Final = 500
 
 
-# ─── Shared async HTTP client ─────────────────────────────────────────────────
-
-# A single module-level client is reused across all requests to benefit from
-# connection pooling (Keep-Alive). The client is intentionally not closed
-# between requests because voice replies fire in the background.
 _http_client: httpx.AsyncClient | None = None
 
 
@@ -96,7 +81,7 @@ def _get_client() -> httpx.AsyncClient:
         _http_client = httpx.AsyncClient(
             base_url=_BASE_URL,
             timeout=_HTTP_TIMEOUT,
-            http2=True,  # ElevenLabs supports HTTP/2; reduces connection overhead
+            http2=True,
             headers={"Content-Type": "application/json", "Accept": "application/octet-stream"},
         )
     return _http_client
@@ -111,9 +96,6 @@ async def close_elevenlabs_client() -> None:
 
 
 async def _read_bounded(response: httpx.Response, maximum: int) -> bytes:
-    # Request identity encoding and reject a compressed response: decoding an
-    # untrusted compressed chunk before checking size could allocate far more
-    # than the audio limit. Identity chunks otherwise retain no full body.
     if response.headers.get("content-encoding", "identity").lower() != "identity":
         raise TTSOutputError("unsupported_content_encoding")
     length = response.headers.get("content-length")
@@ -138,9 +120,6 @@ async def _read_bounded(response: httpx.Response, maximum: int) -> bytes:
     return b"".join(chunks)
 
 
-# ─── Text normalisation ───────────────────────────────────────────────────────
-
-
 def _clean_text_for_elevenlabs(text: str) -> str:
     """Strip Markdown / bot formatting that ElevenLabs would read aloud literally.
 
@@ -153,9 +132,6 @@ def _clean_text_for_elevenlabs(text: str) -> str:
     from app.providers.tts import _clean_text_for_speech
 
     return _clean_text_for_speech(text)
-
-
-# ─── Core generation ─────────────────────────────────────────────────────────
 
 
 @runtime_settings_scope()
@@ -197,7 +173,7 @@ async def generate_speech_elevenlabs(
         return None
 
     if model_id == "eleven_v3":
-        previous_text = next_text = None  # v3 has no request stitching.
+        previous_text = next_text = None
 
     attempt = start_workload_attempt(
         workload="tts",
@@ -220,7 +196,6 @@ async def generate_speech_elevenlabs(
             if model_id == "eleven_v4":
                 voice_settings = {key: voice_settings[key] for key in ("stability", "similarity_boost")}
             elif model_id == "eleven_v3":
-                # v3 exposes the Creative, Natural and Robust stability presets.
                 stability = voice_settings["stability"]
                 voice_settings = {"stability": min((0.5, 0.0, 1.0), key=lambda value: abs(value - stability))}
             payload: dict[str, object] = {
@@ -242,8 +217,6 @@ async def generate_speech_elevenlabs(
                 headers={"xi-api-key": api_key, "Accept-Encoding": "identity"},
             ) as response:
                 status_code = response.status_code
-                # No upstream error body is needed for classification. Do not
-                # read it at all; the context closes the stream on every exit.
                 key_failure = _KEY_FAILURE_REASONS.get(status_code)
                 if key_failure:
                     reason = key_failure
@@ -305,8 +278,6 @@ async def generate_speech_with_key_rotation(
     )
 
     async def execute(candidate: str, explicit: bool) -> list[bytes] | None:
-        # Production passes a single whole transcript. Recalculate for every
-        # selected model: its fallback can have a different hard input limit.
         chunks = split_transcript(text_chunks[0], candidate) if len(text_chunks) == 1 else text_chunks
         return await _generate_message_with_key_rotation(
             chunks,
@@ -372,8 +343,6 @@ async def _generate_message_with_key_rotation(
     if not api_keys:
         return None
 
-    # Filter out blank chunks once so we don't have to skip them inside the loop.
-    # We keep original indices to build correct Request Stitching neighbours.
     non_empty: list[tuple[int, str]] = [(i, c) for i, c in enumerate(text_chunks) if c.strip()]
 
     pcm_parts: list[bytes] = []
@@ -381,9 +350,6 @@ async def _generate_message_with_key_rotation(
     exhausted_keys: set[str] = set()
 
     for pos, (original_idx, chunk) in enumerate(non_empty):
-        # ── Request Stitching: resolve neighbouring chunks ─────────────────
-        # Use the original (pre-filter) index so that neighbouring lookups are
-        # stable even when some intermediate chunks were blank.
         prev_raw_idx = original_idx - 1
         next_raw_idx = original_idx + 1
         previous_text: str | None = (
@@ -396,7 +362,6 @@ async def _generate_message_with_key_rotation(
         chunk_pcm: bytes | None = None
         chunk_success = False
 
-        # Try each available key in order.
         for api_key in api_keys:
             if api_key in exhausted_keys:
                 continue
@@ -416,8 +381,6 @@ async def _generate_message_with_key_rotation(
                     break
 
             except TTSContractError as error:
-                # Invalid payload/audio is independent of the selected key.
-                # Advance the whole-message model/provider plan immediately.
                 logging.warning("ElevenLabs message contract failed: %s", error.reason_code)
                 return None
 
@@ -431,7 +394,6 @@ async def _generate_message_with_key_rotation(
                 continue
 
             except Exception as e:
-                # Network error, timeout, etc. — try next key.
                 logging.warning(
                     "ElevenLabs chunk %d/%d failed (%s): %s",
                     pos + 1,
@@ -443,15 +405,13 @@ async def _generate_message_with_key_rotation(
                 continue
 
         if not chunk_success:
-            # All keys failed for this chunk — trigger Gemini fallback for the
-            # entire message (atomic guarantee).
             logging.warning(
                 "ElevenLabs pipeline failed on chunk %d/%d — all keys exhausted. "
                 "Triggering Gemini TTS fallback for entire message.",
                 pos + 1,
                 len(non_empty),
             )
-            return None  # Signal: fall back to Gemini
+            return None
 
         if chunk_pcm:
             audio_size += len(chunk_pcm)

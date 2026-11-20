@@ -113,7 +113,7 @@ async def test_caught_sql_failure_keeps_traffic_age_and_process_counters_indepen
     assert source["available"] and source["stale"]
     assert source["observed_at"] == good["sources"]["traffic"]["observed_at"] == 100
     assert source["reason_code"] == "source_unavailable"
-    assert source["scope"] == "mixed"  # Persisted database rows plus this process's pending deltas.
+    assert source["scope"] == "mixed"
     period = stale["overview"]["metrics"]["traffic"]["periods"]["today"]
     assert period["user_requests"] == 8
     assert period["complete"] is False and period["coverage"] == "partial"

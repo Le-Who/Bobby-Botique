@@ -34,7 +34,7 @@ async def test_local_admission_failure_preserves_provider_failure_count():
 def config():
     return CircuitBreakerConfig(
         failure_threshold=2,
-        recovery_timeout=0.1,  # Short timeout for testing
+        recovery_timeout=0.1,
         monitor_interval=0.1,
         expected_exception=ValueError,
     )
@@ -53,7 +53,6 @@ def mock_time(monkeypatch):
             self.current += seconds
 
     m = MockTimeManager()
-    # Mock time.time specifically in the circuit_breaker module
     monkeypatch.setattr("app.circuit_breaker.time.time", m)
     return m
 
@@ -90,7 +89,6 @@ async def test_successful_call(cb):
 
 @pytest.mark.asyncio
 async def test_failure_counting(cb):
-    # Setup mock to fail with expected exception
     mock_func = AsyncMock(side_effect=ValueError("fail"))
 
     with pytest.raises(ValueError, match="fail"):
@@ -102,16 +100,13 @@ async def test_failure_counting(cb):
 
 @pytest.mark.asyncio
 async def test_circuit_opens_on_threshold(cb):
-    # Threshold is 2
     mock_func = AsyncMock(side_effect=ValueError("fail"))
 
-    # First failure
     with pytest.raises(ValueError):
         await cb.call(mock_func)
     assert cb.get_state() == CircuitState.CLOSED
     assert cb.get_stats()["failure_count"] == 1
 
-    # Second failure -> Should open circuit
     with pytest.raises(ValueError):
         await cb.call(mock_func)
     assert cb.get_state() == CircuitState.OPEN
@@ -120,7 +115,6 @@ async def test_circuit_opens_on_threshold(cb):
 
 @pytest.mark.asyncio
 async def test_open_circuit_rejects_calls(cb):
-    # Force open state
     await cb.force_open()
 
     mock_func = AsyncMock()
@@ -133,27 +127,22 @@ async def test_open_circuit_rejects_calls(cb):
 
 @pytest.mark.asyncio
 async def test_unexpected_exception_ignored(cb):
-    # Exception not in expected_exception (ValueError)
     mock_func = AsyncMock(side_effect=RuntimeError("unexpected"))
 
     with pytest.raises(RuntimeError):
         await cb.call(mock_func)
 
-    # Should not count as failure
     assert cb.get_stats()["failure_count"] == 0
     assert cb.get_state() == CircuitState.CLOSED
 
 
 @pytest.mark.asyncio
 async def test_recovery_flow_success(cb, mock_time):
-    # Setup: Force open
     await cb.force_open()
     assert cb.get_state() == CircuitState.OPEN
 
-    # Advance time past recovery timeout
     mock_time.advance(0.15)
 
-    # Next call should be allowed (HALF_OPEN) and succeed
     mock_func = AsyncMock(return_value="recovered")
     result = await cb.call(mock_func)
 
@@ -164,21 +153,16 @@ async def test_recovery_flow_success(cb, mock_time):
 
 @pytest.mark.asyncio
 async def test_recovery_flow_failure(cb, mock_time):
-    # Setup: Force open
     await cb.force_open()
 
-    # Advance time past recovery timeout
     mock_time.advance(0.15)
 
-    # Call fails
     mock_func = AsyncMock(side_effect=ValueError("fail again"))
 
     with pytest.raises(ValueError):
         await cb.call(mock_func)
 
-    # Should reopen immediately
     assert cb.get_state() == CircuitState.OPEN
-    # Failure count increases
     assert cb.get_stats()["failure_count"] > 0
 
 
@@ -198,13 +182,9 @@ async def test_manual_control(cb):
 
 @pytest.mark.asyncio
 async def test_monitoring_task(cb):
-    # Allow monitoring loop to run
     await asyncio.sleep(0.15)
 
-    # We can check logs if we capture them, or just ensure no crash
-    # Just basic liveness check
     assert cb.get_state() == CircuitState.CLOSED
-    # Stats should be retrievable
     stats = cb.get_stats()
     assert isinstance(stats, dict)
 
@@ -221,7 +201,6 @@ async def test_get_circuit_breaker_and_shutdown_all():
     cb1 = get_circuit_breaker("test_global_1")
     cb2 = get_circuit_breaker("test_global_1")
 
-    # Needs to return the same instance
     assert cb1 is cb2
 
     cb3 = get_circuit_breaker("test_global_2")
@@ -233,19 +212,15 @@ async def test_get_circuit_breaker_and_shutdown_all():
 
 @pytest.mark.asyncio
 async def test_monitor_loop_max_failures_cap(cb, mock_time):
-    # Overfill failures
     cb._failure_count = cb.config.max_failures + 10
 
-    # The background monitor task sleeps for monitor_interval. Let it run once.
     await asyncio.sleep(0.15)
 
-    # Assuming monitor loop ran, it should cap it
     assert cb._failure_count <= cb.config.max_failures
 
 
 @pytest.mark.asyncio
 async def test_should_attempt_reset_not_open(cb):
-    # State is CLOSED, should return False
     assert cb._should_attempt_reset() is False
 
     await cb._set_state(CircuitState.HALF_OPEN)
@@ -253,7 +228,6 @@ async def test_should_attempt_reset_not_open(cb):
 
 
 def test_init_without_running_loop():
-    # Attempt to init without a running loop
     from unittest.mock import patch
 
     import app.circuit_breaker
@@ -265,7 +239,6 @@ def test_init_without_running_loop():
 
 @pytest.mark.asyncio
 async def test_start_monitoring_already_done(cb):
-    # Attempt to call start_monitoring when already running
     task = cb._monitor_task
     cb._start_monitoring()
     assert task is cb._monitor_task

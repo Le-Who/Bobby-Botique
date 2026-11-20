@@ -1,4 +1,3 @@
-# tests/test_game_auth.py
 """Unit tests for WebSocket authentication helpers in app/web_miniapp.py.
 
 Tests are fully offline — no Quart app, no WebSocket, no Telegram API calls.
@@ -18,11 +17,7 @@ import time
 from app.web_miniapp import _extract_user_id, _validate_init_data
 from tests.factories import make_valid_init_data
 
-# A deterministic fake bot token used throughout this module.
 _BOT_TOKEN = "1234567890:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-
-
-# ── _validate_init_data ───────────────────────────────────────────────────────
 
 
 class TestValidateInitData:
@@ -39,14 +34,12 @@ class TestValidateInitData:
     def test_tampered_hash_returns_none(self):
         """Any mutation of the payload after signing must be rejected."""
         init_data = make_valid_init_data(_BOT_TOKEN, user_id=42)
-        # Corrupt the last character of the hash value
         tampered = init_data[:-1] + ("0" if init_data[-1] != "0" else "1")
         result = _validate_init_data(tampered, _BOT_TOKEN)
         assert result is None
 
     def test_missing_hash_field_returns_none(self):
         """initData without a 'hash' key must be rejected immediately."""
-        # Build params without signing
         init_data = "user=%7B%22id%22%3A42%7D&auth_date=9999999999"
         result = _validate_init_data(init_data, _BOT_TOKEN)
         assert result is None
@@ -81,9 +74,6 @@ class TestValidateInitData:
             auth_date=int(time.time()) + 120,
         )
         assert _validate_init_data(init_data, _BOT_TOKEN) is None
-
-
-# ── _extract_user_id ──────────────────────────────────────────────────────────
 
 
 class TestExtractUserId:

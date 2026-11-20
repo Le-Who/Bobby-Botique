@@ -10,9 +10,6 @@ def provider():
     return OpenRouterProvider(api_key="test-key")
 
 
-# ── _build_messages ──────────────────────────────────────────────────────────
-
-
 class TestBuildMessages:
     """_build_messages converts Gemini-format history to OpenAI-format."""
 
@@ -69,9 +66,6 @@ class TestBuildMessages:
         history = [{"role": "user", "parts": "single string"}]
         messages = await provider._build_messages(history, system_instruction=None)
         assert len(messages) == 1
-
-
-# ── _has_multimodal_content ──────────────────────────────────────────────────
 
 
 class TestHasMultimodalContent:

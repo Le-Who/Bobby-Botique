@@ -30,7 +30,6 @@ async def test_detached_worker_refreshes_each_job_without_losing_trace(monkeypat
             rows.append(((await lifecycle.operation_snapshot()).revision, get_prompt_text("formatting_rules")))
             started.set()
             await release.wait()
-            # The current job remains pinned even after an admin edit.
             rows.append(((await lifecycle.operation_snapshot()).revision, get_prompt_text("formatting_rules")))
         async with lifecycle.runtime_settings_scope():
             rows.append(((await lifecycle.operation_snapshot()).revision, get_prompt_text("formatting_rules")))
@@ -62,8 +61,6 @@ async def test_voice_fifo_second_job_uses_new_revision_while_first_stays_pinned(
     from app import voice_engine
     from app.utils import audio
 
-    # Mirror startup registration before pinning prompts. Refresh is replaced
-    # below; lazy TTS imports must not add their baselines after this snapshot.
     lifecycle.load_controlled_prompts()
 
     def snapshot(revision):

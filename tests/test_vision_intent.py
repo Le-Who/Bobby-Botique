@@ -56,7 +56,6 @@ async def test_classify_vision_intent_regex_describe():
 @pytest.mark.asyncio
 async def test_classify_vision_intent_llm_fallback_ocr():
     """Ambiguous caption should fall back to LLM, returning 'ocr' if LLM says so."""
-    # Ambiguous caption that doesn't match any regex directly
     ambiguous = "какие символы видны?"
 
     with patch("app.utils.vision_intent._call_llm_for_intent", new_callable=AsyncMock) as mock_llm:

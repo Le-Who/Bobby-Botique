@@ -22,19 +22,12 @@ from app.utils.background_tasks import submit_task
 
 logger = logging.getLogger(__name__)
 
-# -- In-process prep guards (per-worker fast-path) -------------------------
-# No eviction cap: ~100 bytes/lock × 730 entries/year = negligible memory.
-# Eviction was the root cause of a race condition where actively-held locks
-# could be removed, allowing concurrent entry into the critical section.
 _PREP_LOCKS: dict[str, asyncio.Lock] = {}
 
-# -- Hourly image generation quota for daily croc ---------------------------
-# Default covers both tracks for today and the two-day image horizon.
-# Counts automatic attempts, including failures, to bound provider retries.
 DAILY_IMAGE_QUOTA_PER_HOUR: int = 6
 DAILY_IMAGE_QUOTA_SETTING_KEY = "daily_croc_image_quota_per_hour"
 DAILY_IMAGE_QUOTA_MAX = 1000
-_local_image_quota: dict[str, int] = {}  # {"YYYY-MM-DDTHH": count}
+_local_image_quota: dict[str, int] = {}
 _CONSUME_IMAGE_QUOTA_LUA = """
 local current = tonumber(redis.call('GET', KEYS[1]) or '0')
 redis.call('EXPIRE', KEYS[1], 7200, 'NX')
@@ -94,7 +87,6 @@ async def ensure_today_puzzle(now: datetime | None = None, *, difficulty: str = 
 async def ensure_today_puzzles(now: datetime | None = None) -> dict[str, repo.DailyPuzzle]:
     puzzle_date = repo.today_puzzle_date(now)
     difficulties = await active_daily_difficulties()
-    # ⚡ Bolt: parallel DB calls — one round-trip instead of N sequential awaits
     puzzles_list = await asyncio.gather(
         *[repo.create_puzzle_if_missing(puzzle_date, difficulty=d) for d in difficulties]
     )
@@ -125,8 +117,6 @@ async def _start_prepared_puzzle(user_id: int, puzzle_date: date, difficulty: st
         )
         try:
             while True:
-                # Another owner may publish hints before finishing optional art.
-                # Observe its committed text independently of local/Redis leases.
                 done, _ = await asyncio.wait({preparation}, timeout=0.05)
                 if preparation in done:
                     puzzle = await preparation
@@ -183,20 +173,14 @@ async def get_daily_hints(puzzle: repo.DailyPuzzle, *, ticket: repo.PreparationT
     return hints
 
 
-# Default negative prompt applied to all daily puzzle images.
-# Prevents text/logos leaking into the image even when the model is
-# given a detailed instruction not to include them.
 DAILY_NEGATIVE_PROMPT = (
     "text, letters, words, numbers, captions, labels, speech bubbles, "
     "watermark, signature, logo, UI, title, subtitle, handwriting, typography"
 )
 
-# -- FTA img/gpt-image-2 rate limiter ----------------------------------------
-# Constraints: max 1 concurrent request, max 10 requests per minute.
-# The limiter *waits* instead of refusing — callers don't need retry logic.
 
 _FTA_IMG_MODELS = frozenset({"fta-gpt-image-2"})
-_FTA_DAILY_MODEL_ID = "vhr/gpt_image_2"  # actual model slug for FreeTheAI API
+_FTA_DAILY_MODEL_ID = "vhr/gpt_image_2"
 
 
 class _FtaImageRateLimiter:
@@ -213,11 +197,9 @@ class _FtaImageRateLimiter:
         """Wait until both the semaphore and the per-minute window allow."""
         await self._sem.acquire()
         now = time.monotonic()
-        # Purge entries older than 60 s
         while self._window and self._window[0] <= now - 60.0:
             self._window.popleft()
         if len(self._window) >= self._max_per_min:
-            # Wait until the oldest entry exits the window
             wait_sec = 60.0 - (now - self._window[0])
             if wait_sec > 0:
                 logger.info(
@@ -225,7 +207,6 @@ class _FtaImageRateLimiter:
                     wait_sec,
                 )
                 await asyncio.sleep(wait_sec)
-            # Re-purge after sleeping
             now = time.monotonic()
             while self._window and self._window[0] <= now - 60.0:
                 self._window.popleft()
@@ -371,7 +352,6 @@ async def _check_and_consume_image_quota(*, now: datetime | None = None, limit: 
     except Exception as exc:
         raise DailyImageQuotaUnavailable("Daily image quota unavailable") from exc
 
-    # In-process fallback
     count = _local_image_quota.get(key, 0)
     if count >= limit:
         logger.info(
@@ -382,7 +362,6 @@ async def _check_and_consume_image_quota(*, now: datetime | None = None, limit: 
         )
         return False
     _local_image_quota[key] = count + 1
-    # Evict stale buckets to avoid unbounded growth.
     current_hour = _image_quota_key(now)
     for old_key in [k for k in list(_local_image_quota) if k != current_hour]:
         del _local_image_quota[old_key]
@@ -411,7 +390,6 @@ async def _generate_via_pollinations(
         negative_prompt=DAILY_NEGATIVE_PROMPT,
     )
 
-    # Alert admin if model was silently substituted (e.g. pollen exhausted → flux)
     if result.warning:
         logger.warning(
             "daily puzzle image warning date=%s difficulty=%s: %s",
@@ -506,8 +484,6 @@ async def _generate_daily_image_file_id(
     if image_model == "vhr/gpt_image_2":
         image_model = "fta-gpt-image-2"
 
-    # One automatic attempt per puzzle, not per provider/fallback. Explicit
-    # admin operations bypass this budget, not provider limits or prep locks.
     if not bypass_image_quota:
         limit = await get_daily_image_quota_limit()
         try:
@@ -538,7 +514,6 @@ async def _generate_daily_image_file_id(
             logger.warning(
                 "FTA image generation failed for %s/%s, falling back to Pollinations", puzzle_date, difficulty
             )
-            # Fallback to pollinations
             images, model_label = await _generate_via_pollinations(
                 prompt=prompt,
                 puzzle_date=puzzle_date,
@@ -621,8 +596,6 @@ async def _prepare_daily_puzzle(
     difficulty = repo.normalize_daily_difficulty(difficulty)
     local_lock = _get_local_prep_lock(puzzle_date, difficulty)
 
-    # Fast-path: if this process is already preparing the same slot, wait locally.
-    # If not, acquire the distributed Redis lock so other workers don't duplicate work.
     async with local_lock:
         from app.cache import redis_client
 
@@ -635,7 +608,6 @@ async def _prepare_daily_puzzle(
                 if not acquired:
                     if force_image:
                         raise DailyImageBusyError("Image preparation already in progress; retry shortly")
-                    # Another worker is already preparing — load whatever it wrote
                     logger.info(
                         "daily prep lock: another worker is preparing date=%s/%s, loading existing",
                         puzzle_date,
@@ -687,7 +659,6 @@ async def _prepare_daily_puzzle(
                     raise repo.DailyCrocConflict()
                 return replace(puzzle, prepared_at=datetime.now(tz=UTC), generation_token=None)
 
-            # Resolve the currently configured image model for DB tagging
             active_model = image_model or puzzle.image_model or await get_daily_image_model()
             if active_model == "vhr/gpt_image_2":
                 active_model = "fta-gpt-image-2"
@@ -729,7 +700,6 @@ async def _prepare_daily_puzzle(
                         prepared_at=None,
                     )
                 elif force_image:
-                    # Do not report the old asset as a successful regeneration.
                     raise RuntimeError("Failed to generate or upload the requested image")
 
             if not repo.is_text_ready(puzzle):
@@ -781,8 +751,6 @@ async def ensure_prepared_puzzles(
 def _queue_daily_puzzle_preparation_if_needed(puzzle: repo.DailyPuzzle) -> None:
     if repo.is_puzzle_fully_prepared(puzzle):
         return
-    # Guard: if this worker's local lock is already held for this slot, skip queuing
-    # to avoid stacking duplicate background tasks within the same process.
     local_lock = _get_local_prep_lock(puzzle.puzzle_date, puzzle.difficulty)
     if local_lock.locked():
         return

@@ -102,9 +102,6 @@ def classify_chat_complexity(message: str, *, is_forward_batch: bool = False) ->
     return ChatComplexity(False, "simple_text")
 
 
-# ── Phase 1: Regex-based heuristics ──────────────────────────────────────────
-
-# HIGH signals — any single match → "high"
 _HIGH_CODE = re.compile(
     r"```|(?:^|\s)(?:def |function |class |import |from |#include|const |let |var )",
     re.MULTILINE,
@@ -136,7 +133,6 @@ _HIGH_LONG_FORM_WRITING = re.compile(
     re.IGNORECASE,
 )
 
-# LOW signals — ALL must match → "low"
 _LOW_GREETING = re.compile(
     r"^(?:привет|hello|hi|здравствуй|добрый|хай|хей|hey|yo|good morning|good evening)[\s!.?]*$",
     re.IGNORECASE,
@@ -150,7 +146,6 @@ _LOW_TRANSLATE = re.compile(
     re.IGNORECASE,
 )
 
-# MEDIUM signals (grey zone — deterministic fallback if no HIGH/LOW match)
 _MEDIUM_EXPLAIN = re.compile(
     r"(?:объясни|почему|как работает|зачем|explain|why|how does)",
     re.IGNORECASE,
@@ -199,7 +194,6 @@ def classify_thinking_decision(
     msg_len = len(message)
     questions = _count_questions(message)
 
-    # ── HIGH signals (any match) ──
     if _HIGH_CODE.search(message):
         logger.debug("Thinking classifier: HIGH (code detected)")
         return ThinkingDecision("high", "high_code")
@@ -240,7 +234,6 @@ def classify_thinking_decision(
         logger.debug("Thinking classifier: HIGH (long-form writing / essay)")
         return ThinkingDecision("high", "high_long_form")
 
-    # ── LOW signals (ALL must match) ──
     is_short = msg_len < 60
     is_single_question = questions <= 1
     is_greeting = bool(_LOW_GREETING.match(message.strip()))
@@ -255,7 +248,6 @@ def classify_thinking_decision(
         logger.debug("Thinking classifier: LOW (short translation request)")
         return ThinkingDecision("low", "low_translation")
 
-    # Single word responses
     if msg_len < 20 and " " not in message.strip():
         logger.debug("Thinking classifier: LOW (single word)")
         return ThinkingDecision("low", "low_single_word")
@@ -274,12 +266,10 @@ def classify_thinking_decision(
         logger.debug("Thinking classifier: LOW (short simple message)")
         return ThinkingDecision("low", "low_short_simple")
 
-    # ── Phase 3: Context-aware escalation ──
     level = "medium"
     reason_code = "medium_default"
 
     if history:
-        # If recent model responses are long → conversation is complex → escalate
         recent_model_msgs = [h for h in history[-5:] if h.get("role") == "model"]
         long_responses = sum(
             1
@@ -291,7 +281,6 @@ def classify_thinking_decision(
             level = "high"
             reason_code = "history_complexity"
 
-    # Medium signals (for logging/observability)
     if level == "medium":
         if _MEDIUM_EXPLAIN.search(message):
             logger.debug("Thinking classifier: MEDIUM (explanation request)")
@@ -315,11 +304,8 @@ def classify_thinking_level(message: str, *, history: list[dict[str, Any]] | Non
     return decision.level
 
 
-# ── Model-specific auto-mode defaults ─────────────────────────────────────────
-# When the user hasn't set a thinking level, some models benefit from a fixed
-# default instead of the adaptive classifier.
 _MODEL_DEFAULT_THINKING: dict[str, str] = {
-    "3.1-flash-lite": "high",  # stable release; "high" maximises quality
+    "3.1-flash-lite": "high",
 }
 
 
@@ -345,13 +331,11 @@ def resolve_thinking_decision(
     Returns:
         Effective thinking level and a fixed reason code; explicit off reaches the adapter.
     """
-    # Explicit user override
     if user_level and user_level in ("low", "medium", "high"):
         return ThinkingDecision(user_level, "explicit_level")
     if user_level == "off":
         return ThinkingDecision("off", "explicit_off")
 
-    # Model-specific default (auto mode)
     if model:
         for pattern, default_level in _MODEL_DEFAULT_THINKING.items():
             if pattern in model:
@@ -362,7 +346,6 @@ def resolve_thinking_decision(
                 )
                 return ThinkingDecision(default_level, "model_default")
 
-    # Auto mode — classify via heuristics
     return classify_thinking_decision(message, history=history)
 
 

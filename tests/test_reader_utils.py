@@ -10,8 +10,6 @@ from app.utils.reader_utils import (
     markdown_to_reader_html,
 )
 
-# ── extract_toc ──────────────────────────────────────────────────────────────
-
 
 def test_extract_toc_returns_entries_for_two_or_more_headings():
     """TOC is built when at least 2 headings are present."""
@@ -45,9 +43,7 @@ def test_extract_toc_generates_slugs():
     """Anchors are URL-safe slugs derived from heading text."""
     md = "# Hello World!\n\n## Section — Two\n"
     toc = extract_toc(md)
-    # Should have 2 entries
     assert len(toc) == 2
-    # Anchors must be slug-safe (no spaces, no ! etc.)
     for entry in toc:
         assert " " not in entry["anchor"]
         assert "!" not in entry["anchor"]
@@ -58,11 +54,7 @@ def test_extract_toc_deduplicates_anchors():
     md = "# Item\n\n## Item\n\n### Item\n"
     toc = extract_toc(md)
     anchors = [e["anchor"] for e in toc]
-    # All anchors must be unique
     assert len(anchors) == len(set(anchors))
-
-
-# ── markdown_to_reader_html ───────────────────────────────────────────────────
 
 
 def test_markdown_to_reader_html_renders_headings_with_anchors():
@@ -137,16 +129,11 @@ def test_markdown_to_reader_html_renders_hr():
     assert "<hr>" in out
 
 
-# ── apply_bionic_reading ─────────────────────────────────────────────────────
-
-
 def test_apply_bionic_reading_boldens_word_stems():
     """Plain HTML text nodes get leading characters wrapped in <b>."""
     html_in = "<p>Hello World</p>"
     out = apply_bionic_reading(html_in)
-    # "Hello" has length 5 → k=2 → <b>He</b>llo
     assert "<b>He</b>llo" in out
-    # "World" has length 5 → k=2 → <b>Wo</b>rld
     assert "<b>Wo</b>rld" in out
 
 
@@ -154,9 +141,7 @@ def test_apply_bionic_reading_skips_code_elements():
     """Text inside <code> tags is NOT transformed."""
     html_in = "<p>Text</p><code>some_code here</code>"
     out = apply_bionic_reading(html_in)
-    # The code tag contents should be unchanged
     assert "some_code here" in out
-    # The paragraph should be transformed
     assert "<b>Te</b>xt" in out
 
 
@@ -164,7 +149,6 @@ def test_apply_bionic_reading_skips_pre_elements():
     """Text inside <pre><code> blocks is NOT transformed."""
     html_in = "<pre><code>def foo(): pass</code></pre>"
     out = apply_bionic_reading(html_in)
-    # Content unchanged
     assert "def foo(): pass" in out
     assert "<b>" not in out
 
@@ -173,23 +157,15 @@ def test_apply_bionic_reading_skips_existing_bold():
     """Text already inside <b> tags is not double-bolded."""
     html_in = "<p><b>Bold</b> text</p>"
     out = apply_bionic_reading(html_in)
-    # The word inside <b> is skipped; surrounding text is transformed
     assert "<b>te</b>xt" in out
 
 
 def test_apply_bionic_reading_word_length_boundaries():
     """Bolding fraction scales correctly with word length."""
-    # 1-char: 1 char bold
     assert "<b>I</b>" in apply_bionic_reading("<p>I</p>")
-    # 4-char: 2 chars bold
     assert "<b>Te</b>st" in apply_bionic_reading("<p>Test</p>")
-    # 7-char: 3 chars bold
     assert "<b>Tab</b>lets" in apply_bionic_reading("<p>Tablets</p>")
-    # 10-char: 4 chars bold
     assert "<b>Desc</b>ription" in apply_bionic_reading("<p>Description</p>")
-
-
-# ── extract_text_from_telegraph_html ─────────────────────────────────────────
 
 
 def test_extract_text_strips_html_tags():

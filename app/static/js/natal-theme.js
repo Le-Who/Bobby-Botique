@@ -4,7 +4,6 @@
   const root = document.documentElement;
   const media = window.matchMedia('(prefers-color-scheme: dark)');
   const telegram = window.Telegram?.WebApp;
-  // The SDK also exists in ordinary browser tabs, with a default light scheme.
   const isTelegram = () => Boolean(telegram && (
     telegram.initData || Object.keys(telegram.themeParams || {}).length
   ));

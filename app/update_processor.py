@@ -79,9 +79,6 @@ class UserScopedUpdateProcessor(BaseUpdateProcessor):
                 transport_origin="webhook" if origin else "polling_or_unlinked",
             )
             try:
-                # Inline queries only construct preview cards. They must not
-                # queue behind a long callback for the same user: Telegram
-                # expires their answerInlineQuery IDs after a short window.
                 if user_id is None or update_kind == "inline_query":
                     await super().process_update(update, coroutine)
                 else:

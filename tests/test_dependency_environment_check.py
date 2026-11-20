@@ -270,7 +270,6 @@ def test_environment_check_rejects_conflicting_versions_selected_by_different_ed
 
 
 def test_environment_checker_cli_selects_dev_graph_and_returns_failing_exit_code(tmp_path) -> None:
-    # No application imports or third-party packages are available in this child.
     lock_path = tmp_path / "uv.lock"
     lock_path.write_text(
         '[[package]]\nname = "sample-app"\nversion = "0"\nsource = { virtual = "." }\n'

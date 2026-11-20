@@ -81,7 +81,6 @@ async def test_overlapping_owners_join_one_uninterrupted_cleanup(
         child = asyncio.create_task(child_write())
         autosave.register_memory_task(child, user_id=11)
 
-    # Only per-user owners promise to preserve another user's work.
     if second_owner == "user":
         unrelated = asyncio.create_task(asyncio.Event().wait())
         autosave.register_memory_task(unrelated, user_id=12)

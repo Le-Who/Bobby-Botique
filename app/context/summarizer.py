@@ -37,9 +37,6 @@ register_controlled_text("summary.chunk", SUMMARIZATION_CHUNK.text, "Сжати�
 register_controlled_text("summary.first", SUMMARIZATION_REFINE_FIRST, "Сжатие контекста: первый проход")
 register_controlled_text("summary.refine", SUMMARIZATION_REFINE_SUBSEQUENT, "Сжатие контекста: уточнение")
 
-# Keep strong references until every user-scoped task reaches a terminal state.
-# A set (rather than a single task) is intentional: a superseded task remains
-# tracked while cancellation propagates through the provider client.
 _summarization_tasks_by_user: dict[int, set[asyncio.Task[None]]] = {}
 
 
@@ -72,8 +69,6 @@ def schedule_llm_summarization(
     try:
         loop = asyncio.get_running_loop()
 
-        # A newer summary makes every older in-flight refinement stale.  Keep
-        # cancelled tasks in the registry until their cancellation completes.
         user_tasks = _summarization_tasks_by_user.setdefault(user_id, set())
         for previous in tuple(user_tasks):
             if not previous.done():
@@ -148,13 +143,9 @@ async def _run_llm_summarization_in_scope(
     3. Call callback with final summary
     """
     try:
-        # Build text representation of dropped messages
         try:
             chunks = split_into_chunks(dropped_messages)
         except SummarizationInputTooLarge:
-            # The synchronous local summary is already persisted by the
-            # assembler.  Do not replace it with a partial LLM summary or send
-            # an oversized request to the provider.
             logger.warning(
                 "Skipping external summarization: input exceeds %d chunks of %d tokens",
                 MAX_CHUNKS,
@@ -169,19 +160,16 @@ async def _run_llm_summarization_in_scope(
 
         logger.info("Starting refine-chain summarization: %d chunks", len(chunks))
 
-        # Calculate per-chunk summary token target
         max_tokens_per_chunk = max(500, SUMMARY_BUDGET // max(len(chunks), 1))
 
         summary = existing_summary or ""
 
         for i, chunk_text in enumerate(chunks):
-            # Build refine instruction
             if i == 0 and not summary:
                 refine_instruction = get_prompt_text("summary.first")
             else:
                 refine_instruction = render_prompt_text(get_prompt_text("summary.refine"), previous_summary=summary)
 
-            # Build the prompt from template
             prompt_text = render_prompt_text(
                 get_prompt_text("summary.chunk"),
                 refine_instruction=refine_instruction,
@@ -189,7 +177,6 @@ async def _run_llm_summarization_in_scope(
                 conversation_chunk=chunk_text,
             )
 
-            # Call LLM
             from app.repos.memory_consent import private_data_lease
 
             async with private_data_lease(
@@ -215,7 +202,6 @@ async def _run_llm_summarization_in_scope(
                 estimate_tokens_cyrillic(summary) if summary else 0,
             )
 
-        # Cap to budget
         if summary and estimate_tokens_cyrillic(summary) > SUMMARY_BUDGET:
             summary = truncate_to_token_budget(summary, SUMMARY_BUDGET)
 
@@ -266,7 +252,6 @@ def split_into_chunks(messages: list[dict[str, Any]]) -> list[str]:
                 current_chunk_parts = []
                 current_tokens = 0
 
-    # Don't forget the last chunk
     if current_chunk_parts:
         chunks.append("\n".join(current_chunk_parts))
     if len(chunks) > MAX_CHUNKS:

@@ -40,7 +40,6 @@ def client():
 
 
 async def test_save_hydrate_owner_delete_http404_and_resave_tombstone(db_conn):
-    # Losing the owner predicate or clearing deleted_at on UPSERT would violate privacy.
     await db_conn.execute("INSERT INTO users(user_id) VALUES(82001)")
     original = report()
     await storage.save_report(original)

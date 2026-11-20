@@ -21,12 +21,9 @@ async def _await_owned[T](child: asyncio.Task[T]) -> T:
         try:
             await asyncio.shield(child)
         except asyncio.CancelledError as error:
-            # A cancelled child also raises through shield. Only owner cancellation
-            # is deferred; a completed self-cancelled child must leave this loop.
             if cancellation is None and (not child.done() or (owner is not None and owner.cancelling())):
                 cancellation = error
         except BaseException:
-            # Retrieve the child's result below, including its diagnostic cause.
             break
 
     try:
@@ -60,7 +57,6 @@ class WebhookAdmissionGate:
     async def admit[T](self, operation: Callable[[], Awaitable[T]]) -> T:
         if self._closed:
             raise AdmissionClosed
-        # Waiting requests remain cancellable and have no retained admission child.
         async with self._lock:
             if self._closed:
                 raise AdmissionClosed
@@ -72,7 +68,6 @@ class WebhookAdmissionGate:
             return await _await_owned(child)
 
     async def shutdown(self, stop_callback: Callable[[], Awaitable[None]]) -> None:
-        # Closure and shutdown registration happen synchronously before any await.
         self.close()
         if self._shutdown_task is None:
 

@@ -16,7 +16,6 @@ from app.providers import get_provider_router
 async def bench_routing():
     print("Setting up benchmark...")
 
-    # Mock update
     user = User(id=123, first_name="Test", is_bot=False)
     chat = Chat(id=456, type="private")
     message = Message(
@@ -30,11 +29,8 @@ async def bench_routing():
     context = MagicMock()
     context.user_data = {}
 
-    # We want to measure how fast `messages.handle_request` sets up and spawns the task!
-    # Because that is the blocking part of the Telegram event loop.
     times = []
 
-    # Mock things that hit the DB or external APIs
     with (
         patch("app.handlers.messages.bind_request_span"),
         patch("app.handlers.messages.set_request_id"),
@@ -54,7 +50,6 @@ async def bench_routing():
         cs.system_prompt = None
         mock_state.return_value = cs
 
-        # Warmup
         await handle_request(update, context)
 
         for _ in range(100):
@@ -69,7 +64,6 @@ async def bench_routing():
     print(f"Min latency:  {min(times) * 1000:.2f} ms")
     print(f"Max latency:  {max(times) * 1000:.2f} ms")
 
-    # Also benchmark ProviderRouter instantiation and key resolution
     provider_times = []
 
     for _ in range(100):

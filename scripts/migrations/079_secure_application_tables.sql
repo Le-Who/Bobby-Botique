@@ -1,7 +1,3 @@
--- These tables are used by the bot's direct PostgreSQL connection. They are
--- not part of a Supabase Data API, whose anon/authenticated roles must not be
--- able to read or modify their contents. Keep owner/service-role RLS bypass
--- unchanged; the application currently uses one migration/runtime DSN.
 DO $migration$
 DECLARE
     tenant_tables TEXT[] := ARRAY[
@@ -46,7 +42,6 @@ BEGIN
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', target_table);
         EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE public.%I FROM PUBLIC', target_table);
 
-        -- Plain PostgreSQL installations need not have Supabase's API roles.
         FOREACH target_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
             IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = target_role) THEN
                 EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE public.%I FROM %I', target_table, target_role);
@@ -71,8 +66,6 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- The roles catalog intentionally permits reads to database users through
-    -- RLS, but its prompts must not be exposed through Supabase's API roles.
     REVOKE ALL PRIVILEGES ON TABLE public.roles FROM PUBLIC;
     FOREACH target_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = target_role) THEN

@@ -40,8 +40,6 @@ def routed(monkeypatch):
                 await asyncio.Event().wait()
             if state.failure:
                 raise state.failure
-            # Gemini used to supply the schema out of band. An unstructured
-            # OpenAI request can validly complete with prose instead of JSON.
             text = state.text if not state.requires_schema or request.response_schema is not None else "Есть сходство."
             yield TextDelta(text)
             yield StreamCompleted(

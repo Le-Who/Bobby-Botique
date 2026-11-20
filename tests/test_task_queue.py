@@ -64,7 +64,6 @@ async def test_unknown_kind_is_permanent_rejection(task_queue):
 
 @pytest.mark.asyncio
 async def test_handle_document_processing(task_queue):
-    # Mock app.document_processor.process_uploaded_document
     with patch("app.document_processor.process_uploaded_document", new_callable=AsyncMock) as mock_process:
         mock_process.return_value = {
             "pages": 5,
@@ -94,9 +93,8 @@ async def test_handle_document_processing_error(task_queue):
 
 @pytest.mark.asyncio
 async def test_handle_cleanup_metrics(task_queue):
-    # Mock app.database.db_query
     with patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
         result = await task_queue._handle_cleanup_metrics()
 
         assert result.outcome is JobOutcome.SUCCEEDED
-        assert mock_db_query.call_count == 2  # One for metrics, one for error_logs
+        assert mock_db_query.call_count == 2

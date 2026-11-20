@@ -3,13 +3,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Isolate in dedicated xdist worker — this file mutates sys.modules in setup_module.
 pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
 
 _MOCK_KEYS = ["asyncpg", "app.database"]
 _original_modules: dict = {}
 
-# Populated by setup_module after mocks are installed. All tests use this reference.
 generate_auto_title = None
 streak_badge = None
 
@@ -22,8 +20,6 @@ def setup_module(module):
             _original_modules[k] = sys.modules[k]
         sys.modules[k] = MagicMock()
 
-    # Force-reimport analytics with mocked deps so it resolves cleanly.
-    # Remove any cached import from collection time first.
     sys.modules.pop("app.repos.analytics", None)
     from app.repos.analytics import generate_auto_title as _fn1
     from app.repos.analytics import streak_badge as _fn2
@@ -103,15 +99,12 @@ def test_generate_auto_title_truncates_long_string():
 
 
 def test_generate_auto_title_truncates_at_sentence_boundary_dot():
-    # sentence boundary at index 14
     messages = [{"role": "user", "content": "This is a test. Here is more text."}]
     title = generate_auto_title(messages, max_len=60)
     assert title == "This is a test."
 
 
 def test_generate_auto_title_truncates_at_sentence_boundary_question():
-    # . is earlier in the list than ?, so if a . occurs, it triggers first
-    # let's only use ? to trigger the ? boundary
     messages = [{"role": "user", "content": "What is your name? Tell me more"}]
     title = generate_auto_title(messages, max_len=60)
     assert title == "What is your name?"
@@ -130,14 +123,12 @@ def test_generate_auto_title_truncates_at_sentence_boundary_newline():
 
 
 def test_generate_auto_title_ignores_early_sentence_boundary():
-    # Boundary at index 3 (< 5) should be ignored
     messages = [{"role": "user", "content": "Hi. My name is Jules."}]
     title = generate_auto_title(messages, max_len=60)
     assert title == "Hi. My name is Jules."
 
 
 def test_generate_auto_title_sentence_boundary_after_max_len():
-    # Boundary happens after max_len, so it should just truncate at max_len
     messages = [
         {
             "role": "user",

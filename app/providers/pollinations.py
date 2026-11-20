@@ -58,11 +58,6 @@ async def fetch_models(kind: str) -> list[dict]:
     return models
 
 
-# ---------------------------------------------------------------------------
-# Human-readable labels for Pollinations models (used in Telegram UI)
-# New models that arrive via env are auto-labeled via _make_label().
-# ---------------------------------------------------------------------------
-
 _KNOWN_LABELS: dict[str, str] = {
     "flux": "✨ Flux (Универсальная)",
     "zimage": "⚡ Z-Image (Быстрая)",
@@ -86,14 +81,8 @@ def get_model_label(model_id: str) -> str:
     """Return a human-readable label for a model id, auto-generating for unknowns."""
     if model_id in _KNOWN_LABELS:
         return _KNOWN_LABELS[model_id]
-    # Auto-generate: capitalize words, strip hyphens, add generic icon
     pretty = " ".join(w.capitalize() for w in model_id.replace("-", " ").split())
     return f"🎨 {pretty}"
-
-
-# ---------------------------------------------------------------------------
-# Result dataclass  (mirrors ImageGenResult from imagen_provider for compatibility)
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -101,23 +90,14 @@ class PollinationsResult:
     """Result of a single Pollinations image generation call."""
 
     success: bool
-    images: list[bytes] = field(default_factory=list)  # raw JPEG/PNG bytes
+    images: list[bytes] = field(default_factory=list)
     error_message: str = ""
     model_used: str = ""
-    warning: str = ""  # non-fatal info (e.g., "used GET fallback")
-
-
-# ---------------------------------------------------------------------------
-# Provider
-# ---------------------------------------------------------------------------
+    warning: str = ""
 
 
 class PollinationsProvider:
     """Async authenticated images and transcription; no anonymous fallback."""
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     async def generate(
         self,
@@ -175,8 +155,6 @@ class PollinationsProvider:
 
         if not await get_provider_key("pollinations"):
             return PollinationsResult(success=False, error_message="unauthorized", model_used=model)
-        # Canonical publisher/model IDs and saved aliases are accepted by the API.
-        # Do not replace an explicit choice with a different (potentially paid) model.
         return await self._try_post(
             prompt=prompt,
             model=model,
@@ -231,7 +209,6 @@ class PollinationsProvider:
         )
         headers = {"Authorization": f"Bearer {api_key}"}
 
-        # httpx expects files in format: {'file': ('filename', b'content', 'mime_type')}
         files: dict[str, tuple[str, bytes, str]] = {"file": ("audio.ogg", audio_bytes, "audio/ogg")}
         data: dict[str, str] = {"model": model, "response_format": "text"}
 
@@ -286,10 +263,6 @@ class PollinationsProvider:
             logger.error("Pollinations whisper request failed (error_type=%s)", type(exc).__name__)
             attempt.fail(exc, reason_code="request_failed")
             return None
-
-    # ------------------------------------------------------------------
-    # Private: POST path
-    # ------------------------------------------------------------------
 
     async def _try_post(
         self,
@@ -383,10 +356,6 @@ class PollinationsProvider:
                 model_used=model,
             )
 
-    # ------------------------------------------------------------------
-    # Private: GET fallback path
-    # ------------------------------------------------------------------
-
     async def _try_get(
         self,
         prompt: str,
@@ -439,7 +408,6 @@ class PollinationsProvider:
                     max_bytes=MAX_IMAGE_DOWNLOAD_BYTES,
                     timeout=timeout,
                     client=client,
-                    # Never forward generation credentials to a redirect target.
                     max_redirects=0,
                 )
 
@@ -461,11 +429,6 @@ class PollinationsProvider:
                 error_message=f"get_error:{exc.code}",
                 model_used=model,
             )
-
-
-# ---------------------------------------------------------------------------
-# Helper: extract image bytes from POST response body
-# ---------------------------------------------------------------------------
 
 
 async def _extract_b64_or_url_bytes(data: dict, timeout: float = 30.0) -> list[bytes]:
@@ -514,10 +477,6 @@ async def _extract_b64_or_url_bytes(data: dict, timeout: float = 30.0) -> list[b
 
     return result
 
-
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
 
 _pollinations_provider: PollinationsProvider | None = None
 

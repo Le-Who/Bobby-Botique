@@ -288,13 +288,11 @@ class TestBaseAIProvider:
 
         provider = TestProvider("key")
 
-        # Transient errors
         assert provider._is_transient_error("503 Service Unavailable") is True
         assert provider._is_transient_error("Server overloaded") is True
         assert provider._is_transient_error("Rate limit exceeded") is True
         assert provider._is_transient_error("Connection timeout") is True
 
-        # Non-transient errors
         assert provider._is_transient_error("Invalid API key") is False
         assert provider._is_transient_error("Quota exceeded") is False
 
@@ -309,7 +307,6 @@ class TestProviders:
 
         mock_response = MagicMock()
         mock_response.text = "Hello!"
-        # New: token count comes from usage_metadata on the response
         mock_usage = MagicMock()
         mock_usage.total_token_count = 15
         mock_response.usage_metadata = mock_usage
@@ -351,7 +348,7 @@ class TestProviders:
         _gemini_clients_cache.clear()
 
         mock_response = MagicMock()
-        mock_response.text = None  # Empty response triggers error
+        mock_response.text = None
 
         with (
             patch("app.providers.gemini.genai.Client") as MockClient,
@@ -386,9 +383,6 @@ class TestProviders:
 
         _gemini_clients_cache.clear()
 
-        # We will mock _execute_request to raise APIError for testing the raise logic,
-        # but wait, the raise logic is INSIDE _execute_request!
-        # So we mock the underlying genai Client to raise APIError("504 DEADLINE_EXCEEDED").
         with (
             patch("app.providers.gemini.genai.Client") as MockClient,
             patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
@@ -406,20 +400,15 @@ class TestProviders:
                     return self.msg
 
             mock_aio = MagicMock()
-            # Raise the error
             mock_aio.generate_content = AsyncMock(side_effect=FakeAPIError("504 DEADLINE_EXCEEDED"))
             MockClient.return_value.aio.models = mock_aio
 
-            # BaseAIProvider wraps _execute_request in run_with_resilience.
-            # If it is retryable, it will be called `max_retries` times (if max_retries=2, called 2 times).
-            # Let's override the resilience policy to speed it up.
             response = await wrapper.get_response(
                 history=[{"role": "user", "parts": ["hi"]}],
                 model_name="gemini-3.1-flash-lite",
                 max_retries=2,
             )
 
-            # _execute_request should have been called 2 times (1 initial + 1 retry)
             assert mock_aio.generate_content.call_count == 2
             assert response.success is False
 

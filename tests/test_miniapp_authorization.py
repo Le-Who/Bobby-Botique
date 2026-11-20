@@ -90,8 +90,6 @@ async def test_authorized_signed_user_reaches_private_endpoint():
 async def test_natal_submission_also_checks_bot_authorization():
     from app.web_miniapp import api_natal_submit
 
-    # Bypass only Telegram initData validation; the next decorator must still
-    # reject a signed identity whose bot access was revoked.
     authorization_layer = api_natal_submit.__wrapped__
     async with quart_app.test_request_context("/webapp/api/natal/submit", method="POST"):
         with patch("app.repos.users.is_authorized", new_callable=AsyncMock, return_value=False):

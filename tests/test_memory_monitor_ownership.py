@@ -36,8 +36,6 @@ async def test_main_starts_and_stops_the_shared_monitor(monkeypatch):
     monkeypatch.setattr(module, "memory_manager", shared)
     monkeypatch.setattr(module, "MemoryManager", constructor)
     monkeypatch.setattr(bot, "install_asyncio_exception_handler", lambda: None)
-    # Exercise the monitor's successful startup/shutdown path with synthetic
-    # infrastructure; failed database initialization now correctly stops main.
     monkeypatch.setattr(bot.database, "init_db", AsyncMock())
     monkeypatch.setattr("app.runtime_settings.lifecycle.refresh_runtime_settings", AsyncMock())
     monkeypatch.setattr("app.config.config_manager.add_watcher", Mock())
@@ -49,7 +47,6 @@ async def test_main_starts_and_stops_the_shared_monitor(monkeypatch):
     monkeypatch.setattr(bot, "initialize_group_chats", AsyncMock())
     monkeypatch.setattr(bot, "run_bot_and_server", AsyncMock())
     monkeypatch.setattr("app.utils.image_utils.shutdown_image_pool", lambda: None)
-    # Keep this lifecycle test independent of host signal registration.
     loop = asyncio.get_running_loop()
     monkeypatch.setattr(loop, "add_signal_handler", lambda *args: None)
 

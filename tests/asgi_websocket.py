@@ -36,7 +36,6 @@ async def websocket_close_event(application: Any, url: str, *, timeout: float = 
     try:
         async with asyncio.timeout(timeout):
             await asyncio.wait({task, closed}, return_when=asyncio.FIRST_COMPLETED)
-            # Awaiting the app preserves failures and finishes disconnect cleanup.
             await task
             if not closed.done():
                 raise AssertionError("Application finished without a websocket.close event")

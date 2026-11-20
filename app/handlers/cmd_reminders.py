@@ -34,7 +34,6 @@ from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
-# Time parsing patterns: "30m", "2h", "1d", "90min", "3 hours"
 _TIME_PATTERN = re.compile(
     r"^(\d+)\s*"
     r"(m|min|mins|minutes|мин|минут[аыу]?"
@@ -69,12 +68,8 @@ _UNIT_TO_SECONDS = {
     "дней": 86400,
 }
 
-# ── Intent classification ────────────────────────────────────────────────────
 
-# Heuristic keyword sets for fast local classification (no LLM call needed).
-# Designed to be accurate and comprehensive per user feedback.
 _AI_KEYWORDS_RU = {
-    # Research / search
     "найди",
     "найти",
     "поищи",
@@ -86,7 +81,6 @@ _AI_KEYWORDS_RU = {
     "проверить",
     "узнай",
     "узнать",
-    # Analysis
     "проанализируй",
     "анализ",
     "сравни",
@@ -99,7 +93,6 @@ _AI_KEYWORDS_RU = {
     "изучить",
     "разбери",
     "разобрать",
-    # Generation
     "напиши",
     "написать",
     "составь",
@@ -116,7 +109,6 @@ _AI_KEYWORDS_RU = {
     "подготовить",
     "сделай",
     "сделать",
-    # Summarization
     "суммаризируй",
     "резюмируй",
     "подведи итоги",
@@ -124,7 +116,6 @@ _AI_KEYWORDS_RU = {
     "перескажи",
     "пересказать",
     "выдели главное",
-    # Actuality / freshness
     "актуальн",
     "свежи",
     "последни",
@@ -139,7 +130,6 @@ _AI_KEYWORDS_RU = {
 }
 
 _AI_KEYWORDS_EN = {
-    # Research / search
     "find",
     "search",
     "look up",
@@ -150,7 +140,6 @@ _AI_KEYWORDS_EN = {
     "investigate",
     "explore",
     "discover",
-    # Analysis
     "analyze",
     "analyse",
     "compare",
@@ -159,7 +148,6 @@ _AI_KEYWORDS_EN = {
     "review",
     "study",
     "examine",
-    # Generation
     "write",
     "compose",
     "generate",
@@ -169,7 +157,6 @@ _AI_KEYWORDS_EN = {
     "summarize",
     "summarise",
     "outline",
-    # Actuality
     "latest",
     "current",
     "today",
@@ -181,7 +168,6 @@ _AI_KEYWORDS_EN = {
     "update",
 }
 
-# Simple notification patterns that should NOT trigger AI
 _NOTIFY_PATTERNS_RU = {
     "выключи",
     "выключить",
@@ -223,7 +209,6 @@ _NOTIFY_PATTERNS_EN = {
     "wake up",
 }
 
-# Deep-research signals: if ANY of these appear, use "research" mode
 _RESEARCH_SIGNALS = {
     "глубок",
     "подробн",
@@ -261,27 +246,19 @@ def _classify_reminder_intent(prompt: str) -> dict:
     lower = prompt.lower().strip()
     words = set(re.findall(r"[\w]+", lower))
 
-    # ── Step 1: Explicit notification patterns (high confidence) ────────
-    # RU patterns use substring matching (handles morphological suffixes)
     for pattern in _NOTIFY_PATTERNS_RU:
         if pattern in lower:
             return {"is_ai": False, "mode": "notify"}
-    # EN patterns use word-boundary matching to avoid false positives
-    # (e.g. "eat" matching inside "weather")
     for pattern in _NOTIFY_PATTERNS_EN:
         if " " in pattern:
-            # Multi-word pattern: full substring check is safe
             if pattern in lower:
                 return {"is_ai": False, "mode": "notify"}
         else:
-            # Single-word pattern: check against word set
             if pattern in words:
                 return {"is_ai": False, "mode": "notify"}
 
-    # ── Step 2: Check for AI-action keywords ───────────────────────────
     has_ai_signal = False
 
-    # Check full prompt for substring matches (handles prefixes like "актуальн*")
     for keyword in _AI_KEYWORDS_RU:
         if keyword in lower:
             has_ai_signal = True
@@ -296,14 +273,12 @@ def _classify_reminder_intent(prompt: str) -> dict:
     if not has_ai_signal:
         return {"is_ai": False, "mode": "notify"}
 
-    # ── Step 3: Determine AI mode (research vs qna) ────────────────────
     is_research = False
     for signal in _RESEARCH_SIGNALS:
         if signal in lower:
             is_research = True
             break
 
-    # Long prompts (>80 chars) with AI signals are more likely research tasks
     if len(prompt) > 80 and has_ai_signal:
         is_research = True
 
@@ -322,7 +297,7 @@ def _parse_reminder_args(text: str) -> tuple[timedelta | None, str | None]:
     prompt = match.group(3).strip()
 
     seconds = _UNIT_TO_SECONDS.get(unit)
-    if not seconds or amount <= 0 or amount > 365 * 24:  # max 1 year
+    if not seconds or amount <= 0 or amount > 365 * 24:
         return None, None
 
     return timedelta(seconds=amount * seconds), prompt
@@ -334,7 +309,6 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Set a reminder: /remind 30m Проверить результаты."""
     user_id = update.effective_user.id
 
-    # No args → show usage + pending reminders
     if not context.args:
         pending = await get_user_reminders(user_id, limit=5)
         text_parts = [
@@ -355,7 +329,6 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 trigger = r["trigger_at"]
                 time_str = trigger.strftime("%d.%m %H:%M") if hasattr(trigger, "strftime") else str(trigger)[:16]
                 prompt_preview = r["prompt"][:40] + ("…" if len(r["prompt"]) > 40 else "")
-                # Show AI badge if this is an AI reminder
                 ctx = r.get("context_history")
                 ai_badge = ""
                 if isinstance(ctx, dict) and ctx.get("is_ai"):
@@ -381,7 +354,6 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
         return
 
-    # Parse time + prompt
     raw_text = " ".join(context.args)
     delta, prompt = _parse_reminder_args(raw_text)
 
@@ -394,7 +366,6 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # ── Classify intent (local heuristic, zero latency) ──────────────
     intent = _classify_reminder_intent(prompt)
     context_history = intent if intent["is_ai"] else None
 
@@ -405,7 +376,6 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("❌ Не удалось сохранить напоминание. Попробуйте позже.")
         return
 
-    # Friendly time display
     if delta.total_seconds() < 3600:
         time_label = f"{int(delta.total_seconds() / 60)} мин"
     elif delta.total_seconds() < 86400:
@@ -415,7 +385,6 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         days = delta.total_seconds() / 86400
         time_label = f"{days:.0f} д" if days == int(days) else f"{days:.1f} д"
 
-    # Build confirmation with AI badge
     if intent["is_ai"]:
         mode_label = "🔬 глубокий анализ" if intent["mode"] == "research" else "🔎 поиск"
         confirm_text = (
@@ -430,11 +399,8 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 
-# Maximum number of concurrent AI reminder executions to prevent API key exhaustion
 _AI_REMINDER_SEMAPHORE = asyncio.Semaphore(3)
-# Maximum time for an AI reminder execution before timeout (seconds)
-_AI_REMINDER_TIMEOUT = 300  # 5 minutes
-# Track active AI reminder tasks to prevent GC collection (RUF006)
+_AI_REMINDER_TIMEOUT = 300
 _background_ai_tasks: set[asyncio.Task] = set()
 
 
@@ -455,7 +421,6 @@ async def _execute_ai_reminder(
             from app.repos.chats import get_user_chat
 
             chat_state = await get_user_chat(user_id)
-            # Loading state must not adopt a new account generation for old work.
             if chat_state.memory_epoch != claim["privacy_epoch"]:
                 return
             await owner.checkpoint()
@@ -484,8 +449,6 @@ async def _execute_ai_reminder(
                     user_id=user_id,
                     delivery_observer=owner.observe_response,
                 )
-            # Timeout/cancellation after a placeholder is a terminal uncertain
-            # execution. Replaying it would duplicate a possibly visible answer.
             await asyncio.wait_for(work, timeout=_AI_REMINDER_TIMEOUT)
 
     await run_scheduled_delivery(claim, bot, execute, ai_response=True)
@@ -551,14 +514,10 @@ async def check_and_deliver_reminders(context: ContextTypes.DEFAULT_TYPE) -> Non
             except Exception as e:
                 logger.warning("Failed to deliver reminder %d: %s", reminder["id"], e)
 
-        # ⚡ Bolt Optimization: Process all pending reminders concurrently
         await asyncio.gather(*[_process_single_reminder(r) for r in pending])
 
     except Exception as e:
         logger.error("Reminder poll loop error: %s", e)
-
-
-# ── Inline cancel callback ───────────────────────────────────────────────────
 
 
 async def reminder_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -579,7 +538,6 @@ async def reminder_cancel_callback(update: Update, context: ContextTypes.DEFAULT
     success = await delete_reminder(reminder_id, user_id)
 
     if success:
-        # Remove the button that was pressed from the keyboard
         from telegram import Message
 
         if isinstance(query.message, Message) and query.message.reply_markup:

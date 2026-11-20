@@ -14,8 +14,6 @@ from app.prompt_registry import get_prompt_text, register_controlled_text, rende
 
 logger = logging.getLogger(__name__)
 
-# Direct recitation is distinct from generating an answer in voice. Parse only
-# authored command boundaries; forwarded text and the transcript remain data.
 _POLITE = r"(?:пожалуйста[,\s]+|please[,\s]+)?"
 _RECITE = r"(?:озвуч(?:ь|ьте|ить)|прочита(?:й|йте|ть)\s+вслух|зачита(?:й|йте|ть)|read\s+aloud|voice\s+it)"
 _RECITE_START = re.compile(rf"^\s*{_POLITE}(?:(?:можешь|можете)\s+{_POLITE})?{_RECITE}\b", re.IGNORECASE)
@@ -90,8 +88,6 @@ def resolve_speech_request(
         if start:
             remainder = text[start.end() :].strip().lstrip(", ")
             remainder = re.sub(r"^(?:пожалуйста|please)\b[,\s]*", "", remainder, flags=re.IGNORECASE)
-            # Delimiters explicitly mark data, even when it consists of a
-            # reference word or an instruction. Never normalize that payload.
             labelled = re.match(rf"^(?:{_REFERENCE})\s*:\s*", remainder, re.IGNORECASE)
             if remainder.startswith(":") or labelled:
                 body = remainder[labelled.end() :] if labelled else remainder[1:].strip()
@@ -105,7 +101,6 @@ def resolve_speech_request(
             if not remainder or _REFERENCE_FULL.fullmatch(reference):
                 commands.append(reference)
                 continue
-            # "Озвучь ответ про X" still requires producing that answer.
             if re.match(r"^(?:ответ|рассказ|историю|сказку|шутку|колыбельную)\b", reference, re.IGNORECASE):
                 commands.append("generation")
                 continue
@@ -118,7 +113,6 @@ def resolve_speech_request(
             ):
                 commands.append("unresolved")
                 continue
-            # An explicit delimiter/quote or text body supplies the transcript.
             body = _TEXT_LABEL.sub("", remainder).lstrip(" :\n")
             bodies.append(_unquote_transcript(body))
             commands.append("inline")
@@ -177,8 +171,6 @@ _EXPLICIT_TRIGGER_PATTERNS = [
     r"\breply\s+by\s+voice\b",
 ]
 _EXPLICIT_TRIGGER_RE = re.compile("|".join(_EXPLICIT_TRIGGER_PATTERNS), re.IGNORECASE)
-# Match paired single quotes only at word boundaries; ordinary Ukrainian
-# apostrophes remain part of the authored request.
 _QUOTED_VOICE_TEXT_RE = re.compile(
     r'«[^»]*»|"[^"\n]*"|“[^”]*”|`[^`]*`|(?:^|\n)\s*>[^\n]*'
     r"|(?<!\w)'[^\n]*?'(?!\w)|(?<!\w)‘[^\n]*?’(?!\w)"

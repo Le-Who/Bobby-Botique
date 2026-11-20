@@ -1,4 +1,3 @@
--- Per-user daily metrics table
 CREATE TABLE IF NOT EXISTS user_metrics (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -9,5 +8,4 @@ CREATE TABLE IF NOT EXISTS user_metrics (
     UNIQUE(user_id, metric_date)
 );
 
--- Index for fast user lookups
 CREATE INDEX IF NOT EXISTS idx_user_metrics_user_date ON user_metrics (user_id, metric_date);

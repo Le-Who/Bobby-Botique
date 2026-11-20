@@ -84,7 +84,6 @@ def selected_state(user_id, document_id):
 async def test_retried_old_snapshot_cannot_overwrite_the_latest_state_after_eviction(driver):
     driver.retry_first = True
     original = selected_state(101, 41)
-    # The request lock is independent: persistence must not wait on a handler.
     async with original.lock:
         first = driver.persist(original)
         await asyncio.wait_for(driver.first_started.wait(), 1)

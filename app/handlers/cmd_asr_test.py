@@ -1,4 +1,3 @@
-# app/handlers/cmd_asr_test.py
 import logging
 
 from telegram import Update
@@ -31,11 +30,9 @@ async def asr_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     status_msg = await message.reply_text(f"⏳ Транскрибирую через `{model_name}`...", parse_mode="Markdown")
 
     try:
-        # Download voice bytes
         voice_file = await voice.get_file()
         file_bytes = await get_file_bytes(context.bot, voice_file)
 
-        # Transcribe using specific model
         transcript, intent, _draw_prompt = await transcribe_voice(
             file_bytes,
             mime_type=voice.mime_type or "audio/ogg",

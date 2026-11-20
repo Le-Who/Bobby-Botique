@@ -1,4 +1,3 @@
--- Revision fencing adds no gameplay changes and preserves every existing result.
 ALTER TABLE public.daily_2048_puzzles
     ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
 

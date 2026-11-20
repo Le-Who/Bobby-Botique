@@ -27,7 +27,6 @@ from app.database import db_manager, db_query, set_user_context
 
 logger = logging.getLogger(__name__)
 
-# Sentinel to distinguish "not provided" from None (which explicitly disables a slot)
 _MISSING = object()
 
 
@@ -172,7 +171,6 @@ async def upsert_horoscope_subscription(
         columns_sql = ", ".join(insert_columns)
         values_sql = ", ".join(f"${index}" for index in range(1, len(params) + 1))
         if not update_sets:
-            # Only updated_at — just ensure row exists
             await db_query(
                 f"""
                 INSERT INTO horoscope_subscriptions ({columns_sql})
@@ -219,7 +217,7 @@ async def get_horoscope_subscription(user_id: int) -> dict[str, Any] | None:
 async def get_due_horoscope_subscriptions(
     utc_hour: int,
     utc_minute: int,
-    kind: str,  # 'today' or 'tomorrow'
+    kind: str,
 ) -> list[dict[str, Any]]:
     """Return subscriptions due now or earlier on the user's current local day.
 

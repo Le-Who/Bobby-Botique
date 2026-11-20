@@ -1,6 +1,3 @@
--- 043_daily_crocodile_dual_track.sql
--- Introduce independent easy/hard daily Crocodile tracks while preserving
--- date-level delivery/result message flows.
 
 CREATE TABLE IF NOT EXISTS public.crocodile_daily_days (
     puzzle_date DATE PRIMARY KEY,

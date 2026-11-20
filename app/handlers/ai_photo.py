@@ -109,8 +109,6 @@ register_controlled_text(
     "Фото: извлечение текста",
 )
 
-# ── Shared helpers (DRY) ─────────────────────────────────────────────────────
-
 
 def _setting(name: str, fallback: Any) -> Any:
     value = getattr(settings, name, None) if settings is not None else None
@@ -179,8 +177,6 @@ async def _process_ai_vision(
     else:
         default_model = _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL)
         raw_model = chat_state.model or default_model
-        # FTA image-generation models (img/*, vhr/*) cannot analyse received photos.
-        # Fall back to the default Gemini vision model silently.
         if raw_model in FTA_IMAGE_MODELS:
             logging.debug(
                 "Vision request: model %s is image-gen-only — falling back to %s",
@@ -243,9 +239,6 @@ async def _process_ai_vision(
     return outcome
 
 
-# ── Single photo handler ────────────────────────────────────────────────────
-
-
 async def _handle_photo(placeholder_message: Message, original_message: Message, chat_state: ChatState):
     user_id = int(original_message.from_user.id)
     known_epoch = None if getattr(chat_state, "_has_persisted_chat", True) is False else int(chat_state.memory_epoch)
@@ -284,7 +277,6 @@ async def _handle_photo_leased_impl(
         photo_file = await original_message.photo[-1].get_file()
         img_raw = await get_file_bytes(original_message.get_bot(), photo_file)
 
-        # Determine intent (OCR vs description)
         intent = await classify_vision_intent(original_message.caption)
         is_ocr = intent == "ocr"
 
@@ -295,11 +287,9 @@ async def _handle_photo_leased_impl(
             formatted_prompt = _build_vision_prompt(original_message.caption, image_count=1)
             task_type = "describe"
 
-        # Pre-compress with cache_key for retry savings
         file_unique_id = original_message.photo[-1].file_unique_id
         compressed = await save_image_as_bytes(img_raw, task_type=task_type, cache_key=file_unique_id)
 
-        # Wrap as TaggedImage so providers skip recompression
         if compressed:
             tagged = TaggedImage(
                 data=compressed,
@@ -335,7 +325,6 @@ async def _handle_photo_leased_impl(
         chat_state.history.append({"role": "model", "parts": [response_text]})
         await update_user_chat(user_id, chat_state, expected_epoch=_expected_epoch)
 
-        # ── Store photo description in long-term memory (background) ──
         _photo_bytes = compressed or img_raw
         from app.repos.memory_consent import capture_epoch
 
@@ -366,11 +355,7 @@ async def _handle_photo_leased_impl(
             await placeholder_message.edit_text("❌ Произошла ошибка при обработке изображения.")
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
-            # Fallback на new message
             await original_message.reply_text("❌ Произошла ошибка при обработке изображения.")
-
-
-# ── Media group dispatcher ──────────────────────────────────────────────────
 
 
 async def process_media_group_request(
@@ -380,7 +365,6 @@ async def process_media_group_request(
     messages: list[Message],
     caption: str,
 ) -> None:
-    # context используется for совместимости с другими функциями
     """Обрабатывает группу изображений как единое целое"""
     user_id = _media_group_user_id(messages)
     if update.effective_user is None or int(update.effective_user.id) != user_id:
@@ -390,7 +374,6 @@ async def process_media_group_request(
     count = len(messages) if messages else 0
     logging.info("Processing group of %d images for user %s", count, user_id)
 
-    # Check, есть ли searchовый префикс в caption
     search_prefix = None
     if caption:
         if caption.startswith("??"):
@@ -398,15 +381,12 @@ async def process_media_group_request(
         elif caption.startswith("?"):
             search_prefix = "?"
 
-    # If есть searchовый префикс, use сложный search
     if search_prefix:
         await _handle_complex_media_group_search(placeholder_message, messages, caption, search_prefix, chat_state)
     else:
-        # Обычная обработка groups fromображений
         await _handle_media_group_photos(placeholder_message, messages, caption, chat_state)
 
 
-# Limit concurrent Telegram file downloads to avoid overwhelming the API
 _DL_SEMAPHORE = asyncio.Semaphore(5)
 
 
@@ -424,8 +404,6 @@ async def _download_images_concurrently(
     """
     total = len(messages)
     progress = {"done": 0, "failed": 0}
-    # THREAD-SAFETY: progress updates are guarded by _progress_lock.
-    # Safe in both single-threaded asyncio and if migrated to to_thread().
     _progress_lock = asyncio.Lock()
 
     async def download_one(index: int, message: Message) -> bytes | None:
@@ -448,7 +426,6 @@ async def _download_images_concurrently(
                 logging.error("Error loading image %s: %s", index + 1, e, exc_info=True)
                 return None
 
-    # Background progress updater (debounced at 2s intervals)
     async def _update_progress() -> None:
         if not placeholder:
             return
@@ -457,25 +434,20 @@ async def _download_images_concurrently(
             try:
                 await placeholder.edit_text(f"📸 Загружено {progress['done']}/{total}...")
             except Exception:
-                pass  # Telegram rate-limit or message already edited
+                pass
 
     async with asyncio.TaskGroup() as tg:
         progress_task = tg.create_task(_update_progress())
         tasks = [tg.create_task(download_one(i, msg)) for i, msg in enumerate(messages)]
 
-        # Await all downloads inside the block
         results = await asyncio.gather(*tasks)
 
-        # Cancel the progress task so we don't wait for its sleep to finish
         progress_task.cancel()
 
     if progress["failed"]:
         logging.warning("%d of %d images failed to download", progress["failed"], total)
 
-    return [img for img in results if img is not None]  # type: ignore[misc]  # download_one returns bytes
-
-
-# ── Media group photo handler ───────────────────────────────────────────────
+    return [img for img in results if img is not None]  # type: ignore[misc]
 
 
 def _media_group_user_id(messages: list[Message]) -> int:
@@ -530,7 +502,6 @@ async def _handle_media_group_photos_leased_impl(
     """Обрабатывает группу изображений для обычного описания"""
     try:
         user_id = _media_group_user_id(messages)
-        # Load все images from groups
         images = await _download_images_concurrently(messages, placeholder=placeholder_message)
 
         if not images:
@@ -540,7 +511,6 @@ async def _handle_media_group_photos_leased_impl(
 
         await update_stage(placeholder_message, STAGES_PHOTO, 1)
 
-        # Classify intent for group
         intent = await classify_vision_intent(caption)
         is_ocr = intent == "ocr"
 
@@ -552,16 +522,13 @@ async def _handle_media_group_photos_leased_impl(
             formatted_prompt = _build_vision_prompt(caption, image_count=image_count)
             task_type = "describe"
 
-        # Wrap raw bytes as TaggedImage
         tagged_images = [
             TaggedImage(data=img, task_type=task_type)
-            for img in images  # type: ignore[arg-type]  # download_one returns bytes
+            for img in images  # type: ignore[arg-type]
         ]
 
-        # Create parts for Gemini API: text + все images
         parts = [formatted_prompt] + tagged_images
 
-        # Get user_id и chat_id for логирования
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
         outcome = await _process_ai_vision(
@@ -588,9 +555,6 @@ async def _handle_media_group_photos_leased_impl(
             await placeholder_message.edit_text("❌ Произошла ошибка при обработке группы изображений.")
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
-
-
-# ── Complex media group search handler ──────────────────────────────────────
 
 
 async def _handle_complex_media_group_search(
@@ -645,7 +609,6 @@ async def _handle_complex_media_group_search_leased_impl(
     vision_model = _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL)
 
     try:
-        # Load все images from groups
         images = await _download_images_concurrently(
             messages, log_context="для анализа", placeholder=placeholder_message
         )
@@ -655,21 +618,17 @@ async def _handle_complex_media_group_search_leased_impl(
             await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения для анализа.")
             return
 
-        # Анализируем группу изображений for searchа
         analysis_prompt = render_prompt_text(
             get_prompt_text("vision.search_group"), image_analysis=get_registry().get("image_analysis").text
         )
 
-        # Wrap raw bytes as TaggedImage with task_type="search"
         tagged_images = [
             TaggedImage(data=img, task_type="search")
-            for img in images  # type: ignore[arg-type]  # download_one returns bytes
+            for img in images  # type: ignore[arg-type]
         ]
 
-        # Create parts for анализа: промпт + все images
         parts = [analysis_prompt] + tagged_images
 
-        # Get user_id и chat_id for логирования
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
         search_query, _ = await _get_ai_response_with_routing(
@@ -680,7 +639,6 @@ async def _handle_complex_media_group_search_leased_impl(
             chat_id=chat_id,
         )
 
-        # Check ошибки от роутера
         if await handle_ai_response_error(search_query, placeholder_message):
             mark_operation_failed()
             return
@@ -693,7 +651,6 @@ async def _handle_complex_media_group_search_leased_impl(
                 logging.error("Could not edit placeholder message: %s", edit_error)
             return
 
-        # Get оригинальное message user for локализации
         image_count = len(images)
         original_user_message = caption or f"Опиши эти {image_count} изображения."
 

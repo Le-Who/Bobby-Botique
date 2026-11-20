@@ -9,8 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# ── Flow 1: AI response lifecycle ──────────────────────────────────────────
-
 
 class TestAIResponseLifecycle:
     """Tests the full flow: user message → provider routing → AI call → response."""
@@ -98,9 +96,6 @@ class TestAIResponseLifecycle:
         assert tokens is None
 
 
-# ── Flow 2: Key rotation ──────────────────────────────────────────────────
-
-
 class TestKeyRotationFlow:
     """Tests the DailyKeyManager key rotation: get → exhaust → rotate."""
 
@@ -122,7 +117,6 @@ class TestKeyRotationFlow:
         assert result is not None
         assert result["key_hash"] == "abc123"
         assert result["api_key"] == "decrypted_key"
-        # Verify the SQL uses ORDER BY request_count ASC
         sql = mock_db.call_args[0][0]
         assert "ORDER BY" in sql
 
@@ -132,7 +126,7 @@ class TestKeyRotationFlow:
         from app.repos.keys import DailyKeyManager
 
         km = DailyKeyManager("api_keys", "key_usage")
-        mock_db.return_value = []  # No keys under limit
+        mock_db.return_value = []
 
         result = await km.get_available_key("gemini-3.1-flash-lite")
         assert result is None
@@ -163,7 +157,6 @@ class TestKeyRotationFlow:
         _threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
 
         result = await km.is_key_available("abc123", "gemini-3.1-flash-lite", daily_limit)
-        # 10 < threshold (e.g., 90% of 100 = 90)
         assert result is True
 
     @pytest.mark.asyncio
@@ -213,9 +206,6 @@ class TestKeyRotationFlow:
         assert result is None
 
 
-# ── Flow 3: Conversation lifecycle ─────────────────────────────────────────
-
-
 class TestConversationLifecycle:
     """Tests conversation CRUD: create → list → rename → delete."""
 
@@ -226,7 +216,6 @@ class TestConversationLifecycle:
             patch("app.repos.conversations.db_manager") as mock_mgr,
         ):
             mock_mgr.is_connected = True
-            # Mock pool.acquire() → conn with conn.transaction() support
             mock_conn = MagicMock()
             mock_txn = MagicMock()
             mock_txn.__aenter__ = AsyncMock(return_value=None)
@@ -241,12 +230,10 @@ class TestConversationLifecycle:
         """After saving a conversation, listing returns it."""
         from app.repos.conversations import get_user_conversations, save_conversation
 
-        # Mock get_user_chat (imported from chats module)
         mock_chat = MagicMock()
         mock_chat.history = [{"role": "user", "parts": ["hello"]}]
         mock_chat.token_count = 100
 
-        # save_conversation returns ID 42
         mock_db.return_value = [{"id": 42}]
         with patch(
             "app.repos.chats.get_user_chat",
@@ -256,7 +243,6 @@ class TestConversationLifecycle:
             result = await save_conversation(1, "Test Chat", "system", None)
         assert result == 42
 
-        # Now list conversations
         mock_db.return_value = [
             {
                 "id": 42,
@@ -291,14 +277,12 @@ class TestConversationLifecycle:
         """Deleting a conversation removes it atomically within a transaction."""
         from app.repos.conversations import delete_conversation
 
-        # First call: DELETE messages; second call: DELETE conversation RETURNING id
         mock_db.side_effect = [
-            None,  # DELETE messages
-            [{"id": 42}],  # DELETE conversation RETURNING id
+            None,
+            [{"id": 42}],
         ]
         result = await delete_conversation(1, 42)
         assert result is True
-        # Last call should be DELETE ... RETURNING
         sql = mock_db.call_args_list[-1][0][0]
         assert "DELETE FROM" in sql and "conversations" in sql
         assert "RETURNING" in sql
@@ -323,12 +307,8 @@ class TestConversationLifecycle:
         ):
             result = await save_conversation(1, "Python Chat")
         assert result == 99
-        # Verify the stored proc was called
         sql = mock_db.call_args[0][0]
         assert "conversation" in sql.lower()
-
-
-# ── Flow 4: User auth chain ───────────────────────────────────────────────
 
 
 class TestUserAuthChain:
@@ -345,7 +325,6 @@ class TestUserAuthChain:
         ):
             mock_mgr.is_connected = True
             mock_mgr._user_auth_cache = {}
-            # Mock the pool.acquire context manager
             mock_conn = MagicMock()
             mock_transaction = MagicMock()
             mock_transaction.__aenter__ = AsyncMock(return_value=None)
@@ -390,10 +369,8 @@ class TestUserAuthChain:
 
         mock_db.return_value = [{"is_authorized": 1}]
 
-        # First call hits DB
         await is_authorized(999)
         assert mock_db.await_count == 1
 
-        # Second call should use cache
         await is_authorized(999)
-        assert mock_db.await_count == 1  # Still 1 — cache hit
+        assert mock_db.await_count == 1

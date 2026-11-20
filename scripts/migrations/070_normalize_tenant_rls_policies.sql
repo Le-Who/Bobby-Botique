@@ -1,6 +1,3 @@
--- Normalize tenant policies created by older migrations.
--- This is deliberately raw-SQL idempotent: every policy is dropped before it
--- is recreated, and the Supabase-only service_role policy is conditional.
 
 ALTER TABLE public.key_model_status ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.brief_subscriptions ENABLE ROW LEVEL SECURITY;

@@ -267,8 +267,6 @@ async def test_source_hint_survives_continuation_authorized_before_first_source(
     try:
         await first_gate.wait()
         second_owner = ownership.launch(second)
-        # Exercise the intended admission order rather than racing a 100 ms
-        # collection deadline against logging/scheduler overhead in the suite.
         await asyncio.wait_for(continuation_admitted.wait(), timeout=5)
         assert not first_owner.done()
         release_first.set()

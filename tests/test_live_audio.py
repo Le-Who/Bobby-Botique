@@ -389,16 +389,14 @@ class TestLiveAudioProxy:
             live_thinking_level="medium",
         )
 
-        # Mock the Gemini Live session
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
         mock_session.send_realtime_input = AsyncMock()
 
-        # receive() must be an async generator that yields nothing then hangs
         async def _empty_gen():
             return
-            yield  # noqa: RET504 — make this an async generator
+            yield
 
         mock_session.receive = _empty_gen
 
@@ -511,7 +509,6 @@ class TestLiveAudioProxy:
 
         mock_session.send_realtime_input = AsyncMock(side_effect=observe_input)
 
-        # Consumer yields one audio response then stops
         pcm_data = b"\x00\x01" * 100
         responses = [_make_response_with_audio(pcm_data)]
 
@@ -531,11 +528,9 @@ class TestLiveAudioProxy:
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
-                # 1. Receive "connected" event
                 connected_raw = await ws.receive()
                 assert json.loads(connected_raw)["type"] == "connected"
 
-                # 2. Send audio input
                 test_audio = base64.b64encode(b"\x00\x01" * 50).decode()
                 await ws.send(
                     json.dumps(
@@ -555,7 +550,6 @@ class TestLiveAudioProxy:
                 )
                 await ws.send(json.dumps({"type": "activity_end"}))
 
-                # 3. Receive audio output from Gemini
                 audio_raw = await asyncio.wait_for(ws.receive(), 1)
                 audio_msg = json.loads(audio_raw)
                 assert audio_msg["type"] == "audio"
@@ -786,9 +780,6 @@ class TestVertexLiveClientBootstrap:
         monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/run/secrets/vertex-live-sa.json")
         import app.providers.gemini as gemini_provider
 
-        # Reset only the singleton under test.  Reloading this shared provider module
-        # replaces its module-level caches and leaves already-imported test objects
-        # pointing at stale cache instances.
         gemini_provider._vertex_live_client = None
         gemini_provider._vertex_live_client_initialized = False
         monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_PROJECT", "vertex-project", raising=False)

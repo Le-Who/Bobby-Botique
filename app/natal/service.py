@@ -52,9 +52,6 @@ async def create_natal_report(
     _validate_webhook_url(webhook_url)
     from app.repos.memory_consent import is_private_data_snapshot_current, private_data_lease
 
-    # Queued callers supply their ingress generation; never replace it with a
-    # newly recreated account's generation. Direct callers (including smoke)
-    # capture once before any calculation, provider, publication or storage work.
     epoch = expected_epoch if expected_epoch is not None else await capture_natal_epoch(user_id)
     async with private_data_lease(user_id, epoch, purpose="natal:report", require_ltm=False) as current:
         if not current:

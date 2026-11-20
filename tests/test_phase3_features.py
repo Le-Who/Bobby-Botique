@@ -1,4 +1,3 @@
-# tests/test_phase3_features.py
 """Integration tests for Phase 3 & 4 features: streaming, memory, model selector, GDPR, Prometheus."""
 
 import json
@@ -8,10 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.model_selector import _get_tier
-
-# ============================================================================
-# MODEL SELECTOR TESTS
-# ============================================================================
 
 
 class TestModelSelector:
@@ -27,7 +22,6 @@ class TestModelSelector:
                 "gemini-3.5-flash",
             ]
             result = select_model("Привет!", current_model="gemini-3.5-flash")
-            # No downgrade suggestion — pro → flash is a downgrade
             assert result is None
 
     def test_code_message_suggests_top_tier(self):
@@ -43,7 +37,7 @@ class TestModelSelector:
                 current_model="gemini-3.1-flash-lite",
             )
             assert result is not None
-            assert _get_tier(result.model) > 1  # Should suggest upgrade from lite
+            assert _get_tier(result.model) > 1
 
     def test_reasoning_message_suggests_top_tier(self):
         from app.model_selector import select_model
@@ -82,7 +76,6 @@ class TestModelSelector:
                 "Расскажи о погоде в Москве сегодня",
                 current_model="gemini-3.1-flash-lite",
             )
-            # No strong signal → should return None
             assert result is None
 
     def test_no_models_available(self):
@@ -92,11 +85,6 @@ class TestModelSelector:
             mock_settings.AVAILABLE_MODELS = []
             result = select_model("test", current_model="gemini-3.1-flash-lite")
             assert result is None
-
-
-# ============================================================================
-# PROMETHEUS TESTS
-# ============================================================================
 
 
 class TestPrometheus:
@@ -123,16 +111,10 @@ class TestPrometheus:
 
         text = generate_metrics_text()
         lines = text.strip().split("\n")
-        # Every non-empty line should be either a comment (#) or a metric
         for line in lines:
             if not line.strip():
                 continue
             assert line.startswith("#") or " " in line, f"Bad line: {line}"
-
-
-# ============================================================================
-# GDPR COMMAND TESTS
-# ============================================================================
 
 
 class TestGDPRCommands:
@@ -258,11 +240,6 @@ class TestGDPRCommands:
         mock_update.message.reply_text.assert_called_once()
         _ = mock_update.message.reply_text.call_args
         assert "CONFIRM" in str(mock_fmt.format_text.call_args)
-
-
-# ============================================================================
-# DEGRADATION MATRIX TESTS
-# ============================================================================
 
 
 class TestDegradation:

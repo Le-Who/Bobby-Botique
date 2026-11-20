@@ -11,10 +11,6 @@ from app.resilience_policy import (
     run_with_resilience,
 )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ResiliencePolicy.compute_delay
-# ═══════════════════════════════════════════════════════════════════════════════
-
 
 class TestComputeDelay:
     def test_first_attempt_near_base_delay(self):
@@ -32,22 +28,14 @@ class TestComputeDelay:
 
     def test_max_delay_caps_exponential(self):
         policy = ResiliencePolicy(base_delay_s=1.0, max_delay_s=5.0, jitter_s=0.0)
-        delay = policy.compute_delay(10)  # Would be 1024 without cap
+        delay = policy.compute_delay(10)
         assert delay <= 5.0
 
     def test_jitter_adds_randomness(self):
-        # Seed for determinism: random.seed(42) + 20 uniform(0, 1.0) samples
-        # produces multiple distinct values, so the assertion is reliable.
         random.seed(42)
         policy = ResiliencePolicy(base_delay_s=1.0, jitter_s=1.0)
         delays = {policy.compute_delay(0) for _ in range(20)}
-        # With jitter, not all delays should be identical
         assert len(delays) > 1
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# is_transient_error
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestIsTransientError:
@@ -83,11 +71,6 @@ class TestIsTransientError:
     def test_case_insensitive(self):
         assert is_transient_error("SERVICE UNAVAILABLE") is True
         assert is_transient_error("TIMEOUT") is True
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# run_with_resilience
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestRunWithResilience:
@@ -135,7 +118,7 @@ class TestRunWithResilience:
                 policy=policy,
                 is_retryable=lambda e: False,
             )
-        assert op.await_count == 1  # No retry
+        assert op.await_count == 1
 
     @pytest.mark.asyncio
     @patch("app.resilience_policy.asyncio.sleep", new_callable=AsyncMock)

@@ -273,7 +273,6 @@ async def test_long_read_threshold_is_based_on_formatted_html_length():
         create_telegraph_page=AsyncMock(return_value=None),
     )
 
-    # Raw Markdown is 19 chars, but Telegram HTML is 22 chars (<b>...</b>).
     receipt = await renderer.open().finalize(
         displayed_text="**" + ("A" * 15) + "**",
         title="Answer",

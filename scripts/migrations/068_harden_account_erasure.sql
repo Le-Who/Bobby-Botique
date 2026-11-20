@@ -1,7 +1,3 @@
--- Complete GDPR account erasure by making every user-owned legacy table
--- participate in the users(user_id) ownership graph. Shared group/graph
--- attribution is retained but anonymised or transferred explicitly by the
--- application before a user row is removed.
 
 DELETE FROM public.natal_reports AS report
 WHERE NOT EXISTS (

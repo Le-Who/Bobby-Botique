@@ -3,7 +3,6 @@ from datetime import date, datetime, timedelta
 from app.config import KYIV_TZ, PACIFIC_TZ, UTC_TZ
 
 
-# Safe timezone imports to prevent circular imports
 def get_pacific_tz():
     """Safely get Pacific timezone."""
     return PACIFIC_TZ

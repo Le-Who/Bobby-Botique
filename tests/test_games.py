@@ -1,4 +1,3 @@
-# tests/test_games.py
 """Unit tests for app/games/ — Crocodile game subsystem.
 
 All tests run fully offline:
@@ -40,8 +39,6 @@ from app.games.word_bank import (
     validate_custom_word,
 )
 
-# ── word_bank ─────────────────────────────────────────────────────────────────
-
 
 class TestResolveCategory:
     def test_exact_russian(self):
@@ -60,12 +57,11 @@ class TestResolveCategory:
         assert result[1] == "Животные"
 
     def test_prefix_match(self):
-        result = resolve_category("жив")  # ≥3 chars prefix
+        result = resolve_category("жив")
         assert result is not None
         assert result[1] == "Животные"
 
     def test_too_short_prefix_no_match(self):
-        # 2-char prefix must NOT match (guard in resolve_category requires ≥3)
         result = resolve_category("жи")
         assert result is None
 
@@ -198,7 +194,7 @@ class TestPickRandomWord:
             patch(
                 "app.games.word_bank._generate_single_word_fast",
                 new_callable=AsyncMock,
-                return_value=None,  # force fallthrough to generate_words_for_category
+                return_value=None,
             ),
             patch(
                 "app.games.word_bank.generate_words_for_category",
@@ -431,9 +427,6 @@ class TestPickRandomWord:
             )
 
 
-# ── judge — Damerau-Levenshtein algorithm ─────────────────────────────────────
-
-
 class TestDamerauLevenshtein:
     """Verify the string distance metric covers all four edit operations."""
 
@@ -444,7 +437,6 @@ class TestDamerauLevenshtein:
         assert _damerau_levenshtein("кот", "кит") == 1
 
     def test_transposition_adjacent(self):
-        # Damerau: adjacent swap counts as 1, not 2
         assert _damerau_levenshtein("кот", "кто") == 1
 
     def test_insertion(self):
@@ -454,7 +446,6 @@ class TestDamerauLevenshtein:
         assert _damerau_levenshtein("крот", "кот") == 1
 
     def test_multi_edit(self):
-        # completely different words of same length
         assert _damerau_levenshtein("слон", "кит") >= 3
 
     def test_empty_strings(self):
@@ -522,27 +513,21 @@ class TestLocalCheck:
         assert _local_check("мангуст", "монгуст") == "exact_match"
 
     def test_long_word_two_edit_tolerance(self):
-        # "крокодил" (8 chars) → _allowed_edits(8)=2; "крокадил" dist=1 → match
         assert _local_check("крокодил", "крокадил") == "exact_match"
 
     def test_long_word_double_typo(self):
-        # "крокодил" → "крокадалл" dist=3 → no match (>2)
         assert _local_check("крокодил", "крокадалл") is None
 
     def test_extra_char_long_word(self):
-        # "крокодилл" (insertion, dist=1) on 8-char word → match
         assert _local_check("крокодил", "крокодилл") == "exact_match"
 
     def test_short_word_zero_tolerance(self):
-        # "кот" (3 chars) → _allowed_edits(3)=0; "кит" dist=1 → no match
         assert _local_check("кот", "кит") is None
 
     def test_4char_zero_tolerance(self):
-        # "слон" (4 chars) → _allowed_edits(4)=0; "слан" dist=1 → no match
         assert _local_check("слон", "слан") is None
 
     def test_transposition_caught(self):
-        # "кракодил" ↔ "крокодил": pos 2-3 transposition, dist=1, 8 chars, allowed=2
         assert _local_check("крокодил", "кракодил") == "exact_match"
 
     def test_different_word_no_match(self):
@@ -552,9 +537,6 @@ class TestLocalCheck:
         assert _local_check("elephant", "elephant") == "exact_match"
 
 
-# ── CrocodileGame state machine ───────────────────────────────────────────────
-
-# Shared offline judgement stubs
 _COLD = GuessJudgement(status="cold", score=0.1, hint="Попробуй ещё! ❄️")
 _WARM = GuessJudgement(status="warm", score=0.55, hint="Теплее! 🌡️")
 
@@ -605,7 +587,7 @@ class TestCrocodileGameSerialisation:
             "max_attempts": 10,
             "status": "active",
             "created_at": "2026-01-01T00:00:00+00:00",
-            "_injected_evil_field": "pwned",  # must be silently dropped
+            "_injected_evil_field": "pwned",
         }
         game = CrocodileGame.from_json(json.dumps(data))
         assert game.target_word == "кот"
@@ -756,7 +738,7 @@ class TestCrocodileGameInMemory:
             inline_message_id="inline_test_5",
             creator_id=5,
         )
-        game.max_attempts = 2  # Reduce for speed
+        game.max_attempts = 2
 
         await game.process_guess("кот")
         event = await game.process_guess("собака")
@@ -790,7 +772,7 @@ class TestCrocodileGameInMemory:
         with patch(
             "app.games.judge._race_generate",
             new_callable=AsyncMock,
-            return_value=None,  # simulate total LLM failure
+            return_value=None,
         ):
             game = await create_game(
                 target_word="слон",
@@ -801,7 +783,7 @@ class TestCrocodileGameInMemory:
             )
             event = await game.process_guess("кот")
             assert event["event"] == "judge_unavailable"
-            assert len(game.attempts) == 0  # NOT counted
+            assert len(game.attempts) == 0
             assert game.status == "active"
 
     async def test_create_game_uses_idle_ttl_in_redis(self):
@@ -828,7 +810,7 @@ class TestCrocodileGameInMemory:
                 inline_message_id="inline_ttl_active",
                 creator_id=5,
             )
-            game.guesser_id = 123  # Simulate guesser joining via WebSocket
+            game.guesser_id = 123
             await game.process_guess("кот")
 
         assert fake_redis.set_calls[0][1] == 1209600
@@ -851,7 +833,7 @@ class TestCrocodileGameInMemory:
                 inline_message_id="inline_ttl_unavailable",
                 creator_id=5,
             )
-            game.guesser_id = 123  # Simulate guesser joining via WebSocket
+            game.guesser_id = 123
             event = await game.process_guess("кот")
 
         assert event["event"] == "judge_unavailable"
@@ -885,18 +867,11 @@ class TestCrocodileGameInMemory:
             inline_message_id="inline_test_9",
             creator_id=5,
         )
-        # Win the game first
         await game.process_guess("слон")
         assert game.status == "won"
 
-        # Call again — should return error (empty guard) or a valid event;
-        # the critical invariant is: does NOT raise an unhandled exception.
         event2 = await game.process_guess("слон")
-        # After win, attempts already appended; process_guess returns result event
         assert "event" in event2
-
-
-# ── _detect_lang ──────────────────────────────────────────────────────────────
 
 
 class TestDetectLang:
@@ -909,19 +884,13 @@ class TestDetectLang:
         assert _detect_lang("crocodile") == "en"
 
     def test_empty_string_defaults_ru(self):
-        # Empty → ratio calculation skipped → return "ru"
         assert _detect_lang("") == "ru"
 
     def test_mixed_majority_cyrillic(self):
-        # "кот dog" — 3 Cyrillic of 7 chars = 0.43 > 0.3 → ru
         assert _detect_lang("кот dog") == "ru"
 
     def test_mixed_majority_latin(self):
-        # One Cyrillic letter among mostly latin letters should stay "en".
         assert _detect_lang("abcd e f g к hijk") == "en"
-
-
-# ── validate_custom_word boundary cases ───────────────────────────────────────
 
 
 class TestValidateCustomWordBoundaries:
@@ -937,11 +906,7 @@ class TestValidateCustomWordBoundaries:
         assert validate_custom_word("а" * 41) is None
 
     def test_space_inside_word_allowed(self):
-        # Multi-word phrases like "северное сияние" are in the word bank
         assert validate_custom_word("северное сияние") == "северное сияние"
-
-
-# ── CrocodileGame serialisation edge cases ─────────────────────────────────────
 
 
 class TestCrocodileGameSerialisationEdgeCases:
@@ -969,9 +934,6 @@ class TestCrocodileGameSerialisationEdgeCases:
             CrocodileGame.from_json(b"not-json-at-all")
 
 
-# ── In-memory LRU bounded store ───────────────────────────────────────────────
-
-
 class TestMemoryFallbackBounded:
     """_mem_put must evict oldest entry when _MEM_MAX is reached."""
 
@@ -979,10 +941,8 @@ class TestMemoryFallbackBounded:
         from app.games.crocodile import _MEM_MAX, _mem_games, _mem_put
         from tests.factories import make_crocodile_game
 
-        # _mem_games is cleared by the autouse fixture between tests
         assert len(_mem_games) == 0
 
-        # Fill to capacity
         for i in range(_MEM_MAX):
             _mem_put(make_crocodile_game(game_id=f"game-{i:04d}"))
 
@@ -990,7 +950,6 @@ class TestMemoryFallbackBounded:
         first_key = "game-0000"
         assert first_key in _mem_games
 
-        # One more → evicts oldest (game-0000)
         _mem_put(make_crocodile_game(game_id="game-overflow"))
         assert len(_mem_games) == _MEM_MAX
         assert first_key not in _mem_games
@@ -1000,9 +959,6 @@ class TestMemoryFallbackBounded:
         from app.games.crocodile import _mem_get
 
         assert _mem_get("does-not-exist") is None
-
-
-# ── In-memory getters ────────────────────────────────────────────────────────
 
 
 class TestGameAccessors:

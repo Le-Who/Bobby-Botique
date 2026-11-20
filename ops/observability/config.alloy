@@ -22,8 +22,6 @@ discovery.relabel "bot" {
     regex         = "true"
   }
 
-  // Another local project also uses the opt-in label. Keep this bot's stable
-  // container name so its unrelated stdout never enters the protected stream.
   rule {
     source_labels = ["__meta_docker_container_name"]
     action        = "keep"
@@ -47,7 +45,6 @@ discovery.relabel "ytdlbot" {
   }
 }
 
-// Metadata-only status from this project's isolated Redis monitor.
 discovery.relabel "redis" {
   targets = discovery.docker.bot.targets
   rule {
@@ -73,9 +70,6 @@ loki.source.docker "redis" {
 loki.source.docker "bot" {
   host             = "http://docker-proxy:2375"
   targets          = discovery.relabel.bot.output
-  // With an HTTP Docker endpoint Alloy v1.18 also uses this value as the
-  // total client timeout. Keep it long for /logs?follow=1; discovery above
-  // remains at 15s, so new and replaced containers are still found quickly.
   refresh_interval = "24h"
   labels = {
     environment  = "unknown",
@@ -89,7 +83,6 @@ loki.source.docker "bot" {
 loki.source.docker "ytdlbot" {
   host             = "http://docker-proxy:2375"
   targets          = discovery.relabel.ytdlbot.output
-  // The HTTP log stream needs the same long client timeout as the GemAI bot.
   refresh_interval = "24h"
   labels = {
     environment  = "unknown",

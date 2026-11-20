@@ -182,7 +182,6 @@ class RuntimeSettingsStore:
             try:
                 _, document = await self._read()
             except Exception:
-                # Neither exception messages nor persisted values belong in logs.
                 self._snapshot = replace(self._snapshot, degraded=True)
                 self._expires = time.monotonic() + 5
                 return self._snapshot

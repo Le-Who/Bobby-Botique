@@ -7,10 +7,6 @@ from app.prompts import (
     extract_json_object,
 )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# compose_system_instruction
-# ═══════════════════════════════════════════════════════════════════════════════
-
 
 class TestComposeSystemInstruction:
     """Test the system instruction composition pipeline."""
@@ -18,7 +14,7 @@ class TestComposeSystemInstruction:
     def test_no_role_returns_base_prompt(self):
         result = compose_system_instruction(None)
         assert isinstance(result, str)
-        assert len(result) > 50  # Base prompt has substantial content
+        assert len(result) > 50
 
     def test_with_role_appends_role_prompt(self):
         role = "Ты полезный ассистент."
@@ -29,13 +25,11 @@ class TestComposeSystemInstruction:
         role = "Test role"
         compact = compose_system_instruction(role, use_compact=True)
         full = compose_system_instruction(role, use_compact=False)
-        # Compact should be shorter or equal (may be same if registry has no compact variant)
         assert len(compact) <= len(full)
 
     def test_clear_cache_does_not_crash(self):
         """clear_prompt_cache should be safe to call anytime."""
         clear_prompt_cache()
-        # After clearing, next compose should still work
         result = compose_system_instruction(None)
         assert isinstance(result, str)
 
@@ -44,11 +38,6 @@ class TestComposeSystemInstruction:
         a = compose_system_instruction("role A")
         b = compose_system_instruction("role A")
         assert a == b
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# extract_json_object
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestExtractJsonObject:
@@ -93,11 +82,6 @@ class TestExtractJsonObject:
         text = '{"title": "broken'
         result = extract_json_object(text)
         assert result is None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DEFAULT_ROLES
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestDefaultRoles:

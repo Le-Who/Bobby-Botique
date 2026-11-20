@@ -1,10 +1,3 @@
--- Migration 033: Add role diaries to user_state
--- Purpose: MemPalace persistent role-specific diaries.
---          Each role accumulates session insights (key learnings, preferences,
---          style observations) as a JSONB dict keyed by role_id.
---          This enables context continuity across sessions for the same persona.
---
--- Idempotency: Guarded by IF NOT EXISTS check.
 
 DO $$ BEGIN
     IF NOT EXISTS (

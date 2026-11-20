@@ -11,15 +11,13 @@ import html
 from dataclasses import dataclass
 from typing import Any
 
-# ─── Resolution classification ──────────────────────────────────────────────
-
 
 @dataclass(frozen=True)
 class ResolutionResult:
     """Outcome of classifying a model resolution attempt."""
 
-    action: str  # "proceed" | "all_exhausted" | "confirm_fallback"
-    provider_name: str | None = None  # "Gemini" | "OpenRouter"
+    action: str
+    provider_name: str | None = None
     fallback_model: str | None = None
     user_message: str | None = None
 
@@ -84,9 +82,6 @@ def classify_resolution(
     return ResolutionResult(action="proceed")
 
 
-# ─── Memory injection ───────────────────────────────────────────────────────
-
-
 def format_memories_for_system_prompt(
     memories: list[dict[str, Any]],
     max_content_length: int = 300,
@@ -120,14 +115,11 @@ def format_memories_for_system_prompt(
     return "\n".join(lines)
 
 
-# ─── Response classification ────────────────────────────────────────────────
-
-
 @dataclass(frozen=True)
 class ResponseAction:
     """Outcome of classifying an AI response."""
 
-    action: str  # "error" | "empty" | "send" | "attach_buttons"
+    action: str
 
 
 def classify_response(
@@ -149,7 +141,6 @@ def classify_response(
     if not response_text:
         return ResponseAction(action="empty")
 
-    # Error patterns (same heuristic as handle_ai_response_error)
     error_indicators = ("500 ", "503 ", "429 ", "error", "unavailable")
     lower = response_text.lower().strip()
     if any(lower.startswith(ind) for ind in error_indicators):

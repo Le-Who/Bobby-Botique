@@ -1,5 +1,3 @@
--- Owned transport attempt counts are deliberately separate from legacy logical
--- API maps. Activate the epoch at application initialization, not migration time.
 CREATE TABLE IF NOT EXISTS traffic_accounting_epoch (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
     started_at TIMESTAMPTZ NOT NULL

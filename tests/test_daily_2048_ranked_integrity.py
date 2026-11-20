@@ -51,7 +51,6 @@ def game_store(monkeypatch):
         return puzzle, store.result
 
     async def persist(**kwargs):
-        # Persistence itself is separately checked against real PostgreSQL.
         store.result = replace(
             store.result,
             **{
@@ -71,7 +70,6 @@ def game_store(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fabricated_winning_pair_completes_game_without_ranked_provenance(game_store):
-    # Reverting provenance propagation permits this unreachable board to rank.
     event = await daily_2048.process_move(
         777,
         "left",

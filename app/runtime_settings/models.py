@@ -111,9 +111,6 @@ async def refresh_catalogs(
     target = settings_obj if settings_obj is not None else settings
     snapshot = snapshot if snapshot is not None else await get_snapshot(force=force)
     staged = {}
-    # A restore may reveal an old v2 override. Finish all bounded reads and
-    # validation before publishing, so an unavailable DB preserves every
-    # last-confirmed catalog instead of applying half of a revision.
     async with asyncio.timeout(_CATALOG_REFRESH_TIMEOUT):
         for provider in PROVIDERS:
             key = f"catalog:{provider}"
@@ -182,12 +179,8 @@ async def list_limits(
     models = set(settings.DAILY_LIMITS) | set(snapshot.values.get("catalog:gemini", settings.AVAILABLE_MODELS))
     models.update(key.removeprefix("model_limit:") for key in snapshot.values if key.startswith("model_limit:"))
     models.update(key.removeprefix("model_rpm:") for key in snapshot.values if key.startswith("model_rpm:"))
-    # Routes can use a model absent from both the public selector and DAILY_LIMITS.
-    # Resolve against the same snapshot that supplies the displayed quota value.
     excluded_capabilities = {"provider_order", "music"}
     if processes is not None:
-        # GET already resolved dynamic baselines for its process inventory.
-        # Reuse those rows so both sections agree without repeating DB reads.
         for process in processes:
             if set(process.get("capabilities", ())) & excluded_capabilities:
                 continue
@@ -280,9 +273,6 @@ async def reset_catalog(provider: str, *, expected_revision: int, actor: str) ->
         raise ConnectionError("Runtime catalog state is unavailable")
     if current.revision != expected_revision:
         raise RevisionConflict("Runtime settings revision changed; refresh before saving")
-    # The durable baseline marker shadows historical v2 records, including on
-    # another replica/startup. Reset and marker publish in one CAS; a conflict
-    # cannot delete a legacy catalog or resurrect it later.
     saved = await update_values(
         {f"catalog_baseline:{provider}": True},
         removals=(f"catalog:{provider}",),

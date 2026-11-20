@@ -7,7 +7,6 @@ from app.group_chat import GroupChat, GroupChatManager
 
 @pytest.fixture
 def group_chat_manager(monkeypatch):
-    # Reset singleton instance
     monkeypatch.setattr(GroupChatManager, "_instance", None)
     database_manager = MagicMock(is_connected=True)
     connection = MagicMock()
@@ -29,8 +28,6 @@ async def test_singleton_behavior(monkeypatch):
 @pytest.mark.asyncio
 async def test_initialize(group_chat_manager):
     with patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
-        # Setup mock return for initialize
-        # 1. load active groups (returns empty list) — no more CREATE TABLE calls
         mock_db_query.side_effect = [
             [],
         ]
@@ -38,7 +35,6 @@ async def test_initialize(group_chat_manager):
         await group_chat_manager.initialize()
 
         assert mock_db_query.call_count == 1
-        # Verify it loads active groups (tables created by migrations)
         assert "SELECT" in mock_db_query.call_args_list[0][0][0]
 
 
@@ -62,9 +58,6 @@ async def test_register_group(group_chat_manager):
         assert group_chat_manager.active_groups[chat_id].member_count == 1
         assert chat_id in group_chat_manager.user_groups[admin_id]
 
-        # Verify DB calls
-        # 1. INSERT group_chats
-        # 2. INSERT group_members
         assert mock_db_query.call_count == 2
         assert "INSERT INTO group_chats" in mock_db_query.call_args_list[0][0][0]
         assert "INSERT INTO group_members" in mock_db_query.call_args_list[1][0][0]
@@ -75,7 +68,6 @@ async def test_add_member_to_group(group_chat_manager):
     chat_id = 100
     user_id = 2
 
-    # Pre-register a group
     group = GroupChat(
         chat_id=chat_id,
         title="Test Group",
@@ -100,7 +92,6 @@ async def test_add_member_to_group(group_chat_manager):
         assert group_chat_manager.active_groups[chat_id].member_count == 2
         assert chat_id in group_chat_manager.user_groups[user_id]
 
-        # Verify DB calls
         assert mock_db_query.call_count == 2
         assert "INSERT INTO group_members" in mock_db_query.call_args_list[0][0][0]
         assert "UPDATE group_chats" in mock_db_query.call_args_list[1][0][0]
@@ -111,7 +102,6 @@ async def test_remove_member_from_group(group_chat_manager):
     chat_id = 100
     user_id = 2
 
-    # Pre-register a group and member
     group = GroupChat(
         chat_id=chat_id,
         title="Test Group",
@@ -132,7 +122,6 @@ async def test_remove_member_from_group(group_chat_manager):
         assert group_chat_manager.active_groups[chat_id].member_count == 1
         assert chat_id not in group_chat_manager.user_groups[user_id]
 
-        # Verify DB calls
         assert mock_db_query.call_count == 2
         assert "DELETE FROM group_members" in mock_db_query.call_args_list[0][0][0]
         assert "UPDATE group_chats" in mock_db_query.call_args_list[1][0][0]
@@ -142,7 +131,6 @@ async def test_remove_member_from_group(group_chat_manager):
 async def test_get_group_stats(group_chat_manager):
     chat_id = 100
 
-    # Pre-register a group
     group = GroupChat(
         chat_id=chat_id,
         title="Test Group",
@@ -157,9 +145,9 @@ async def test_get_group_stats(group_chat_manager):
 
     with patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
         mock_db_query.side_effect = [
-            [{"count": 100}],  # total_messages
-            [{"count": 10}],  # recent_messages
-            [{"count": 5}],  # active_users
+            [{"count": 100}],
+            [{"count": 10}],
+            [{"count": 5}],
         ]
 
         stats = await group_chat_manager.get_group_stats(chat_id)
@@ -176,7 +164,6 @@ async def test_log_group_message(group_chat_manager):
     user_id = 1
     message_text = "Hello"
 
-    # Pre-register a group
     group = GroupChat(
         chat_id=chat_id,
         title="Test Group",

@@ -34,8 +34,6 @@ async def test_sent_requests_and_pending_reservations_share_the_same_three_slots
     assert pending is not None and last_free is not None
     assert await limiter.reserve("key-model", 3) == (None, 60.0)
 
-    # Only the sent request expires after its dispatch window. Both pending
-    # requests keep their reservations until dispatch or owned cancellation.
     now[0] = 160.0
     assert (await limiter.reserve("key-model", 3))[0] is not None
     assert await limiter.reserve("key-model", 3) == (None, 60.0)
@@ -80,7 +78,6 @@ async def test_slow_daily_admission_cannot_expire_or_shorten_sent_minute_usage(q
     limiter, now = quota
     token, _ = await limiter.reserve("scope", 1, pending_for=120)
     now[0] = 161.0
-    # Another worker still sees the held slot before the first dispatch.
     assert await limiter.reserve("scope", 1) == (None, 60.0)
     await limiter.commit("scope", token)
     assert await limiter.reserve("scope", 1) == (None, 60.0)

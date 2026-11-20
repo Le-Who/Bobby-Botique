@@ -88,7 +88,6 @@ def install_key_pool(monkeypatch, model_keys):
 async def test_companion_key_lookup_cannot_replace_the_selected_model(
     monkeypatch, model_keys, expected_model, expected_key
 ):
-    # Resolving a companion on a different model must not reroute the first key.
     _lookups, reservations, calls = install_key_pool(monkeypatch, model_keys)
     request = GenerationRequest(
         models=(PRIMARY,),
@@ -105,7 +104,6 @@ async def test_companion_key_lookup_cannot_replace_the_selected_model(
 
 @pytest.mark.asyncio
 async def test_hedged_lanes_resolve_only_their_model_without_duplicate_fallback_attempts(monkeypatch):
-    # A keyless primary must end its lane, leaving fallback work to its own lane.
     lookups, reservations, calls = install_key_pool(monkeypatch, {BACKUP: ["backup-key"]})
     monkeypatch.setattr("app.providers.router._ordered_gemini_fallback_models", lambda model: [])
     monkeypatch.setattr("app.providers.router.MODEL_HEDGE_DELAY_SECONDS", 0)

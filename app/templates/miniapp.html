@@ -21,23 +21,18 @@
 }
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
 
-/* ── FIX #7: Prevent overscroll from triggering Telegram close gesture ── */
 html { height: 100%; overflow: hidden; }
 body {
   background: var(--secondary-bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
-  /* Viewport is fixed; .page elements scroll internally */
   height: 100%;
   overflow: hidden;
   position: fixed;
   width: 100%;
-  /* overscroll-behavior blocks the pull-to-close bounce on both iOS and Android */
   overscroll-behavior-y: none;
 }
 
-/* ── Stack Navigation ── */
-/* Each page fills the fixed viewport and scrolls internally. */
 .page {
   display: none;
   background: var(--secondary-bg);
@@ -52,16 +47,13 @@ body {
 .page.active { display: block; }
 @keyframes fadeSlide { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
-/* ── Common Sections ── */
 .section { background: var(--section-bg); margin: 8px 16px; border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
 .section-full { background: var(--section-bg); margin: 8px 0; border-top: 1px solid var(--secondary-bg); border-bottom: 1px solid var(--secondary-bg); }
 .section-header { padding: 16px 16px 4px; font-size: 13px; font-weight: 600; color: var(--section-header); text-transform: uppercase; letter-spacing: .3px; }
 
-/* ── Skeletons ── */
 .skeleton { background: linear-gradient(90deg, var(--secondary-bg) 25%, var(--bg) 50%, var(--secondary-bg) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 6px; }
 @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 
-/* ── Page: Memories ── */
 .search-header { position: sticky; top: 0; z-index: 10; background: var(--bg); padding: 12px 16px; border-bottom: 1px solid var(--secondary-bg); display: flex; gap: 12px; align-items: center; }
 .search-input { flex: 1; padding: 10px 14px; border: none; background: var(--secondary-bg); border-radius: 10px; font-size: 16px; color: var(--text); outline: none; }
 .search-input::placeholder { color: var(--hint); }
@@ -79,9 +71,8 @@ body {
 .memory-time { font-size: 12px; color: var(--hint); }
 .delete-action { position: absolute; right: 0; top: 0; bottom: 0; width: 100%; background: var(--destructive); display: flex; align-items: center; justify-content: flex-end; padding-right: 24px; color: #fff; font-size: 15px; font-weight: 600; z-index: 0; }
 
-/* ── FIX #2: Desktop hover-reveal delete button ── */
 .memory-delete-hover {
-  display: none; /* only shown via @media(hover:hover) below */
+  display: none;
   position: absolute;
   right: 0; top: 0; bottom: 0;
   width: 52px;
@@ -100,13 +91,11 @@ body {
 .memory-delete-hover svg { width: 20px; height: 20px; }
 
 @media (hover: hover) {
-  /* On pointer devices: show hover-delete icon on card hover */
   .memory-delete-hover { display: flex; }
   .memory-card:hover .memory-delete-hover {
     opacity: 1;
     transform: translateX(0);
   }
-  /* Audit fix M-5: preserve 'transform' in hover-state transition so swipe bounce still animates */
   .memory-card:hover .memory-card-inner {
     padding-right: 56px;
     background: color-mix(in srgb, var(--bg) 90%, var(--link) 10%);
@@ -119,14 +108,12 @@ body {
 
 .bottom-sentinel { height: 40px; }
 
-/* ── Settings Controls ── */
 .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; min-height: 44px; border-bottom: .5px solid var(--secondary-bg); cursor: pointer; }
 .setting-row:last-child { border-bottom: none; }
 .setting-label { font-size: 16px; font-weight: 400; }
 .setting-val { font-size: 16px; color: var(--link); display: flex; align-items: center; gap: 4px; }
 .setting-hint-text { font-size: 13px; color: var(--hint); margin-top: 2px; line-height: 1.3; }
 
-/* Toggles */
 .toggle { position: relative; width: 51px; height: 31px; flex-shrink: 0; }
 .toggle input { opacity: 0; width: 0; height: 0; }
 .toggle-track { position: absolute; inset: 0; border-radius: 16px; background: var(--hint); opacity: 0.3; transition: all .2s; cursor: pointer; }
@@ -134,12 +121,10 @@ body {
 .toggle input:checked + .toggle-track { background: var(--link); opacity: 1; }
 .toggle input:checked + .toggle-track::after { transform: translateX(20px); }
 
-/* Segmented */
 .segmented { display: flex; background: var(--secondary-bg); border-radius: 8px; padding: 2px; margin: 12px 16px; }
 .segment { flex: 1; text-align: center; padding: 8px 0; font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 6px; color: var(--hint); transition: all .2s; }
 .segment.active { background: var(--bg); color: var(--text); box-shadow: var(--shadow); }
 
-/* Slider */
 .slider-wrap { padding: 0 16px 16px; display: none; animation: slideDown 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .slider-wrap.show { display: flex; align-items: center; gap: 12px; }
 @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
@@ -147,10 +132,9 @@ body {
 .range-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.2); border: 1px solid #ddd; }
 .slider-val-input { width: 50px; text-align: center; font-size: 15px; border: none; background: var(--secondary-bg); color: var(--text); border-radius: 6px; padding: 6px; }
 
-/* ── FIX #1: Chips with scroll arrows and gradient fade ── */
 .chips-container {
   position: relative;
-  overflow: hidden; /* clips the gradient masks */
+  overflow: hidden;
 }
 .chips-wrap { display: flex; overflow-x: auto; gap: 8px; padding: 12px 16px; scrollbar-width: none; scroll-behavior: smooth; }
 .chips-wrap::-webkit-scrollbar { display: none; }
@@ -158,7 +142,6 @@ body {
 .chip:active { transform: scale(0.96); }
 .chip.active { background: var(--link); color: #fff; }
 
-/* Fade-out gradient edges — always visible to hint overflow */
 .chips-fade-left, .chips-fade-right {
   position: absolute;
   top: 0; bottom: 0;
@@ -171,7 +154,6 @@ body {
 .chips-fade-right { right: 0; background: linear-gradient(to left,  var(--section-bg), transparent); }
 .chips-fade-left.hidden, .chips-fade-right.hidden { opacity: 0; }
 
-/* Scroll arrow buttons — desktop only */
 .chips-arrow {
   display: none;
   position: absolute;
@@ -199,13 +181,10 @@ body {
   .chips-container:hover .chips-arrow.visible { opacity: 1; }
 }
 
-/* Prompt */
 .prompt-preview { font-size: 15px; color: var(--hint); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Prompt Page */
 #page-prompt { padding: 16px; flex-direction: column; }
 #page-prompt.active { display: flex; }
-/* Audit fix C-4: use flex 1 + min-height:0 instead of calc(100vh) which breaks on iOS with virtual keyboard */
 .prompt-area {
   flex: 1;
   min-height: 0;
@@ -224,7 +203,6 @@ body {
 }
 .char-count { padding: 8px; font-size: 12px; color: var(--hint); text-align: right; }
 
-/* Bottom Sheet */
 .bottom-sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; opacity: 0; pointer-events: none; transition: opacity .3s; }
 .bottom-sheet-overlay.show { opacity: 1; pointer-events: auto; }
 .bottom-sheet { position: absolute; bottom: 0; left: 0; right: 0; background: var(--bg); border-top-left-radius: 20px; border-top-right-radius: 20px; transform: translateY(100%); transition: transform .3s cubic-bezier(0.2, 0.8, 0.2, 1); max-height: 80vh; overflow-y: auto; }
@@ -235,7 +213,6 @@ body {
 .sheet-row:active { background: var(--secondary-bg); }
 .sheet-row.active { color: var(--link); font-weight: 600; }
 .sheet-row.active::after { content: "✓"; }
-/* Provider group header in model picker */
 .sheet-provider-header {
   display: flex;
   align-items: center;
@@ -251,23 +228,20 @@ body {
   user-select: none;
   border-bottom: .5px solid var(--secondary-bg);
   position: sticky;
-  top: 56px; /* below .sheet-header */
+  top: 56px;
   z-index: 1;
 }
 .sheet-provider-header .ph-chevron { font-size: 13px; transition: transform .2s; }
 .sheet-provider-group.collapsed .ph-chevron { transform: rotate(-90deg); }
 .sheet-provider-group.collapsed .sheet-provider-rows { display: none; }
-/* Model display name and sub-label */
 .model-name { font-size: 15px; }
 .model-sub { font-size: 12px; color: var(--hint); margin-top: 1px; }
 
-/* Toast */
 .toast-wrap { position: fixed; bottom: 84px; left: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 200; pointer-events: none; }
 .toast { background: var(--text); color: var(--bg); padding: 12px 16px; border-radius: 12px; font-size: 14px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,.15); pointer-events: auto; animation: slideUp .3s cubic-bezier(0.2, 0.8, 0.2, 1); }
 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 .toast-undo { color: var(--bg); background: rgba(255,255,255,0.2); border: none; padding: 6px 12px; border-radius: 6px; font-weight: 600; cursor: pointer; }
 
-/* ── FIX #3: Destructive Morphing Button ── */
 .btn-hold {
   background: var(--bg);
   color: var(--destructive);
@@ -291,10 +265,8 @@ body {
   border-color: #c62828;
   box-shadow: 0 0 0 3px rgba(229, 57, 53, 0.18);
 }
-/* progress fill still used for touch hold */
 .btn-hold-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(229, 57, 53, 0.1); transition: width 0.1s linear; }
 .btn-hold-label { position: relative; z-index: 1; transition: opacity .15s; }
-/* Countdown ring (desktop) */
 .btn-hold-countdown {
   display: inline-block;
   margin-left: 6px;
@@ -308,7 +280,6 @@ body {
 .empty-state-title { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
 .empty-state-desc { font-size: 14px; line-height: 1.5; }
 
-/* ── FIX #4: Tab Bar — Mobile attached, Desktop floating dock ── */
 .tab-bar {
   position: fixed;
   bottom: 0; left: 0; right: 0;
@@ -317,7 +288,6 @@ body {
   border-top: 1px solid var(--secondary-bg);
   padding: 6px 0 max(6px, env(safe-area-inset-bottom));
   z-index: 50;
-  /* Audit fix C-1: transition:all caused ugly resize animation; specify only safe properties */
   transition: background .2s ease, box-shadow .2s ease;
 }
 .tab-btn {
@@ -338,7 +308,6 @@ body {
 .tab-btn.active .tab-btn-icon { transform: scale(1.12); }
 .tab-btn-icon { font-size: 20px; transition: transform .2s cubic-bezier(0.34, 1.56, 0.64, 1); }
 
-/* Desktop floating dock */
 @media (hover: hover) and (min-width: 450px) {
   .tab-bar {
     left: 50%;
@@ -365,7 +334,6 @@ body {
   .tab-btn.active { background: color-mix(in srgb, var(--link) 12%, var(--secondary-bg) 88%); }
 }
 
-/* ── FIX #5 + #6: Graph Canvas & Settings density ── */
 #graph-canvas { width: 100%; height: calc(100vh - 120px); background: var(--secondary-bg); border-radius: var(--radius); margin: 8px; overflow: hidden; position: relative; }
 .graph-controls { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px; z-index: 5; }
 .graph-btn {
@@ -387,35 +355,27 @@ body {
 .graph-tooltip { position: absolute; background: var(--text); color: var(--bg); padding: 8px 12px; border-radius: 8px; font-size: 12px; pointer-events: none; z-index: 10; white-space: nowrap; opacity: 0; transition: opacity .2s; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
 .graph-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--hint); }
 .graph-stats { position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: var(--hint); background: var(--bg); padding: 4px 8px; border-radius: 6px; box-shadow: var(--shadow); z-index: 5; }
-/* Graph wheel-zoom hint */
 .graph-hint { position: absolute; bottom: 12px; right: 12px; font-size: 10px; color: var(--hint); opacity: 0; transition: opacity 1s; }
 .graph-hint.show { opacity: 1; }
 
-/* ── FIX #6: Settings — Adaptive density for desktop precision ── */
 @media (hover: hover) {
-  /* Slimmer settings rows — cursor is precise, no need for huge tap targets */
   .setting-row { min-height: 38px; padding: 10px 16px; }
-  /* More refined slider thumb */
   .range-slider::-webkit-slider-thumb {
     width: 16px; height: 16px;
     box-shadow: 0 1px 4px rgba(0,0,0,.15);
     cursor: ew-resize;
   }
   .range-slider { cursor: ew-resize; }
-  /* Crisper toggles */
   .toggle { width: 44px; height: 26px; }
   .toggle-track::after { width: 22px; height: 22px; left: 2px; top: 2px; }
   .toggle input:checked + .toggle-track::after { transform: translateX(18px); }
-  /* Chip hover state */
   .chip:hover:not(.active) { background: color-mix(in srgb, var(--secondary-bg) 70%, var(--link) 30%); color: var(--link); }
-  /* Segmented control — tighter on desktop */
   .segment { padding: 6px 0; font-size: 12px; }
 }
 </style>
 </head>
 <body>
 
-<!-- Page: Memories (Root) -->
 <div id="page-memories" class="page">
 <div class="search-header">
     <button id="graph-open-btn" class="settings-btn" type="button" onclick="switchTab('graph')" title="Граф знаний" aria-label="Открыть граф знаний">🕸️</button>
@@ -442,7 +402,6 @@ body {
   <div class="bottom-sentinel" id="bottom-sentinel"></div>
 </div>
 
-<!-- Page: Settings -->
 <div id="page-settings" class="page">
   <div class="section-header">LLM & Персонаж</div>
   <div class="section">
@@ -494,7 +453,6 @@ body {
 
   <div class="section-header">Мои Роли</div>
   <div class="section">
-    <!-- FIX #1: chips-container wraps the scroll row with arrow buttons and fade masks -->
     <div class="chips-container" id="s-roles-container">
       <div class="chips-fade-left hidden" id="roles-fade-left"></div>
       <div class="chips-fade-right hidden" id="roles-fade-right"></div>
@@ -536,7 +494,6 @@ body {
   </div>
 </div>
 
-<!-- Page: Knowledge Graph -->
 <div id="page-graph" class="page">
   <div class="search-header" style="justify-content: center; gap: 12px;">
     <span style="font-size: 16px; font-weight: 600;">🕸️ Граф знаний</span>
@@ -553,7 +510,6 @@ body {
   </div>
 </div>
 
-<!-- Tab Bar -->
 <div class="tab-bar">
   <div class="tab-btn" id="tab-settings" onclick="switchTab('settings')">
     <span class="tab-btn-icon">⚙️</span>
@@ -565,21 +521,17 @@ body {
   </div>
 </div>
 
-<!-- Page: Prompt Editor -->
 <div id="page-prompt" class="page">
   <textarea id="s-prompt-area" class="prompt-area" placeholder="Введите инструкции для бота..."></textarea>
   <div class="char-count"><span id="s-prompt-count">0</span> / 4000</div>
 </div>
 
-<!-- Bottom Sheets -->
 <div class="bottom-sheet-overlay" id="sheet-overlay" onclick="closeSheet()">
-  <!-- Models -->
   <div class="bottom-sheet" id="sheet-models" onclick="event.stopPropagation()">
     <div class="sheet-header">Выберите AI Модель</div>
     <div id="sheet-models-list"></div>
   </div>
   
-  <!-- Thinking -->
   <div class="bottom-sheet" id="sheet-thinking" onclick="event.stopPropagation()">
     <div class="sheet-header">Уровень размышлений</div>
     <div class="sheet-row" data-val="off" onclick="setThinking('off')">Выкл</div>
@@ -596,14 +548,12 @@ const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
 
-// Enable header color to match background
 tg.setHeaderColor('secondary_bg_color');
 tg.setBackgroundColor('secondary_bg_color');
 
 const AUTH = 'tma ' + tg.initData;
 const API = '/webapp/api';
 
-// ── State ──
 let stack = [];
 let allMemories = [];
 let renderedMemoryIds = new Set();
@@ -627,14 +577,11 @@ let thinkingMap = { "off": "Выкл", "low": "Низкий", "medium": "Сре�
 let currentTargetSheet = null;
 let roleDataCache = [];
 
-// Human-readable display names for models (auto-populated from API, enriched with known aliases)
 const MODEL_DISPLAY_NAMES = {
-  // Google Gemini
   'gemini-3.6-flash':                { name: 'Gemini 3.6 Flash', sub: '💥 Основная мощная модель' },
   'gemini-3.5-flash':                { name: 'Gemini 3.5 Flash', sub: '⚡ Мощная резервная модель' },
   'gemini-3.5-flash-lite':           { name: 'Gemini 3.5 Flash Lite', sub: '🍱 Лёгкая быстрая версия' },
   'gemini-3.1-flash-lite':           { name: 'Gemini 3.1 Flash Lite', sub: '🐌 Резервная лёгкая версия' },
-  // Opencode Go
   'opencode-go/glm-5':               { name: 'GLM 5', sub: '🌐 Универсальная модель' },
   'opencode-go/glm-5.1':             { name: 'GLM 5.1', sub: '📚 Длинный контекст и логика' },
   'opencode-go/mimo-v2-pro':         { name: 'MiMo V2 Pro', sub: '🧠 Продвинутый помощник' },
@@ -645,14 +592,12 @@ const MODEL_DISPLAY_NAMES = {
   'opencode-go/qwen3.6-plus':        { name: 'Qwen 3.6+', sub: '🔬 Исследования и анализ' },
   'opencode-go/mimo-v2-omni':        { name: 'MiMo V2 Omni', sub: '👁️ Мультимодальный (vision)' },
   'opencode-go/big-pickle':          { name: 'Big Pickle', sub: '🥒 Поиск и парсинг URL (GLM-4.5)' },
-  // OpenRouter
   'stepfun/step-3.5-flash:free':     { name: 'Step 3.5 Flash', sub: '🌐 OpenRouter — бесплатный' },
   'stepfun/step-3-mini:free':        { name: 'Step 3 Mini', sub: '🌐 OpenRouter' },
 };
 
 let pendingDeletions = {};
 
-// ── Navigation Stack ──
 function pushPage(pageId) {
   if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
   if (stack.length > 0) {
@@ -690,7 +635,6 @@ function popPage() {
   }
   
   if (popped === 'page-prompt') {
-    // Left prompt editor, update preview
     const text = document.getElementById('s-prompt-area').value;
     document.getElementById('val-prompt-preview').textContent = text ? text.substring(0, 20) + '...' : 'Стандартная';
     markDirty();
@@ -701,7 +645,6 @@ function popPage() {
 
 tg.BackButton.onClick(() => popPage());
 
-// ── Intersections ──
 function initObserver() {
   observer = new IntersectionObserver((entries) => {
     if (entries[0].isIntersecting && hasMoreMemories && !isFetching) {
@@ -711,7 +654,6 @@ function initObserver() {
   observer.observe(document.getElementById('bottom-sentinel'));
 }
 
-// ── API ──
 async function api(path, opts = {}) {
   const r = await fetch(API + path, { ...opts, headers: { 'Authorization': AUTH, 'Content-Type': 'application/json', ...opts.headers } });
   if (!r.ok) throw new Error(r.status);
@@ -753,14 +695,12 @@ function showUndoToast(msg, onUndo) {
   return retire;
 }
 
-// ── Memories (Infinite Scroll, Swipe) ──
 async function loadMemoriesBlock() {
   isFetching = true;
   try {
     const listEl = document.getElementById('memory-list');
-    if (memoryOffset === 0) listEl.innerHTML = ''; // first load clear skeletons
+    if (memoryOffset === 0) listEl.innerHTML = '';
     
-    // Also load stats if first time
     if (memoryOffset === 0) {
       api('/memories/stats').then(s => {
         document.getElementById('mem-stats-text').textContent = `${s.total_memories || 0} / ${s.limit || 500}`;
@@ -769,7 +709,6 @@ async function loadMemoriesBlock() {
       }).catch(console.error);
     }
     
-    // Apply search filter locally if loaded
     const query = document.getElementById('search-input').value.trim();
     
     const data = await api(`/memories?offset=${memoryOffset}&limit=${MEMORY_PAGE}`);
@@ -784,7 +723,7 @@ async function loadMemoriesBlock() {
     if (query && allMemories.length > 0) {
       const lowerQuery = query.toLowerCase();
       const filtered = allMemories.filter(m => m.content.toLowerCase().includes(lowerQuery));
-      listEl.innerHTML = ''; // Full re-render of local filter
+      listEl.innerHTML = '';
       renderedMemoryIds.clear();
       itemsToRender = filtered;
     }
@@ -801,7 +740,6 @@ async function loadMemoriesBlock() {
   }
 }
 
-// Attach local filter handler
 document.getElementById('search-input').addEventListener('input', (e) => {
   const query = e.target.value.trim().toLowerCase();
   const listEl = document.getElementById('memory-list');
@@ -862,11 +800,9 @@ function renderBlock(items) {
         </div>
       </div>
     `;
-    // Desktop hover-delete button
-    // Audit fix C-3: guard against double-scheduling (swipe may also fire a click)
     card.querySelector('.memory-delete-hover').addEventListener('click', (e) => {
       e.stopPropagation();
-      if (pendingDeletions[memId]) return; // already scheduled via swipe
+      if (pendingDeletions[memId]) return;
       if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
       const inner = card.querySelector('.memory-card-inner');
       inner.style.transition = 'opacity .2s';
@@ -886,7 +822,6 @@ function enforceDOMBudget() {
   const cards = Array.from(listEl.querySelectorAll('.memory-card'));
   if (cards.length > DOM_LIMIT) {
     const toRemove = cards.length - DOM_LIMIT;
-    // Remove from top
     for (let i = 0; i < toRemove; i++) {
         const el = cards[i];
         if (el.previousElementSibling && el.previousElementSibling.classList.contains('timeline-date')) {
@@ -905,9 +840,7 @@ function initSwipeToDelete(card) {
   const id = parseInt(card.dataset.id);
   let startX = 0, currentX = 0, swiping = false, startTime = 0;
 
-  // Pointer Events work on both touch (mobile) and mouse (desktop).
   inner.addEventListener('pointerdown', e => {
-    // Only react to primary pointer (left mouse button or first touch)
     if (!e.isPrimary) return;
     startX = e.clientX;
     currentX = 0;
@@ -920,7 +853,7 @@ function initSwipeToDelete(card) {
   inner.addEventListener('pointermove', e => {
     if (!swiping || !e.isPrimary) return;
     currentX = e.clientX - startX;
-    if (currentX > 0) currentX = 0; // left-only
+    if (currentX > 0) currentX = 0;
     inner.style.transform = `translateX(${currentX}px)`;
   });
 
@@ -932,7 +865,6 @@ function initSwipeToDelete(card) {
     if (currentX < -(window.innerWidth * 0.4) || (velocity > 0.8 && currentX < -50)) {
       if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
       inner.style.transform = 'translateX(-100%)';
-      // Audit fix C-3: guard against double-scheduling (hover-delete click may also fire)
       if (!pendingDeletions[id]) {
         setTimeout(() => scheduleDelete(id, card), 300);
       }
@@ -947,10 +879,8 @@ function initSwipeToDelete(card) {
 
 function scheduleDelete(id, cardNode) {
   if (pendingDeletions[id]) return;
-  // Hide element visually
   cardNode.style.height = cardNode.offsetHeight + 'px';
   cardNode.style.opacity = '1';
-  // Check if header needs removing
   let prevHeader = null;
   if (cardNode.previousElementSibling && cardNode.previousElementSibling.classList.contains('timeline-date')) {
       if (!cardNode.nextElementSibling || cardNode.nextElementSibling.classList.contains('timeline-date')) {
@@ -958,7 +888,7 @@ function scheduleDelete(id, cardNode) {
       }
   }
 
-  cardNode.offsetHeight; // force reflow
+  cardNode.offsetHeight;
   cardNode.style.transition = 'height .3s, opacity .3s, margin .3s, padding .3s';
   cardNode.style.height = '0';
   cardNode.style.opacity = '0';
@@ -1025,27 +955,19 @@ function scheduleDelete(id, cardNode) {
   });
 }
 
-// ── Flush pending deletes immediately on app close ──
-// Commit each owned undoable operation once, using best-effort keepalive for
-// page teardown. The normal completion/error path still owns the visible card.
 async function flushPendingDeletions() {
   await Promise.all(Object.values(pendingDeletions).map(operation => operation.doDelete({keepalive: true})));
 }
 
-// Fired when the native Telegram close gesture collapses the viewport
 tg.onEvent('viewportChanged', ({ isStateStable }) => {
   if (isStateStable && tg.viewportHeight < 10) flushPendingDeletions();
 });
-// Standard browser unload (covers desktop/browser opens)
 window.addEventListener('beforeunload', () => flushPendingDeletions());
 
-// ── Settings Subsystem ──
 
-// Helper: get display name for a model id
 function modelDisplayName(modelId) {
   const info = MODEL_DISPLAY_NAMES[modelId];
   if (info) return info.name;
-  // Fallback: strip provider prefix and prettify
   const short = modelId.replace(/^[^/]+\//, '').replace(/-/g, ' ');
   return short.charAt(0).toUpperCase() + short.slice(1);
 }
@@ -1079,7 +1001,6 @@ function buildModelSheet() {
     return row;
   }
   if (!groupedModels.length) {
-    // Flat fallback if no grouped_models
     availableModels.forEach(model => list.appendChild(modelRow(model, false)));
     return;
   }
@@ -1132,30 +1053,24 @@ function renderSettings(d, r, v) {
   groupedModels = d.grouped_models || [];
   roleDataCache = r.roles || [];
   
-  // Populate model sheet
   buildModelSheet();
   document.getElementById('val-model').textContent = `${modelDisplayName(settingsData.model)}${settingsData.model_editable ? ' ❭' : ' · Администратор'}`;
   document.getElementById('setting-model').setAttribute('aria-disabled', String(!settingsData.model_editable));
   
   renderRoles(settingsData.system_prompt);
   
-  // Prompt
   const prev = settingsData.system_prompt || 'Стандартная';
   document.getElementById('val-prompt-preview').textContent = prev.length > 20 ? prev.substring(0, 20)+'...' : prev;
   document.getElementById('s-prompt-area').value = settingsData.system_prompt || '';
   
-  // Toggles
   document.getElementById('s-ltm').checked = settingsData.ltm_enabled;
   document.getElementById('s-search').checked = settingsData.search_enabled;
   
-  // Thinking
   setThinking(settingsData.thinking_level || 'off', true);
   
-  // Temp
   syncTempControls(settingsData.temperature);
   syncTtsTempControls(settingsData.tts_temperature);
   
-  // Voices
   const voices = v.voices || [];
   if (!voices.some(voice => voice.id === settingsData.voice_id)) settingsData.voice_id = null;
   const activeVoice = settingsData.voice_id || v.default_voice;
@@ -1191,7 +1106,6 @@ async function loadSettings() {
   let loadBaseline = renderedSettingsDraft;
   let serverSettled = false;
   try {
-    // Optimistic UI via CloudStorage
     if (tg.CloudStorage) {
       tg.CloudStorage.getItem('gemaibot_settings_cache', (err, val) => {
         if (generation === settingsLoadGeneration && !serverSettled && settingsRevision === revision && !err && val) {
@@ -1238,7 +1152,6 @@ function renderRoles(activePrompt) {
     bindChoice(chip, () => setRole(role.prompt, chip));
     wrap.appendChild(chip);
   });
-  // FIX #1: refresh arrow/fade states after chips DOM change
   requestAnimationFrame(() => {
     const wrap = document.getElementById('s-roles-wrap');
     if (wrap) wrap.dispatchEvent(new Event('scroll'));
@@ -1303,7 +1216,6 @@ async function saveSettings() {
   }
 }
 
-// ── UI Helpers ──
 function openSheet(id) {
   if (id === 'sheet-thinking' && settingsData?.thinking_editable === false) return;
   if (id === 'sheet-models' && settingsData?.model_editable === false) return;
@@ -1324,7 +1236,6 @@ function setModel(model, element) {
   settingsData.effective_reasoning = settingsData.thinking_editable ? null : {effort: null, source: 'model_default', model};
   setThinking(settingsData.thinking_level || 'off', true);
   document.getElementById('val-model').textContent = `${modelDisplayName(model)} ❭`;
-  // Update active state in sheet
   document.querySelectorAll('#sheet-models .sheet-row').forEach(row => row.classList.remove('active'));
   element.classList.add('active');
   closeSheet();
@@ -1374,7 +1285,6 @@ function setVoice(vid, row) {
   markDirty();
 }
 
-// ── Temperature Controller ──
 function syncTempControls(val) {
   const isCustom = val !== null && val !== 0.2 && val !== 0.9;
   document.querySelectorAll('#s-temp .segment').forEach(s => s.classList.remove('active'));
@@ -1465,8 +1375,6 @@ function onTtsSliderNumChange() {
   markDirty();
 }
 
-// ── FIX #3: Reset Context — Adaptive interaction ──
-// Mobile/Touch: hold 1s (fill progress). Desktop/Mouse: click once → confirm → click again.
 const resetBtn    = document.getElementById('btn-reset-context');
 const resetFill   = document.getElementById('reset-fill');
 const resetLabel  = document.getElementById('reset-label');
@@ -1478,31 +1386,20 @@ let resetCountdownTimer = null;
 const RESET_ORIGINAL_LABEL = '⚠️ Удерживайте для сброса контекста';
 const RESET_ORIGINAL_HINT  = 'Очищает текущую историю диалога (кроме памяти)';
 
-// M-1 fix: reactive pointer-device detection.
-// matchMedia('(hover: hover)').matches is evaluated ONCE at load time (const).
-// On hybrid devices (e.g., Surface with detachable keyboard/mouse), the hover
-// media feature can change during a session. We use a MediaQueryList listener
-// to rebind handlers when the environment changes.
 const hoverMQL = window.matchMedia('(hover: hover)');
 
 function bindResetBtn(isPointer) {
-  // Remove all previous listeners by cloning the node (simplest safe approach
-  // for a node that has no children that need event listeners).
   const oldBtn = resetBtn;
   const newBtn = oldBtn.cloneNode(true);
-  // Re-acquire inner element references since we cloned the node
   const newFill  = newBtn.querySelector('#reset-fill');
   const newLabel = newBtn.querySelector('#reset-label');
   oldBtn.parentNode.replaceChild(newBtn, oldBtn);
 
-  // Remap module-level vars to the new DOM nodes
-  // (resetBtn, resetFill, resetLabel, resetHint are `const` — use a wrapper)
   const btn   = newBtn;
   const fill  = newFill || document.getElementById('reset-fill');
   const label = newLabel || document.getElementById('reset-label');
 
   if (isPointer) {
-    // ── Desktop path: morph button on first click, confirm on second ──
     btn.addEventListener('click', async () => {
       if (!resetConfirming) {
         resetConfirming = true;
@@ -1538,7 +1435,6 @@ function bindResetBtn(isPointer) {
       }
     });
   } else {
-    // ── Mobile path: hold-to-confirm with fill animation ──
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       btn.setPointerCapture(e.pointerId);
@@ -1568,9 +1464,7 @@ function bindResetBtn(isPointer) {
   }
 }
 
-// Initial bind
 bindResetBtn(hoverMQL.matches);
-// Re-bind if hover capability changes (hybrid device connect/disconnect)
 hoverMQL.addEventListener('change', (e) => {
   clearInterval(resetCountdownTimer);
   clearTimeout(resetTimer);
@@ -1578,29 +1472,22 @@ hoverMQL.addEventListener('change', (e) => {
   bindResetBtn(e.matches);
 });
 
-// Prompt length
 document.getElementById('s-prompt-area').addEventListener('input', e => {
   document.getElementById('s-prompt-count').textContent = e.target.value.length;
   markDirty();
 });
 
-// Helper
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
 
-// Init
-// Init
 const params = new URLSearchParams(window.location.search);
 const tabParam = params.get('tab');
 if (tabParam === 'memories' || tabParam === 'graph') {
-  // graph is now accessed via the кнопка in memories header; redirect to memories
   switchTab('memories');
 } else {
-  // Default: open Settings tab on launch
   switchTab('settings');
 }
 initObserver();
 
-// ── Tab Switcher ──
 function switchTab(tab) {
   if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
   const map = {
@@ -1609,13 +1496,11 @@ function switchTab(tab) {
     'settings': 'page-settings'
   };
   
-  // Reset stack to root
   stack.forEach(id => document.getElementById(id).classList.remove('active'));
   stack = [map[tab]];
   document.getElementById(map[tab]).classList.add('active');
   tg.BackButton.hide();
   
-  // Active tab button
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
   
@@ -1624,14 +1509,12 @@ function switchTab(tab) {
   updateMainButton();
 }
 
-// ── FIX #1: Chips scroll helper + arrow update + wheel redirect ──
 function chipsScroll(wrapId, delta) {
   const wrap = document.getElementById(wrapId);
   if (!wrap) return;
   wrap.scrollBy({ left: delta, behavior: 'smooth' });
 }
 
-// Audit fix M-4: removed dead first parameter 'containerId' (was accepted but never used)
 function initChipsScroll(wrapId, leftArrowId, rightArrowId, fadeLeftId, fadeRightId) {
   const wrap      = document.getElementById(wrapId);
   const arrowL    = document.getElementById(leftArrowId);
@@ -1651,23 +1534,18 @@ function initChipsScroll(wrapId, leftArrowId, rightArrowId, fadeLeftId, fadeRigh
 
   wrap.addEventListener('scroll', update, { passive: true });
 
-  // ── Wheel-Y → Wheel-X redirect (desktop trackpad vertical scroll redirected to horizontal)
   wrap.addEventListener('wheel', (e) => {
-    // Only intercept if predominantly vertical
     if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
       e.preventDefault();
       wrap.scrollBy({ left: e.deltaY * 0.8, behavior: 'auto' });
     }
   }, { passive: false });
 
-  // Initial state
   requestAnimationFrame(update);
-  // Also update when content changes (MutationObserver)
   const mo = new MutationObserver(update);
   mo.observe(wrap, { childList: true });
 }
 
-// ── Graph Visualization (D3.js Force-Directed) ──
 let graphLoaded = false;
 let graphSimulation = null;
 let graphZoomBehavior = null;
@@ -1694,7 +1572,6 @@ async function loadGraph() {
     
     document.getElementById('graph-stats').textContent = `${nodes.length} nodes · ${edges.length} edges`;
     
-    // Build D3 data
     const nodeMap = new Map(nodes.map(n => [n.id, {...n, x: undefined, y: undefined}]));
     const links = edges.filter(e => nodeMap.has(e.source_node_id) && nodeMap.has(e.target_node_id))
                        .map(e => ({source: e.source_node_id, target: e.target_node_id, label: e.relation_type || '', weight: e.weight || 0.5}));
@@ -1703,13 +1580,10 @@ async function loadGraph() {
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     
-    // Inline D3 force simulation (minimal, no external dependency)
-    // Using native SVG manipulation
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     svg.innerHTML = '<g id="graph-g"></g>';
     const g = svg.querySelector('#graph-g');
     
-    // Assign initial positions
     nodeArr.forEach((n, i) => {
       const angle = (2 * Math.PI * i) / nodeArr.length;
       const radius = Math.min(width, height) * 0.35;
@@ -1718,7 +1592,6 @@ async function loadGraph() {
       n.vx = 0; n.vy = 0;
     });
     
-    // Color palette by entity type
     const typeColors = {
       'PERSON': '#4A90D9', 'SKILL': '#50C878', 'ORGANIZATION': '#E8A838',
       'LOCATION': '#C75050', 'CONCEPT': '#9B59B6', 'TECHNOLOGY': '#1ABC9C',
@@ -1727,7 +1600,6 @@ async function loadGraph() {
     function nodeColor(type) { return typeColors[(type||'').toUpperCase()] || typeColors.DEFAULT; }
     function nodeRadius(n) { return Math.max(6, Math.min(16, 6 + (links.filter(l => l.source === n.id || l.target === n.id).length) * 1.5)); }
     
-    // Render edges
     links.forEach(l => {
       const src = nodeMap.get(typeof l.source === 'object' ? l.source.id : l.source);
       const tgt = nodeMap.get(typeof l.target === 'object' ? l.target.id : l.target);
@@ -1742,7 +1614,6 @@ async function loadGraph() {
       g.appendChild(line);
     });
     
-    // Render nodes
     nodeArr.forEach(n => {
       const gNode = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       gNode.classList.add('graph-node');
@@ -1764,7 +1635,6 @@ async function loadGraph() {
       text.textContent = (n.name || '').substring(0, 18);
       gNode.appendChild(text);
       
-      // Tooltip
       gNode.addEventListener('click', () => {
         if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
         const tip = document.getElementById('graph-tooltip');
@@ -1775,7 +1645,6 @@ async function loadGraph() {
         setTimeout(() => tip.style.opacity = '0', 2500);
       });
       
-      // Dragging
       let dragging = false, dragX, dragY;
       gNode.addEventListener('pointerdown', e => {
         dragging = true; dragX = e.clientX - n.x; dragY = e.clientY - n.y;
@@ -1791,10 +1660,8 @@ async function loadGraph() {
       g.appendChild(gNode);
     });
     
-    // Simple force simulation (no D3 dependency)
     function simulate(iterations) {
       for (let i = 0; i < iterations; i++) {
-        // Repulsion between nodes
         for (let a = 0; a < nodeArr.length; a++) {
           for (let b = a+1; b < nodeArr.length; b++) {
             let dx = nodeArr[b].x - nodeArr[a].x;
@@ -1807,7 +1674,6 @@ async function loadGraph() {
             nodeArr[b].vy += (dy/d) * force;
           }
         }
-        // Attraction along links
         links.forEach(l => {
           let src = nodeMap.get(typeof l.source === 'object' ? l.source.id : l.source);
           let tgt = nodeMap.get(typeof l.target === 'object' ? l.target.id : l.target);
@@ -1821,13 +1687,11 @@ async function loadGraph() {
           tgt.vx -= (dx/d) * force;
           tgt.vy -= (dy/d) * force;
         });
-        // Center gravity
         nodeArr.forEach(n => {
           n.vx += (width/2 - n.x) * 0.005;
           n.vy += (height/2 - n.y) * 0.005;
           n.vx *= 0.9; n.vy *= 0.9;
           n.x += n.vx; n.y += n.vy;
-          // Bounds
           n.x = Math.max(20, Math.min(width - 20, n.x));
           n.y = Math.max(20, Math.min(height - 20, n.y));
         });
@@ -1849,13 +1713,9 @@ async function loadGraph() {
       });
     }
     
-    // Run physics in chunks for smooth animation
     simulate(120);
     updateGraphPositions();
     
-    // Audit fix C-2: CSS transition works only on CSS properties, not SVG attributes.
-    // Use style.transform for the zoom <g> element so the transition engine actually fires.
-    // Node positions still use setAttribute('transform') on individual <g>.graph-node elements.
     let currentZoom = 1;
     let panX = 0, panY = 0;
 
@@ -1865,12 +1725,8 @@ async function loadGraph() {
       } else {
         g.style.transition = 'none';
       }
-      // CSS transform (px-based): SVG native coords are already handled by viewBox/viewport.
-      // We must also keep setAttribute in sync for hit-testing (SVG event model uses attribute).
       g.style.transformOrigin = '0 0';
       g.style.transform = `translate(${panX}px, ${panY}px) scale(${currentZoom})`;
-      // setAttribute is a no-op for our visual zoom/pan but kept for any external SVG tools:
-      // g.setAttribute('transform', ...) intentionally removed from this path.
     }
 
     window.zoomGraph = function(factor, cx, cy) {
@@ -1888,7 +1744,6 @@ async function loadGraph() {
       applyGraphTransform(true);
     };
 
-    // Mouse wheel zoom on the graph canvas
     svg.addEventListener('wheel', (e) => {
       e.preventDefault();
       const rect = svg.getBoundingClientRect();
@@ -1898,7 +1753,6 @@ async function loadGraph() {
       zoomGraph(factor, mouseX, mouseY);
     }, { passive: false });
 
-    // Show hint on first hover
     let hintShown = false;
     canvas.addEventListener('mouseenter', () => {
       if (hintShown) return;
@@ -1921,7 +1775,6 @@ async function loadGraph() {
   }
 }
 
-// FIX #1 signature updated (containerId removed — audit fix M-4)
 initChipsScroll(
   's-roles-wrap',
   'roles-arrow-left',

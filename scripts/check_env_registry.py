@@ -32,7 +32,6 @@ def readers(path: Path) -> set[str]:
             func = ast.unparse(node.func)
             if func in {"os.getenv", "os.environ.get", *HELPERS} and node.args:
                 key = node.args[0]
-            # LoggingSettings reads an explicitly supplied environment mapping.
             if path.as_posix().endswith("app/observability/config.py"):
                 if func == "source.get" and node.args:
                     key = node.args[0]

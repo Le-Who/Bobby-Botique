@@ -1,4 +1,3 @@
-# /app/providers/tts.py
 """Gemini speech adapters returning complete, validated mono 24 kHz PCM.
 
 Current TTS models use Interactions speech metadata and explicit raw audio.
@@ -50,21 +49,9 @@ TTS_FALLBACK_MODEL = TTS_DEFAULT_MODELS[1]
 _MAX_TTS_DIRECTION_BYTES = 7500
 _MAX_TTS_SOURCE_BYTES = 64 * 1024
 
-# Available voices and their personalities:
-#   Aoede  — Breezy, natural (smooth conversational narration)
-#   Kore   — Firm, confident (upbeat, energetic)
-#   Puck   — Upbeat male (friendly, approachable)
-#   Charon — Informative (professional)
-#   Fenrir — Excitable (animated)
-#   Leda   — Youthful (light, bright)
-#   Orus   — Firm (deep, authoritative)
-#   Zephyr — Bright (clear, cheerful)
 DEFAULT_VOICE = "Aoede"
 
-# ─── Text pre-processing ──────────────────────────────────────────────────
 
-# Compiled regexes for stripping Markdown / Telegram formatting artifacts
-# that would confuse the TTS model or produce unnatural speech.
 _RE_CODE_BLOCK = re.compile(r"```[\s\S]*?```", re.MULTILINE)
 _RE_INLINE_CODE = re.compile(r"`([^`]+)`")
 _RE_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
@@ -82,8 +69,6 @@ _RE_EMOJI_CLUSTER = re.compile(
 )
 _MAX_CLEANUP_SOURCES = 32
 _MAX_CLEANUP_BYTES = 256 * 1024
-# Each rule only deletes characters: keep a capture group, an initial span,
-# or nothing. The same ordered rules drive the fast and provenance paths.
 _SPEECH_CLEAN_RULES: tuple[tuple[re.Pattern[str], int | None, int | None], ...] = (
     (_RE_CODE_BLOCK, None, None),
     (_RE_INLINE_CODE, 1, None),
@@ -171,15 +156,6 @@ def clean_speech_parts(parts: list[str]) -> list[str]:
             cursor += 1
         result.append(text[start:cursor])
     return result
-
-
-# ─── Legacy recitation rules and shared concise delivery directions ────────
-
-# Legacy models use the "Director's Notes + Transcript" pattern.
-# Gemini 3.8 receives concise delivery metadata and a separate transcript.
-# Keep recitation/pronunciation rules out of Gemini 3.8 speech_metadata.style:
-# its text input is already a verbatim transcript, and long persona/style blocks
-# can cause voice drift. The prebuilt voice supplies the speaker's identity.
 
 
 _TTS_BASE_INSTRUCTIONS = (
@@ -319,7 +295,6 @@ def _interaction_audio(response: Any, max_output_tokens: int | None = None) -> b
             data = getattr(content, "data", None)
             if not isinstance(data, str):
                 raise TTSOutputError("invalid_audio_encoding")
-            # Bound encoded input before allocating its decoded copy.
             if len(data) > ((MAX_TTS_AUDIO_BYTES + 2) // 3) * 4:
                 raise TTSOutputError("audio_too_large")
             try:
@@ -390,7 +365,6 @@ async def generate_speech(
     from app.config import settings
     from app.repos.keys import reserve_gemini_key_usage
 
-    # Construct local SDK state before reserving a request that could be sent.
     client = get_cached_genai_client(api_key)
     async with asyncio.timeout_at(deadline):
         pieces = await plan_speech_chunks(

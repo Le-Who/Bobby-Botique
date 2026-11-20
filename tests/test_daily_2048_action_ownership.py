@@ -19,8 +19,6 @@ from tests.factories import make_valid_init_data
 
 @pytest.fixture
 def move_store(monkeypatch):
-    # Keep the reducer, pending-result cache and mutation lock real; replace DB
-    # transport and Telegram authorization only.
     puzzle = repo.Daily2048Puzzle(
         puzzle_date=date(2026, 10, 25),
         board=[[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
@@ -79,8 +77,6 @@ def move_store(monkeypatch):
 @pytest.mark.asyncio
 async def test_concurrent_websocket_retry_applies_one_move(monkeypatch, move_store):
 
-    # Force both connections to observe the initial cache miss before either
-    # gets the mutation lock. Later in-lock rechecks must read the actual cache.
     original_lookup = crocodile_runtime.get_cached_pending_action_result
     first_lookups = 0
     both_missed = asyncio.Event()
@@ -168,8 +164,6 @@ async def test_cancelled_socket_finishes_committed_move_cache_before_retry(monke
             owners[0].cancel()
             await second.send(payload)
             await asyncio.wait_for(retry_waiting.wait(), 1)
-            # Repeated transport cancellation must still retain the mutex until
-            # the accepted operation makes its replayable response available.
             owners[0].cancel()
             finish_stamp.set()
             replay = json.loads(await asyncio.wait_for(second.receive(), 1))

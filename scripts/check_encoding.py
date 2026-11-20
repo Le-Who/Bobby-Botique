@@ -11,7 +11,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Retain the known corruption signatures used by the original guard.
 BROKEN_PATTERNS = (
     bytes([0xC3, 0xA2, 0x20]),
     bytes([0xC3, 0xA2, 0xC2, 0x8C]),
@@ -35,7 +34,6 @@ def check_file(path: Path) -> list[str]:
     for pattern in BROKEN_PATTERNS:
         if pattern in data:
             errors.append(f"{path}: known mojibake pattern {pattern.hex()}")
-    # Split only on LF: str.splitlines() would hide form feed and C1 controls.
     for line_number, line in enumerate(text.split("\n"), 1):
         controls = sorted(
             {ord(char) for char in line if (ord(char) < 32 and char not in "\t\r") or 127 <= ord(char) <= 159}
@@ -54,7 +52,6 @@ def discover_documents(root: Path) -> list[Path]:
         timeout=30,
     )
     paths = {root / name for name in result.stdout.decode("utf-8").split("\0") if name}
-    # Deleted tracked files have no working-tree content to validate.
     return sorted(path for path in paths if path.suffix.lower() == ".md" and path.exists())
 
 
@@ -62,7 +59,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="*", type=Path)
     args = parser.parse_args(argv)
-    # Diagnostics must work even on an ASCII/cp1251 terminal with Unicode paths.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
     try:

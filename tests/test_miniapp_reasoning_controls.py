@@ -86,7 +86,7 @@ async def test_get_effective_openai_reasoning_uses_pinned_profile_not_saved_gemi
     assert data["thinking_levels"] == []
     assert data["effective_reasoning"] == {"effort": effort, "source": source, "model": LUNA}
     assert data["settings"]["model"] == LUNA
-    assert data["settings"]["thinking_level"] == "high"  # Old-client unchanged payload compatibility.
+    assert data["settings"]["thinking_level"] == "high"
     assert data["available_models"] == [LUNA]
     assert data["model_editable"] is False
     assert web.state.model == GEMINI and web.state.thinking_level == "high"
@@ -233,7 +233,7 @@ def test_cached_thinking_is_not_editable_until_fresh_server_policy_arrives():
         pytest.skip("Node unavailable")
     template = (Path(__file__).parents[1] / "app/templates/miniapp.html").read_text(encoding="utf-8")
     load = template[template.index("async function loadSettings()") : template.index("function renderRoles(")]
-    state = template[template.index("let settingsData =") : template.index("// Human-readable display names")]
+    state = template[template.index("let settingsData =") : template.index("const MODEL_DISPLAY_NAMES =")]
     draft = template[template.index("function settingsDraft(") : template.index("async function saveSettings(")]
     script = (
         r"""

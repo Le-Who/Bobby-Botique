@@ -133,9 +133,6 @@ async def _acquire_private_data_lease(
     async with db_manager.pool.acquire() as conn, conn.transaction():
         await set_user_context(user_id, False, conn=conn)
         try:
-            # The same lock is taken by disable, clear-memory, and account erase.
-            # Therefore either this lease commits first and is waited on, or the
-            # barrier commits first and this INSERT observes the new generation.
             await conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
             rows = await db_query(
                 """
@@ -226,8 +223,6 @@ async def _lease_heartbeat(
         raise
     except Exception as exc:
         logging.warning("Private-data lease heartbeat failed for user %d: %s", user_id, exc)
-        # Do not let the provider outlive a lease which can no longer be renewed.
-        # The context-manager finally releases it; TTL remains the crash fallback.
         if not owner_task.done():
             owner_task.cancel()
 
@@ -300,9 +295,6 @@ async def private_data_lease(
             await asyncio.gather(heartbeat, return_exceptions=True)
             await _release_private_data_lease(user_id, lease_id)
 
-        # Revocation observes this durable row until release finishes. Repeated
-        # owner cancellation must not interrupt either heartbeat teardown or SQL
-        # release; retain and await this task rather than leaving detached work.
         cleanup_task = asyncio.create_task(cleanup())
         cancellation: asyncio.CancelledError | None = None
         while not cleanup_task.done():
@@ -358,9 +350,6 @@ async def wait_for_private_data_leases(
                 await clear_user_context(conn=conn)
 
         if not rows or int(rows[0]["active_count"] or 0) == 0:
-            # Completed leases normally self-delete. This final bounded sweep
-            # removes crash leftovers without touching a recreated account's
-            # newer generation.
             async with db_manager.pool.acquire() as conn, conn.transaction():
                 await set_user_context(user_id, False, conn=conn)
                 try:
@@ -466,8 +455,6 @@ async def private_data_barrier(
                 )
                 if not rows:
                     raise RuntimeError("privacy barrier requires an active account")
-                # Assign before transaction.__aexit__: if cancellation lands
-                # during COMMIT, the outer guard already knows what to restore.
                 barrier_epoch = int(rows[0]["memory_epoch"])
                 previous_ltm_enabled = bool(rows[0]["ltm_enabled"])
             finally:

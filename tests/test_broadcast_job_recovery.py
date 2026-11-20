@@ -263,7 +263,7 @@ async def test_retry_new_batch_only_safe_failed_recipients_rechecks_original_epo
     )
     parent = first["batch"]["batch_id"]
     journal.batches[parent]["state"] = "finished"
-    journal.active[101] = 70  # erased/recreated: never recapture old snapshot into this new epoch
+    journal.active[101] = 70
     retry = await service.retry_failed(parent, operation_id="00000000-0000-4000-8000-000000000004")
     child = retry["batch"]
     assert child["parent_batch_id"] == parent

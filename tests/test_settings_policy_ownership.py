@@ -113,7 +113,6 @@ async def test_settings_patch_preserves_newer_consent_while_waiting_for_lock(set
     )
     try:
         await asyncio.wait_for(consent_written.wait(), 1)
-        # A later dedicated opt-out does not wait on an ordinary request lock.
         web.chat.memory_epoch = 9
         web.chat.ltm_enabled = False
         lock.release()

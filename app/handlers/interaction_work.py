@@ -116,8 +116,6 @@ async def private_interaction(owner: InteractionOwner, chat_state=None) -> Async
         yield False
         return
     if chat_state is not None and getattr(chat_state, "_has_persisted_chat", True) is False:
-        # The first-use generation was created above. Keep subsequent writes
-        # tied to it rather than taking update_user_chat's unconditional path.
         chat_state.memory_epoch = owner.epoch
         chat_state._has_persisted_chat = True
     async with memory_consent.private_data_lease(

@@ -323,6 +323,4 @@ class BoundedQueueHandler(logging.Handler):
                 )
                 self.writer.submit(payload, levelno=logging.ERROR)
             except Exception:
-                # Deliberately avoid logging.Handler.handleError(record): it may
-                # print the raw message, args and credentials directly to stderr.
                 return

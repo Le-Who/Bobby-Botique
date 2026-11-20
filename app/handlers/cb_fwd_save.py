@@ -1,4 +1,3 @@
-# /app/handlers/cb_fwd_save.py
 """Callback handler for the "💾 Сохранить тезисы в память" button.
 
 This button appears after the AI analyzes a forwarded-message batch
@@ -20,9 +19,6 @@ async def fwd_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     if query is None:
         return
-    # A Telegram callback query can only be answered once.  Acknowledge it
-    # immediately so the spinner stops, then report the eventual result as a
-    # normal message (embedding may take longer than the callback deadline).
     await query.answer("⏳ Сохраняю…")
 
     user_id = update.effective_user.id
@@ -36,7 +32,6 @@ async def fwd_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await _report_result(query, "❌ Долгосрочная память выключена в настройках")
             return
 
-        # Pull the last model turn from history
         ai_response: str | None = None
         for entry in reversed(chat_state.history):
             if entry.get("role") == "model":
@@ -48,7 +43,6 @@ async def fwd_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await _report_result(query, "❌ Ответ слишком короткий для сохранения")
             return
 
-        # Store in long-term memory (same pipeline as _store_memory_in_background)
         from app.repos.keys import get_available_gemini_key
         from app.repos.memory import EMBEDDING_MODEL, store_memory
 
@@ -70,11 +64,9 @@ async def fwd_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
         logging.info("fwd_save: stored %d chars for user %d", len(snippet), user_id)
 
-        # Update button label immediately so the user sees confirmation
         try:
             current_markup = query.message.reply_markup
             if current_markup:
-                # Replace the fwd_save button with a ✅ confirmation label
                 new_rows = []
                 for row in current_markup.inline_keyboard:
                     new_row = []

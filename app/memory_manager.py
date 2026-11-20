@@ -35,9 +35,9 @@ class MemoryManager:
         self._cleanup_callbacks: list[Callable] = []
         self._memory_history: list[dict[str, Any]] = []
         self._max_history_size = 100
-        self._monitor_interval = 60  # seconds
+        self._monitor_interval = 60
         self._last_cleanup = time.time()
-        self._cleanup_cooldown = 300  # 5 minutes between cleanups
+        self._cleanup_cooldown = 300
         self._running = False
 
         try:
@@ -69,11 +69,9 @@ class MemoryManager:
                 await asyncio.sleep(self._monitor_interval)
                 await self._check_memory_usage()
 
-                # Clean up old history
                 cutoff_time = datetime.now() - timedelta(hours=1)
                 self._memory_history = [entry for entry in self._memory_history if entry["timestamp"] > cutoff_time]
 
-                # Keep only recent entries
                 if len(self._memory_history) > self._max_history_size:
                     self._memory_history = self._memory_history[-self._max_history_size :]
 
@@ -86,8 +84,6 @@ class MemoryManager:
     async def _check_memory_usage(self):
         """Checks current memory usage and triggers cleanup if needed."""
         try:
-            # psutil's CPU sample waits for an interval. Keep that wait and
-            # process/host inspection outside the shared Telegram/HTTP loop.
             memory_info = await asyncio.to_thread(self._get_memory_info)
             if "error" in memory_info:
                 logging.warning("Memory info error: %s", memory_info["error"])
@@ -95,7 +91,6 @@ class MemoryManager:
 
             self._memory_history.append(memory_info)
 
-            # Check thresholds
             if memory_info["percent"] >= self.thresholds.critical_percent:
                 logging.critical("Critical memory usage: %.1f%%", memory_info["percent"])
                 await self._emergency_cleanup()
@@ -103,7 +98,6 @@ class MemoryManager:
                 logging.warning("High memory usage: %.1f%%", memory_info["percent"])
                 await self._suggested_cleanup()
             elif memory_info["percent"] <= self.thresholds.cleanup_percent:
-                # Memory usage is low, we can be more aggressive with cleanup
                 if time.time() - self._last_cleanup > self._cleanup_cooldown:
                     await self._preventive_cleanup()
 
@@ -119,8 +113,8 @@ class MemoryManager:
 
             return {
                 "timestamp": datetime.now(),
-                "rss_mb": memory_info.rss / 1024 / 1024,  # Resident Set Size in MB
-                "vms_mb": memory_info.vms / 1024 / 1024,  # Virtual Memory Size in MB
+                "rss_mb": memory_info.rss / 1024 / 1024,
+                "vms_mb": memory_info.vms / 1024 / 1024,
                 "percent": process.memory_percent(),
                 "available_mb": virtual_memory.available / 1024 / 1024,
                 "total_mb": virtual_memory.total / 1024 / 1024,
@@ -135,16 +129,14 @@ class MemoryManager:
         logging.warning("Performing emergency memory cleanup")
 
         try:
-            # Split garbage collection across generations with yields to avoid GIL locking
             collected = 0
             for gen in range(3):
                 collected += gc.collect(gen)
-                await asyncio.sleep(0.05)  # Yield to event loop
+                await asyncio.sleep(0.05)
 
             if collected > 0:
                 logging.info("Emergency garbage collection collected %d objects", collected)
 
-            # Run all cleanup callbacks
             for callback in self._cleanup_callbacks:
                 try:
                     if inspect.iscoroutinefunction(callback):
@@ -156,7 +148,6 @@ class MemoryManager:
                 except Exception as e:
                     logging.error("Cleanup callback error: %s", e, exc_info=True)
 
-            # Clear memory history to free memory
             self._memory_history.clear()
 
             self._last_cleanup = time.time()
@@ -176,16 +167,14 @@ class MemoryManager:
         logging.info("Performing suggested memory cleanup")
 
         try:
-            # Split garbage collection across generations with yields
             collected = 0
-            for gen in range(2):  # Only 0 and 1 for suggested cleanup
+            for gen in range(2):
                 collected += gc.collect(gen)
                 await asyncio.sleep(0.05)
 
             if collected > 0:
                 logging.info("Garbage collection collected %d objects", collected)
 
-            # Run cleanup callbacks
             for callback in self._cleanup_callbacks:
                 try:
                     if inspect.iscoroutinefunction(callback):
@@ -207,7 +196,6 @@ class MemoryManager:
         logging.debug("Performing preventive memory cleanup")
 
         try:
-            # Light garbage collection directly (gen 0 is very fast), no thread needed
             collected = gc.collect(0)
             await asyncio.sleep(0.01)
 
@@ -260,7 +248,6 @@ class MemoryManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._monitoring_task
 
-        # Final cleanup
         self._cleanup_callbacks.clear()
         self._memory_history.clear()
         logging.info("Memory manager stopped")
@@ -280,24 +267,21 @@ class MemoryManager:
         """
         if self._running:
             try:
-                import sys as _sys  # noqa: PLC0415 — intentional late import
+                import sys as _sys  # noqa: PLC0415
 
                 _sys.stderr.write(
                     "[MemoryManager] destroyed while still running — "
                     "call await memory_manager.stop() before process exit\n"
                 )
-            except Exception:  # noqa: BLE001 — swallow everything in __del__
+            except Exception:  # noqa: BLE001
                 pass
-            # Best-effort task cancellation; may be a no-op if the loop is gone.
             if self._monitoring_task and not self._monitoring_task.done():
                 self._monitoring_task.cancel()
 
 
-# Global memory manager instance
 memory_manager = MemoryManager()
 
 
-# Convenience functions
 async def cleanup_memory() -> dict[str, Any]:
     """Forces memory cleanup."""
     return await memory_manager.force_cleanup()
@@ -323,7 +307,6 @@ async def shutdown_memory_manager():
     await memory_manager.shutdown()
 
 
-# Automatic cleanup for common resources
 class AutoCleanupResource:
     """Base class for resources that need automatic cleanup."""
 
@@ -355,7 +338,6 @@ class AutoCleanupResource:
                 memory_manager.remove_cleanup_callback(self._cleanup)
 
 
-# Example usage for document processing
 class DocumentCache(AutoCleanupResource):
     """Document cache with automatic memory cleanup."""
 
@@ -391,7 +373,6 @@ class DocumentCache(AutoCleanupResource):
 
     def _perform_cleanup(self):
         """Performs cleanup when memory is low."""
-        # Clear half of the cache
         items_to_remove = len(self._cache) // 2
         for _ in range(items_to_remove):
             self._evict_oldest()

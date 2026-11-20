@@ -138,8 +138,6 @@ async def test_unacknowledged_commit_does_not_publish_a_successful_generation(dr
     with pytest.raises(asyncpg.InterfaceError):
         await chats.update_user_chat(42, chat)
 
-    # An unknown commit outcome requires a durable reload by the caller, not
-    # an automatic append retry. The local object must not claim success.
     assert chat.memory_epoch == 0
     assert chat._has_persisted_chat is False
     assert chat._original_length == 0

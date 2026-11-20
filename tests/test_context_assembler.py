@@ -51,9 +51,6 @@ def isolated_summary_settings(monkeypatch):
     )
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
 def make_msg(role: str, text: str) -> dict:
     """Create a message dict."""
     return {"role": role, "parts": [text]}
@@ -107,9 +104,6 @@ def test_edited_summary_wrapper_counts_toward_provider_context_budget():
     assert result.budget.used == final_tokens + result.budget.response_reserve
 
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
-
 class TestConstants:
     """Verify invariant relationships between context assembly constants."""
 
@@ -129,11 +123,7 @@ class TestConstants:
     def test_summarization_model_is_a_known_gemini_model(self):
         assert isinstance(SUMMARIZATION_MODEL, str)
         assert len(SUMMARIZATION_MODEL) > 0
-        # Must be a lightweight model (flash-lite or flash) to keep summarization cheap
         assert "flash" in SUMMARIZATION_MODEL.lower(), "Summarization should use a fast/cheap model"
-
-
-# ── TokenBudget ───────────────────────────────────────────────────────────────
 
 
 class TestTokenBudget:
@@ -158,9 +148,6 @@ class TestTokenBudget:
         assert budget.available_for_history >= 0
 
 
-# ── ContextAssembler — basic ──────────────────────────────────────────────────
-
-
 class TestContextAssemblerBasic:
     def setup_method(self):
         self.assembler = ContextAssembler()
@@ -172,7 +159,7 @@ class TestContextAssemblerBasic:
             system_instruction="Be helpful",
         )
         assert isinstance(result, AssembledContext)
-        assert len(result.history) == 1  # Just the user message
+        assert len(result.history) == 1
         assert result.history[0]["role"] == "user"
         assert not result.was_truncated
         assert result.messages_dropped == 0
@@ -187,10 +174,8 @@ class TestContextAssemblerBasic:
             user_message="How are you?",
             system_instruction="Be helpful",
         )
-        # Should include all history + current message
         assert not result.was_truncated
         assert result.messages_dropped == 0
-        # History + user message
         assert len(result.history) == 3
 
     def test_user_message_appended(self):
@@ -219,11 +204,7 @@ class TestContextAssemblerBasic:
             system_instruction="S",
             token_budget=500,
         )
-        # Even if truncated, dropped tokens < 30K → no LLM scheduling
         assert not result.llm_summarization_scheduled
-
-
-# ── ContextAssembler — truncation ─────────────────────────────────────────────
 
 
 class TestContextAssemblerTruncation:
@@ -231,13 +212,12 @@ class TestContextAssemblerTruncation:
         self.assembler = ContextAssembler()
 
     def test_truncates_when_over_budget(self):
-        # Create a history that exceeds a small budget
         history = make_history(20, msg_size=200)
         result = self.assembler.assemble(
             history=history,
             user_message="Question",
             system_instruction="Be helpful",
-            token_budget=500,  # Very small budget
+            token_budget=500,
         )
         assert result.was_truncated
         assert result.messages_dropped > 0
@@ -249,9 +229,8 @@ class TestContextAssemblerTruncation:
             history=history,
             user_message="Q",
             system_instruction="S",
-            token_budget=100,  # Extremely tight
+            token_budget=100,
         )
-        # Should still keep at least MIN_HISTORY_MESSAGES
         total_msgs = len(result.history)
         assert total_msgs >= MIN_HISTORY_MESSAGES
 
@@ -276,24 +255,19 @@ class TestContextAssemblerTruncation:
         )
         if result.summary:
             summary_tokens = estimate_tokens_cyrillic(result.summary)
-            assert summary_tokens <= SUMMARY_BUDGET + 50  # Small tolerance
+            assert summary_tokens <= SUMMARY_BUDGET + 50
 
     def test_llm_scheduled_for_large_drops(self):
         """When >30K tokens are dropped, LLM summarization should be flagged."""
-        # Create messages totaling >30K tokens
-        # Each message ~1000 tokens → 40 messages = ~40K tokens
         history = make_history(40, msg_size=3000)
         result = self.assembler.assemble(
             history=history,
             user_message="Q",
             system_instruction="S",
-            token_budget=2000,  # Tight budget → most messages dropped
+            token_budget=2000,
         )
         assert result.was_truncated
         assert result.llm_summarization_scheduled
-
-
-# ── ContextAssembler — summary integration ────────────────────────────────────
 
 
 class TestContextAssemblerSummary:
@@ -307,7 +281,6 @@ class TestContextAssemblerSummary:
             system_instruction="S",
             existing_summary="Previous context about Python",
         )
-        # Summary should appear in the history
         found = any("контекст" in str(msg.get("parts", "")).lower() for msg in result.history)
         assert found
 
@@ -319,7 +292,6 @@ class TestContextAssemblerSummary:
             system_instruction="S",
             existing_summary="Context summary",
         )
-        # Check that the summary user message is followed by model acknowledgment
         for i, msg in enumerate(result.history):
             if "Контекст предыдущей беседы" in str(msg.get("parts", "")):
                 assert i + 1 < len(result.history)
@@ -342,9 +314,6 @@ class TestContextAssemblerSummary:
         assert "Next" not in retained_text
 
 
-# ── ContextAssembler — role alternation ───────────────────────────────────────
-
-
 class TestRoleAlternation:
     def setup_method(self):
         self.assembler = ContextAssembler()
@@ -360,7 +329,6 @@ class TestRoleAlternation:
             user_message="Next",
             system_instruction="S",
         )
-        # Check no consecutive same roles
         for i in range(1, len(result.history)):
             assert result.history[i]["role"] != result.history[i - 1]["role"], (
                 f"Consecutive same roles at index {i - 1} and {i}: {result.history[i - 1]['role']}"
@@ -375,9 +343,6 @@ class TestRoleAlternation:
         )
         for i in range(1, len(result.history)):
             assert result.history[i]["role"] != result.history[i - 1]["role"]
-
-
-# ── Chunk splitting ───────────────────────────────────────────────────────────
 
 
 class TestChunkSplitting:
@@ -402,16 +367,14 @@ class TestChunkSplitting:
         assert "model:" in chunks[0]
 
     def test_rejects_input_beyond_max_chunks(self):
-        # Create many large messages that would exceed MAX_CHUNKS
         msgs = make_history(100, msg_size=5000)
         with pytest.raises(SummarizationInputTooLarge):
             split_into_chunks(msgs)
 
     def test_splits_at_chunk_size(self):
-        # Each message ~500 tokens, CHUNK_SIZE=10K → ~20 msgs per chunk
         msgs = make_history(60, msg_size=1500)
         chunks = split_into_chunks(msgs)
-        assert len(chunks) > 1  # Should split into multiple chunks
+        assert len(chunks) > 1
 
     def test_oversized_summarization_refuses_unbounded_provider_request(self, monkeypatch):
         import app.context.summarizer as summarizer
@@ -422,9 +385,6 @@ class TestChunkSplitting:
 
         with pytest.raises(summarizer.SummarizationInputTooLarge):
             summarizer.split_into_chunks(messages)
-
-
-# ── LLM summarization scheduling ─────────────────────────────────────────────
 
 
 class TestLLMSummarizationScheduling:
@@ -583,7 +543,6 @@ class TestLLMSummarizationScheduling:
     async def test_refine_chain_calls_llm(self):
         """_run_llm_summarization should call the LLM for each chunk."""
         callback = AsyncMock()
-        # 2 messages, each small enough for 1 chunk
         dropped = [
             make_msg("user", "What is Python?"),
             make_msg("model", "Python is a language."),
@@ -633,7 +592,7 @@ class TestLLMSummarizationScheduling:
             ),
         ):
             await _run_llm_summarization(42, 7, dropped, None, callback)
-            assert call_count == 2  # Two chunks → two LLM calls
+            assert call_count == 2
             callback.assert_called_once()
 
     @pytest.mark.asyncio
@@ -653,12 +612,8 @@ class TestLLMSummarizationScheduling:
                 side_effect=Exception("API Error"),
             ),
         ):
-            # Should not raise
             await _run_llm_summarization(42, 7, dropped, None, callback)
             callback.assert_not_called()
-
-
-# ── ContextAssembler — audit ──────────────────────────────────────────────────
 
 
 class TestAudit:
@@ -680,9 +635,6 @@ class TestAudit:
         result1 = self.assembler.assemble(history=[], user_message="Hi", system_instruction="S")
         result2 = self.assembler.assemble(history=[], user_message="Bye", system_instruction="S")
         assert result1.audit_hash != result2.audit_hash
-
-
-# ── TokenBudget in assembled result ───────────────────────────────────────────
 
 
 class TestBudgetAccounting:
@@ -718,9 +670,6 @@ class TestBudgetAccounting:
         assert result.was_truncated
         assert result.budget.used <= token_budget
         assert final_prompt_tokens + result.budget.response_reserve <= token_budget
-
-
-# ── Singleton ─────────────────────────────────────────────────────────────────
 
 
 class TestSingleton:

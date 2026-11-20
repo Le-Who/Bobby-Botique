@@ -30,7 +30,7 @@ class TestRetryWithBackoff:
         func = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
         with pytest.raises(httpx.TimeoutException):
             await NetworkErrorHandler.retry_with_backoff(func, max_retries=2, base_delay=0.01)
-        assert func.call_count == 3  # initial + 2 retries
+        assert func.call_count == 3
 
     @pytest.mark.asyncio
     async def test_non_matching_exception_not_retried(self):

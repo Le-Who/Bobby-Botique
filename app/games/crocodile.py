@@ -1,4 +1,3 @@
-# /app/games/crocodile.py
 """CrocodileGame — state machine for a single game session.
 
 Lifecycle:
@@ -29,11 +28,8 @@ from app.utils.json_compat import json
 logger = logging.getLogger(__name__)
 
 _GAME_KEY_PREFIX = "croc:game:"
-# Two-phase TTL for better UX:
-#   IDLE   — game created, waiting for a guesser to open the link (14 days)
-#   ACTIVE — guesser is playing; reset on every guess so they can think (2 days)
-_GAME_TTL_IDLE = 14 * 24 * 60 * 60  # 14 days
-_GAME_TTL_ACTIVE = 2 * 24 * 60 * 60  # 2 days
+_GAME_TTL_IDLE = 14 * 24 * 60 * 60
+_GAME_TTL_ACTIVE = 2 * 24 * 60 * 60
 _MAX_ATTEMPTS = 10
 
 
@@ -84,9 +80,6 @@ class CrocodileGameRepository:
             logger.debug("Crocodile runtime clear failed game=%s: %s", game.game_id, exc)
 
 
-# ── Game dataclass ────────────────────────────────────────────────────────────
-
-
 @dataclass
 class CrocodileGame:
     """Full state for one game session."""
@@ -97,19 +90,15 @@ class CrocodileGame:
     lang: str
     inline_message_id: str
     creator_id: int
-    guesser_id: int | None  # Set on first WS connect
+    guesser_id: int | None
     topic_id: str = ""
     sense_context: str | None = None
     attempts: list[str] = field(default_factory=list)
-    has_activity: bool = False  # True after the first real guess attempt, even if not counted
+    has_activity: bool = False
     max_attempts: int = _MAX_ATTEMPTS
     status: GameStatus | Literal["active", "won", "lost"] = GameStatus.ACTIVE
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
-    # Best semantic score seen so far across all guesses (0.0–1.0).
-    # Persisted to Redis so the inline thermometer survives WS reconnects.
     best_score: float = 0.0
-
-    # ── Redis persistence ─────────────────────────────────────────────────────
 
     def _redis_key(self) -> str:
         return f"{_GAME_KEY_PREFIX}{self.game_id}"
@@ -144,7 +133,6 @@ class CrocodileGame:
     @classmethod
     def from_json(cls, data: str | bytes) -> CrocodileGame:
         d = json.loads(data)
-        # Whitelist known fields to guard against Redis data corruption.
         known = {
             "game_id",
             "target_word",
@@ -185,8 +173,6 @@ class CrocodileGame:
         """Remove game from Redis on termination."""
         await CrocodileGameRepository.delete(self)
 
-    # ── Guess handling ────────────────────────────────────────────────────────────
-
     async def process_guess(self, word: str) -> dict:
         """Evaluate the guess and mutate state.
 
@@ -215,7 +201,6 @@ class CrocodileGame:
         ensure_game_mutation_owned()
         self.has_activity = True
 
-        # LLM race failed — do NOT record the attempt; let the player retry.
         if status_str == "judge_unavailable":
             await self.save()
             return {
@@ -225,13 +210,10 @@ class CrocodileGame:
 
         self.attempts.append(word)
 
-        # Track the all-time best score for the inline thermometer.
-        # exact_match always forces score=1.0 by the judge.
         best_score_updated = judgement.score > self.best_score
         if best_score_updated:
             self.best_score = judgement.score
 
-        # Emoji prefix for instant color-coded temperature feedback.
         prefixed_hint = f"{score_emoji(judgement.score)} {judgement.hint}"
 
         event: dict = {
@@ -256,7 +238,6 @@ class CrocodileGame:
             event["reason"] = "max_attempts"
             event["word"] = self.target_word
 
-        # Record in per-game in-memory history (not in Redis)
         history_item = {
             "word": word,
             "status": status_str,
@@ -282,8 +263,6 @@ class CrocodileGame:
 
         await self.save()
         return event
-
-    # ── Finalise (update Telegram message) ───────────────────────────────────────
 
     async def finalize(self, bot) -> None:
         """Edit the inline message in Telegram to reflect the game outcome."""
@@ -315,7 +294,6 @@ class CrocodileGame:
 
             await CrocodileTelegramService.send_thermometer_update(bot, self)
         except Exception as exc:
-            # 400 "message is not modified" is normal when score did not change
             logger.debug("update_inline_thermometer failed game=%s: %s", self.game_id, exc)
 
     async def surrender(self, bot) -> dict:
@@ -332,9 +310,6 @@ class CrocodileGame:
             "word": self.target_word,
             "attempts": len(self.attempts),
         }
-
-
-# ── Factory helpers ───────────────────────────────────────────────────────────
 
 
 async def create_game(
@@ -373,8 +348,6 @@ async def create_game(
         lang,
         category,
     )
-    # Pre-generate 3 progressive hints in background so they are ready when
-    # the guesser connects. Non-blocking — failure is silently swallowed.
     submit_task(_prefetch_hints(game.game_id, target_word, category, topic_id=topic_id))
     return game
 
@@ -402,22 +375,11 @@ async def _prefetch_hints(game_id: str, word: str, category: str, *, topic_id: s
         logger.warning("Hint generation failed for word=%r game=%s", word, game_id)
 
 
-# ── In-memory side stores (never serialised to Redis) ────────────────────────
-# These hold ephemeral per-game data that is:
-#   • Too large / too transient for Redis (hints are ~200B per game)
-#   • Regenerated automatically if the process restarts
-
-# game_id → list of 3 progressive hint strings (generated by LLM at game start)
 _mem_hints: dict[str, list[str]] = {}
 
-# game_id → ordered list of guess result dicts (for chat history restore)
 _mem_history: dict[str, list[dict]] = {}
 
-# game_id → list of asyncio.Queue subscribers (Spectator / God Mode PubSub)
-# Each WebSocket handler that needs live broadcasts registers a Queue here.
 _game_subscribers: dict[str, list[asyncio.Queue]] = {}  # type: ignore[type-arg]
-
-# ── Public accessors ────────────────────────────────────────────────────────────
 
 
 def get_game_hints(game_id: str) -> list[str]:
@@ -428,9 +390,6 @@ def get_game_hints(game_id: str) -> list[str]:
 def get_game_history(game_id: str) -> list[dict]:
     """Return the full guess history for this game (for WS reconnect restore)."""
     return _mem_history.get(game_id, [])
-
-
-# ── Pub/Sub helpers ──────────────────────────────────────────────────────────
 
 
 def subscribe_game(game_id: str) -> asyncio.Queue:  # type: ignore[type-arg]
@@ -464,7 +423,7 @@ async def broadcast_game_event(game_id: str, payload: dict, exclude: asyncio.Que
     so one slow client cannot block the entire broadcast.
     """
     subs = _game_subscribers.get(game_id, [])
-    for q in list(subs):  # iterate a snapshot in case unsubscribe runs concurrently
+    for q in list(subs):
         if q is exclude:
             continue
         try:
@@ -473,16 +432,12 @@ async def broadcast_game_event(game_id: str, payload: dict, exclude: asyncio.Que
             logger.warning("broadcast_game_event: queue full for game=%s, dropping event", game_id)
 
 
-# ── In-memory game fallback (Redis-less environments) ───────────────────────
-# Bounded to 64 active games; each ≤1KB. Evicted LRU on insertion overflow.
-
 _mem_games: dict[str, CrocodileGame] = {}
 _MEM_MAX = 64
 
 
 def _mem_put(game: CrocodileGame) -> None:
     if len(_mem_games) >= _MEM_MAX:
-        # Evict oldest inserted entry
         oldest = next(iter(_mem_games))
         _mem_games.pop(oldest, None)
     _mem_games[game.game_id] = game
@@ -514,5 +469,4 @@ async def load_game(game_id: str) -> CrocodileGame | None:
     except Exception as exc:
         logger.warning("load_game Redis failed game=%s: %s", game_id, exc)
 
-    # Redis miss or unavailable — try in-memory store.
     return _mem_get(game_id)

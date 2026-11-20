@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.smoke_log_viewer import MAX_EVENT_BYTES, generate_events  # noqa: E402
+from scripts.smoke_log_viewer import MAX_EVENT_BYTES, generate_events
 
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 OWNER_LABEL = "com.gemaibot.coverage-run"
@@ -51,8 +51,6 @@ def loopback_url(value: str) -> str:
 class StackProbe:
     def __init__(self, base_url: str, password_file: Path, manifest: dict):
         self.base_url = loopback_url(base_url)
-        # Match the Docker entrypoint's `$(cat file)` semantics: remove final LF,
-        # while preserving spaces/CR that are part of the configured password.
         password = password_file.read_bytes().rstrip(b"\n").decode("utf-8")
         if not password:
             raise ValueError("the disposable Grafana password must be nonempty")
@@ -65,7 +63,7 @@ class StackProbe:
             headers["Authorization"] = self.authorization
         request = urllib.request.Request(self.base_url + path, headers=headers)
         try:
-            response = urllib.request.urlopen(request, timeout=10)  # noqa: S310 - validated loopback test origin
+            response = urllib.request.urlopen(request, timeout=10)
         except urllib.error.HTTPError as error:
             response = error
         with response:
@@ -167,8 +165,6 @@ class StackProbe:
     def check_query_limits(self):
         status, payload = self.query('{service_name="gemaibotv2"}', limit=501)
         assert status == 400 and b"500" in payload, f"server did not enforce the 500-entry query limit: HTTP {status}"
-        # Loki clamps historical query_range requests to max_query_lookback;
-        # this is distinct from max_query_length, which rejects long ranges.
         end = datetime.now(UTC)
         status, payload = self.query(
             '{service_name="gemaibotv2"}', start=end - timedelta(days=9), end=end - timedelta(days=8)
@@ -182,8 +178,6 @@ class StackProbe:
         assert b"168" in payload or b"7d" in payload or b"1w" in payload
 
     def check_privacy(self):
-        # This event was serialized by the actual app writer before stdout replay.
-        # Alloy carries the protected result; redaction remains the app's contract.
         selected = []
         for _, line in self.rows("gemaibotv2"):
             try:
@@ -273,7 +267,6 @@ def run_probe(
         manifest["excluded"] = [excluded_unlabelled, excluded_other]
         unlabelled_id = workload("tg-bot", (excluded_unlabelled + "\n").encode(), collect=False)
         workload("other-project-" + run_id, (excluded_other + "\n").encode(), collect=True)
-        # A complete discovery interval elapses with the correct name but no opt-in.
         time.sleep(17)
         remove(unlabelled_id)
         for service, name, count in (("gemaibotv2", "tg-bot", 120), ("ytdlbot", "ytdlbot-bot-1", 7)):
@@ -282,7 +275,6 @@ def run_probe(
             for wire in generate_events(count=count, run_id=run_id, large_every=20 if service == "gemaibotv2" else 0):
                 event = json.loads(wire)
                 if service == "ytdlbot":
-                    # Distinct IDs preserve exact cardinality across service streams.
                     event["service"] = service
                     event["event_id"] = "ytdl-" + event["event_id"]
                     wire = json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

@@ -62,9 +62,6 @@ def resolve_delivery_slot(subscription: Mapping[str, Any], now: datetime) -> Tar
     return TarotDeliverySlot(slot_date, fingerprint, reason)
 
 
-# ── Read ──────────────────────────────────────────────────────────────────────
-
-
 async def get_tarot_subscription(user_id: int) -> dict | None:
     """Return the subscription row for a user, or None if not found."""
     rows = await db_query(
@@ -104,9 +101,6 @@ async def get_due_tarot_subscriptions(today: date) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-# ── Write ─────────────────────────────────────────────────────────────────────
-
-
 async def upsert_tarot_subscription(
     user_id: int,
     *,
@@ -143,7 +137,6 @@ async def upsert_tarot_subscription(
         columns_sql = ", ".join(insert_columns)
         values_sql = ", ".join(f"${index}" for index in range(1, len(params) + 1))
         if not update_sets:
-            # No preferences supplied — just ensure the row exists.
             await db_query(
                 f"""
                 INSERT INTO {TABLE} (user_id)
@@ -199,16 +192,11 @@ async def unsubscribe_tarot(user_id: int) -> bool:
     return bool(rows)
 
 
-# ── Delivery scheduler helper ─────────────────────────────────────────────────
-
-
 async def get_due_for_current_hour(now: datetime | None = None) -> list[dict]:
     """Return subscribers due on their local day, including same-day catch-up."""
     current = now or datetime.now(tz=UTC)
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
-    # UTC+14 can already be on tomorrow's date. Filter the broad pull against
-    # each subscriber's actual local date before admitting a broadcast snapshot.
     latest_local_date = (current.astimezone(UTC) + timedelta(days=1)).date()
     due = []
     for subscription in await get_due_tarot_subscriptions(latest_local_date):

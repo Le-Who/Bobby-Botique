@@ -1,7 +1,4 @@
--- Migration: Create metrics and error_logs tables
--- Description: Moves runtime DDL from metrics.py to a permanent migration script
 
--- Таблица для общих метрик
 CREATE TABLE IF NOT EXISTS metrics (
     id SERIAL PRIMARY KEY,
     metric_date DATE NOT NULL,
@@ -18,7 +15,6 @@ CREATE TABLE IF NOT EXISTS metrics (
     UNIQUE(metric_date)
 );
 
--- Таблица для ошибок
 CREATE TABLE IF NOT EXISTS error_logs (
     id SERIAL PRIMARY KEY,
     error_type TEXT NOT NULL,
@@ -27,6 +23,5 @@ CREATE TABLE IF NOT EXISTS error_logs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Добавление request_id если таблица уже существует
 ALTER TABLE error_logs
 ADD COLUMN IF NOT EXISTS request_id TEXT;

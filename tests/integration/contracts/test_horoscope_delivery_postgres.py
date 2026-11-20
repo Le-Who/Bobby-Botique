@@ -61,7 +61,6 @@ async def enqueue(value, users=(USER,), kind="today"):
     results = await value.enqueue_scheduled(
         channel="horoscope",
         user_ids=list(users),
-        # The scheduler's idempotency day is Kyiv, including the UTC midnight gap.
         effective_date=datetime.now(ZoneInfo("Europe/Kyiv")).date(),
         variant=kind,
     )
@@ -282,7 +281,6 @@ async def test_five_parallel_recipients_are_bounded_and_do_not_hold_db_transacti
     try:
         await asyncio.wait_for(entered.wait(), 3)
         assert calls == peak == 5
-        # This must succeed while all five external sends are blocked.
         async with contract_pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute("SET LOCAL lock_timeout='500ms'")
@@ -354,14 +352,14 @@ class ClockPool:
 async def test_midnight_send_marks_claim_day_and_next_local_day_remains_due(db_conn, contract_pool, monkeypatch):
     await subscribe(db_conn)
     await db_conn.execute("UPDATE horoscope_subscriptions SET utc_offset = 3")
-    clock = [datetime(2026, 10, 9, 20, 59, tzinfo=UTC)]  # Local 23:59.
+    clock = [datetime(2026, 10, 9, 20, 59, tzinfo=UTC)]
     monkeypatch.setattr(subscriptions.db_manager, "pool", ClockPool(contract_pool, clock))
     async with subscriptions.claim_horoscope_delivery(USER, "today") as claim:
         assert claim is not None
         backend_pid = claim._connection.get_server_pid()
         assert await claim._connection.fetchval("SHOW idle_in_transaction_session_timeout") == "3min"
         assert claim.claimed_at == clock[0]
-        clock[0] = datetime(2026, 10, 9, 21, 1, tzinfo=UTC)  # Send completes local 00:01.
+        clock[0] = datetime(2026, 10, 9, 21, 1, tzinfo=UTC)
         await claim.mark_sent()
     assert await db_conn.fetchval("SELECT last_today_sent FROM horoscope_subscriptions") == datetime(
         2026, 10, 9, 20, 59, tzinfo=UTC

@@ -196,7 +196,6 @@ def test_retention_selects_hourly_and_daily_snapshots_and_reserves_next_copy(set
     unrelated.write_bytes(b"keep")
     service.prune(reserve_bytes=20)
     assert all(path.exists() for path in paths)
-    # Yesterday's newest hourly snapshot also satisfies its daily bucket.
     assert not daily[0].exists()
     assert all(path.exists() for path in daily[1:6])
     assert not daily[6].exists()
@@ -399,7 +398,6 @@ def test_growing_snapshot_prunes_older_copy_to_avoid_permanent_quota_refusal(set
     assert list((root / "backups").glob("*.rdb"))
     assert sum(path.stat().st_size for path in (root / "backups").iterdir()) <= 100
     assert any(path.read_bytes() == docker.snapshot for path in (root / "backups").iterdir())
-    # Post-success retention may replace the former newest to reserve next time.
     assert not newest.exists() or newest.read_bytes() == b"x" * 50
 
 

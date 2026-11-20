@@ -1,4 +1,3 @@
-/* Real UI scripts and templates; every HTTP response is synthetic/offline. */
 const assert = require('node:assert/strict');
 const path = require('node:path');
 let input = '';
@@ -87,7 +86,7 @@ process.stdin.on('end', async () => {
       assert.match(await page.locator('#queue-lanes').textContent(), /daily[\s\S]*недоступ/i);
       assert.match(await page.locator('#queue-load').textContent(), /tts[\s\S]*4096/);
       await page.locator('#queue-jobs button[data-job="active-job"]').click();
-      jobs.active.revision = 6; // Another owner has progressed after the client opened revision 5.
+      jobs.active.revision = 6;
       await page.locator('#queue-job-detail button[data-action="cancel"]').click();
       await page.locator('#queue-status').filter({ hasText: /измени|ревизи/i }).waitFor();
       assert.equal(writes.at(-1).expected_revision, 5, 'Do not replace the held revision with a new server read');

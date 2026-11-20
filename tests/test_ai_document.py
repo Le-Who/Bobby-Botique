@@ -187,9 +187,6 @@ async def test_message_document_handler_keeps_selected_file_through_generation()
     assert delivery.stream.await_args.kwargs["presentation"].long_read_title == "selected.txt"
 
 
-# ── Happy path — AI answers question ─────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_document_question_holds_exact_epoch_lease_through_private_delivery():
     """Private document text cannot outlive its exact conversation generation."""
@@ -388,9 +385,6 @@ async def test_document_question_success():
     assert [users[123]["model_usage"] for users in collector._user_daily.values()] == [{"gemini-3.1-flash-lite": 1}]
 
 
-# ── No documents uploaded ─────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_document_question_no_documents():
     """Shows error when user has no uploaded documents."""
@@ -411,9 +405,6 @@ async def test_document_question_no_documents():
     placeholder.edit_text.assert_awaited_once()
     text = placeholder.edit_text.call_args[0][0]
     assert "нет" in text.lower() and "документ" in text.lower()
-
-
-# ── Document content retrieval fails ──────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -441,9 +432,6 @@ async def test_document_question_content_missing():
     placeholder.edit_text.assert_awaited_once()
     text = placeholder.edit_text.call_args[0][0]
     assert "содержимое" in text.lower() or "не удалось" in text.lower()
-
-
-# ── AI returns empty response ─────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -531,9 +519,6 @@ async def test_document_question_records_actual_routed_model():
     assert collector.metrics.api_calls == {"opencode": 1}
     assert collector.metrics.model_usage == {"opencode-go/qwen3.5-plus": 1}
     assert [users[123]["model_usage"] for users in collector._user_daily.values()] == [{"opencode-go/qwen3.5-plus": 1}]
-
-
-# ── Exception during processing ───────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

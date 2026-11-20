@@ -83,7 +83,6 @@ async def test_legacy_preparation_reads_do_not_renew_or_rewrite_expired_ownershi
     assert result == {"id": "legacy-owner", "state": "running", "legacy": True, "reason_code": None}
     assert 0 < await second.pttl(keys[0]) <= lease_ttl
     assert 0 < await second.pttl(keys[1]) <= status_ttl
-    # Server-side expiry, not a fake clock or Python delete/sleep.
     assert await first.pexpire(keys[0], 0)
     assert await second.pttl(keys[0]) == -2
     interrupted = await preparation._read_job(DAY)
@@ -214,7 +213,7 @@ async def test_simultaneous_websocket_pending_id_persists_one_attempt(redis_boun
 
     first, second, keys, game_id = redis_boundary
     game = make_crocodile_game(game_id=game_id, creator_id=111, guesser_id=222)
-    game.best_score = 0.9  # Avoid unrelated Telegram thermometer background work.
+    game.best_score = 0.9
     await game.save()
     token = "synthetic-websocket-token"
     monkeypatch.setattr("app.config.settings.TELEGRAM_BOT_TOKEN", token)

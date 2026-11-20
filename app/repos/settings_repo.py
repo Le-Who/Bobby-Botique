@@ -18,12 +18,8 @@ from app import database as db
 
 logger = logging.getLogger(__name__)
 
-# TTL cache: up to 64 distinct keys, each valid for 30 seconds.
-# This means admin changes propagate to all workers within ~30 s
-# without any per-request DB round-trip in steady state.
 _cache: TTLCache = TTLCache(maxsize=64, ttl=30)
 
-# Singleton flag — once the table is confirmed (or created), skip re-checks.
 _table_verified: bool = False
 
 
@@ -83,7 +79,6 @@ async def get_global_setting(key: str, default: str = "") -> str:
         )
         value: str = rows[0]["value_data"] if rows else default
     except asyncpg.UndefinedTableError:
-        # Table doesn't exist yet — bootstrap it, then retry once.
         logger.warning("settings_repo: table missing, bootstrapping…")
         await _ensure_table()
         try:
@@ -120,7 +115,6 @@ async def set_global_setting(key: str, value: str) -> None:
         """,
         (key, value),
     )
-    # Immediately evict so the next read fetches the fresh value.
     _cache.pop(key, None)
     logger.info("settings_repo: updated '%s'", key)
 

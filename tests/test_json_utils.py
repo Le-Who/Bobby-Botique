@@ -6,8 +6,6 @@ from app.utils.json_utils import extract_json_object
 class TestExtractJsonObject:
     """extract_json_object should parse JSON from noisy LLM output."""
 
-    # ── Valid extractions ────────────────────────────────────────────────
-
     def test_clean_json(self):
         text = '{"title": "Test", "purpose": "Testing", "prompt": "Hello"}'
         result = extract_json_object(text)
@@ -34,8 +32,6 @@ class TestExtractJsonObject:
         assert result is not None
         assert result["prompt"] == "SP"
 
-    # ── Missing required fields ──────────────────────────────────────────
-
     def test_missing_title_returns_none(self):
         text = '{"purpose": "P", "prompt": "Q"}'
         assert extract_json_object(text) is None
@@ -48,13 +44,10 @@ class TestExtractJsonObject:
         text = '{"title": "T", "purpose": "P"}'
         assert extract_json_object(text) is None
 
-    # ── Edge cases ───────────────────────────────────────────────────────
-
     def test_empty_string_returns_none(self):
         assert extract_json_object("") is None
 
     def test_none_returns_none(self):
-        # The function checks `not text` which is True for None
         assert extract_json_object(None) is None
 
     def test_no_json_returns_none(self):
@@ -91,7 +84,7 @@ class TestExtractJsonObject:
         text = '{"title": "T", "purpose": "P", "prompt": "Quotes: \\" and Backslash: \\\\"}'
         result = extract_json_object(text)
         assert result is not None
-        assert '\\"' in text  # raw text has \"
+        assert '\\"' in text
         assert result["prompt"] == 'Quotes: " and Backslash: \\'
 
     def test_unicode_content(self):
@@ -135,8 +128,6 @@ class TestExtractJsonObject:
         assert result["title"] == "Final"
 
     def test_nested_objects_with_required_fields_inner(self):
-        # Outer object is valid JSON but missing fields.
-        # Inner object has required fields.
         text = '{"outer": {"title": "T", "purpose": "P", "prompt": "Q"}}'
         result = extract_json_object(text)
         assert result is not None

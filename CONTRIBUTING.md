@@ -59,6 +59,39 @@ fixture cleanup instead of suppressing async driver errors globally. Offline E2E
 cases run without a database; only fixtures that actually acquire a test
 connection skip when their explicitly isolated service is missing.
 
+## Source comments
+
+Keep implementation intent in names, types, and tests. Put design rationale or
+operational instructions in the relevant guide. The lint step rejects new prose
+comments, including TODOs, section banners, and commented-out code. Preserve
+required tool directives, interpreter and encoding declarations, and license
+notices. Review unfamiliar directives and existing legal headers before editing.
+
+```bash
+uv run --locked python scripts/check_comments.py
+```
+
+The local check compares the working tree with `HEAD` and the merge base of its
+configured upstream, when available. Use `--base REV` for a specific revision.
+CI compares the pull request merge tree with the target commit, or a pushed tree with the
+preceding commit. A new branch uses the default branch as its base. Each file can
+retain only the same comment text and occurrence count it had in the base, so
+deleting one comment never permits adding another. Line-number shifts and trailing
+whitespace are ignored. A moved file is checked at its new path.
+
+The check covers tracked and non-ignored new first-party sources, including Python,
+JavaScript and TypeScript, CSS, HTML/Jinja, PostgreSQL, shell, and the repository's
+configuration formats. It also reads inline styles and scripts in HTML and the
+shell/JavaScript bodies of supported workflow steps. The Python scanner reads
+literal `_SQL` and `_LUA` assignments, literal arguments to recognized database
+calls, and literal code passed directly to supported browser and interpreter
+runners. It does not trace arbitrary variables or dynamically assembled strings.
+Use standalone source files for executable code that needs independent linting.
+Markdown, docstrings, other string literals, generated lockfiles, minified files,
+vendor/build/cache paths and environment files fall outside the check. Add lexer
+coverage when introducing a source format. Use `--inventory` to count existing prose
+comments and removable lines, or `--inventory --base REV` to count a Git revision.
+
 ## Browser regressions
 
 Browser regressions require Node.js 24 and the exact Playwright

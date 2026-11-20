@@ -6,7 +6,6 @@
   <title>GemAI — Полный ответ</title>
   <meta name="description" content="Полный ответ ИИ GemAI Bot" />
 
-  <!-- highlight.js — Syntax highlighting (lazy-loaded) -->
   <link id="hljs-theme-light" rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
         media="print" onload="this.media='all'; this.removeAttribute('onload')" />
@@ -15,7 +14,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" defer></script>
 
   <style>
-    /* ── Design tokens (Telegram theme vars with fallbacks) ───────────── */
     :root {
       --bg:              #ffffff;
       --bg-secondary:    #f6f8fa;
@@ -47,7 +45,6 @@
       --shadow-lg:       0 8px 32px rgba(0,0,0,.48);
     }
 
-    /* ── Reset ────────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
     html, body {
@@ -61,7 +58,6 @@
       overscroll-behavior: none;
     }
 
-    /* ── Top bar ──────────────────────────────────────────────────────── */
     #topbar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 200;
       height: var(--topbar-h);
@@ -92,7 +88,6 @@
     .subtitle { font-size: .78rem; color: var(--text-muted); }
     .topbar-spacer { flex: 1; }
 
-    /* Toggle pills */
     .toggle-group {
       display: flex; gap: 5px;
     }
@@ -128,14 +123,12 @@
     }
     #copy-btn:hover { border-color: var(--accent); color: var(--accent); }
 
-    /* ── Content ──────────────────────────────────────────────────────── */
     #content {
       max-width: 820px;
       margin: 0 auto;
       padding: calc(var(--topbar-h) + 20px) 16px 100px;
     }
 
-    /* ── Typography ───────────────────────────────────────────────────── */
     #md-body h1,#md-body h2,#md-body h3 {
       color: var(--text);
       font-weight: 700;
@@ -179,7 +172,6 @@
       margin: 1.5em 0;
     }
 
-    /* ── Inline code ──────────────────────────────────────────────────── */
     #md-body code:not(pre code) {
       background: var(--code-bg);
       border: 1px solid var(--code-border);
@@ -189,7 +181,6 @@
       font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     }
 
-    /* ── Code blocks ──────────────────────────────────────────────────── */
     .code-block {
       background: var(--code-bg) !important;
       border: 1px solid var(--code-border);
@@ -235,7 +226,6 @@
       background: transparent !important;
     }
     .code-block pre::after {
-      /* Fade-right indicator telling users there's horizontal content */
       content: "";
       position: absolute; right: 0; top: 0; bottom: 0; width: 24px;
       background: linear-gradient(to right, transparent, var(--code-bg));
@@ -254,7 +244,6 @@
       word-break: break-all;
     }
 
-    /* ── Tables ───────────────────────────────────────────────────────── */
     #md-body table {
       width: 100%;
       border-collapse: collapse;
@@ -271,7 +260,6 @@
     #md-body th { background: var(--bg-secondary); font-weight: 600; }
     #md-body tr:nth-child(even) td { background: var(--bg-secondary); }
 
-    /* ── Error state ──────────────────────────────────────────────────── */
     #error-state {
       text-align: center;
       padding: 56px 16px;
@@ -294,7 +282,6 @@
     }
     .btn-primary:hover { opacity: .85; }
 
-    /* ── Toast ────────────────────────────────────────────────────────── */
     #toast {
       position: fixed;
       bottom: 28px; left: 50%;
@@ -310,7 +297,6 @@
     }
     #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
-    /* ── FAB: Table of Contents ───────────────────────────────────────── */
     #toc-fab {
       position: fixed;
       bottom: 32px; right: 20px;
@@ -329,7 +315,6 @@
     #toc-fab:hover { transform: scale(1.08); box-shadow: 0 12px 40px rgba(0,136,204,.4); }
     #toc-fab.hidden { opacity: 0; pointer-events: none; transform: scale(.8) translateY(12px); }
 
-    /* ── TOC Bottom Sheet ─────────────────────────────────────────────── */
     #toc-sheet-overlay {
       position: fixed; inset: 0;
       background: rgba(0,0,0,.45);
@@ -390,7 +375,6 @@
     #toc-list li.level-h2 a { padding-left: 28px; color: var(--text-muted); font-size: .85rem; }
     #toc-list li.level-h3 a { padding-left: 44px; color: var(--text-muted); font-size: .8rem; }
 
-    /* ── Full-screen code modal ───────────────────────────────────────── */
     #code-modal-overlay {
       position: fixed; inset: 0;
       background: rgba(0,0,0,.72);
@@ -443,15 +427,11 @@
       display: block;
     }
 
-    /* ── Bionic reading ───────────────────────────────────────────────── */
-    /* When bionic mode is active, injected <b> tags get a non-bold weight
-       difference so they're subtly heavier than surrounding text */
     body.bionic #md-body b { font-weight: 800; }
 
-    /* ── Responsive tweaks for small screens ─────────────────────────── */
     @media (max-width: 480px) {
       .tgl-btn { padding: 4px 8px; font-size: .7rem; }
-      #copy-btn { display: none; }   /* copy via long-hold on mobile */
+      #copy-btn { display: none; }
       #md-body h1 { font-size: 1.4rem; }
       #md-body h2 { font-size: 1.18rem; }
     }
@@ -459,7 +439,6 @@
 </head>
 
 <body>
-  <!-- ── Top bar ──────────────────────────────────────────────────────── -->
   <div id="topbar">
     <div>
       <div class="logo">GemAI</div>
@@ -483,14 +462,11 @@
     </div>
   </div>
 
-  <!-- ── Main content ─────────────────────────────────────────────────── -->
   <div id="content">
 
-    <!-- SSR body injected by server. Empty on missing UID. -->
     <div id="md-body">{{ body_html | safe }}</div>
 
     {% if not body_html %}
-    <!-- Error / expired state -->
     <div id="error-state">
       {% if telegraph_fallback_url %}
         <div class="emoji">🔗</div>
@@ -511,13 +487,10 @@
 
   </div>
 
-  <!-- ── Toast ────────────────────────────────────────────────────────── -->
   <div id="toast">Скопировано!</div>
 
-  <!-- ── TOC FAB ──────────────────────────────────────────────────────── -->
   <button id="toc-fab" class="hidden" onclick="openTOC()" aria-label="Оглавление" title="Оглавление">☰</button>
 
-  <!-- ── TOC Bottom Sheet ─────────────────────────────────────────────── -->
   <div id="toc-sheet-overlay" onclick="closeTOC()"></div>
   <div id="toc-sheet" role="dialog" aria-modal="true" aria-label="Оглавление">
     <div id="toc-handle"></div>
@@ -525,7 +498,6 @@
     <ul id="toc-list"></ul>
   </div>
 
-  <!-- ── Code Full-Screen Modal ───────────────────────────────────────── -->
   <div id="code-modal-overlay" onclick="closeCodeModal()"></div>
   <div id="code-modal" role="dialog" aria-modal="true">
     <div id="code-modal-bar">
@@ -536,24 +508,17 @@
   </div>
 
   <script>
-    // ═══════════════════════════════════════════════════════════════════
-    //  INIT — Telegram WebApp theme
-    // ═══════════════════════════════════════════════════════════════════
     const twa = window.Telegram?.WebApp;
     if (twa) { twa.expand(); twa.ready(); }
 
-    // SSR data injected from server — no second fetch needed
     const TOC_DATA    = {{ toc | tojson }};
     const SOURCE      = {{ source_label | tojson }};
     const HAS_CONTENT = {{ 'true' if body_html else 'false' }};
 
-    // Snag a copy of the *raw rendered text* for TTS and clipboard.
-    // We strip HTML tags after DOM is available.
     function getRawText() {
       return document.getElementById('md-body')?.innerText || '';
     }
 
-    // ── Theme ────────────────────────────────────────────────────────
     function applyTheme() {
       const isDark = twa
         ? twa.colorScheme === 'dark'
@@ -570,9 +535,6 @@
     if (twa) twa.onEvent('themeChanged', applyTheme);
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  SCROLL: TopBar auto-hide + Reading Progress
-    // ═══════════════════════════════════════════════════════════════════
     let lastScrollY = 0;
     const topbar = document.getElementById('topbar');
     const pbar   = document.getElementById('progress-bar');
@@ -581,20 +543,14 @@
       const cur = window.scrollY;
       const docH = document.documentElement.scrollHeight - window.innerHeight;
 
-      // Progress bar
       pbar.style.width = docH > 0 ? Math.min(100, (cur / docH) * 100) + '%' : '0%';
 
-      // Hide/show topbar
       if (cur > 80 && cur > lastScrollY) topbar.classList.add('hidden');
       else topbar.classList.remove('hidden');
       lastScrollY = cur;
     }, { passive: true });
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  SYNTAX HIGHLIGHTING — runs after page paint to avoid blocking FCP
-    // ═══════════════════════════════════════════════════════════════════
     document.addEventListener('DOMContentLoaded', () => {
-      // hljs may still be loading (defer). Wait a tick.
       requestIdleCallback(() => {
         if (typeof hljs !== 'undefined') {
           document.querySelectorAll('.code-block pre code').forEach(el => {
@@ -605,16 +561,12 @@
       buildTOC();
     });
 
-    // requestIdleCallback polyfill for old WebViews
     if (!window.requestIdleCallback) {
       window.requestIdleCallback = (cb) => setTimeout(cb, 1);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  TABLE OF CONTENTS
-    // ═══════════════════════════════════════════════════════════════════
     function buildTOC() {
-      if (!TOC_DATA || TOC_DATA.length < 2) return; // not useful
+      if (!TOC_DATA || TOC_DATA.length < 2) return;
       const list = document.getElementById('toc-list');
       TOC_DATA.forEach(entry => {
         const li = document.createElement('li');
@@ -627,7 +579,7 @@
           closeTOC();
           const target = document.getElementById(entry.anchor);
           if (target) {
-            const offset = 64; // topbar height + buffer
+            const offset = 64;
             const y = target.getBoundingClientRect().top + window.scrollY - offset;
             window.scrollTo({ top: y, behavior: 'smooth' });
           }
@@ -648,7 +600,6 @@
       document.getElementById('toc-sheet-overlay').classList.remove('open');
       document.getElementById('toc-sheet').classList.remove('open');
     }
-    // Swipe-down to close TOC sheet
     let touchStartY = 0;
     document.getElementById('toc-sheet').addEventListener('touchstart', e => {
       touchStartY = e.touches[0].clientY;
@@ -657,9 +608,6 @@
       if (e.changedTouches[0].clientY - touchStartY > 60) closeTOC();
     }, { passive: true });
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  CODE BLOCK ACTIONS
-    // ═══════════════════════════════════════════════════════════════════
     window.copyCode = function(btn) {
       const codeEl = btn.closest('.code-block').querySelector('code');
       const raw = codeEl?.dataset?.code
@@ -700,7 +648,6 @@
       document.getElementById('code-modal').classList.remove('open');
     };
 
-    // Extension auto-detection for download
     const _EXT_MAP = {
       python:'py', py:'py', javascript:'js', js:'js', typescript:'ts', ts:'ts',
       rust:'rs', go:'go', java:'java', kotlin:'kt', swift:'swift',
@@ -731,12 +678,6 @@
       if (twa?.HapticFeedback) twa.HapticFeedback.impactOccurred('light');
     };
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  BIONIC READING
-    //  Client-side toggle that adds/removes a CSS class which makes the
-    //  already-present server-injected <b> tags visually heavier.
-    //  No extra DOM manipulation needed — the SSR already inserted them.
-    // ═══════════════════════════════════════════════════════════════════
     let bionicEnabled = false;
     let bionicApplied = false;
 
@@ -746,7 +687,6 @@
       btn.classList.toggle('active', bionicEnabled);
 
       if (bionicEnabled && !bionicApplied) {
-        // Apply bionic bolding lazily on first activation
         applyBionicDOM();
         bionicApplied = true;
       }
@@ -754,13 +694,10 @@
       document.body.classList.toggle('bionic', bionicEnabled);
       if (twa?.HapticFeedback) twa.HapticFeedback.selectionChanged();
 
-      // Persist preference for session
       try { sessionStorage.setItem('bionic', bionicEnabled ? '1' : '0'); } catch(_) {}
     }
 
     function applyBionicDOM() {
-      // Walk text nodes inside #md-body and wrap word stems in <b>
-      // Skip nodes already inside <code>, <pre>, <b>, <strong>, <a>
       const skip = new Set(['CODE', 'PRE', 'B', 'STRONG', 'A', 'SCRIPT', 'STYLE']);
       const walker = document.createTreeWalker(
         document.getElementById('md-body'),
@@ -797,17 +734,12 @@
       });
     }
 
-    // Restore bionic session preference
     try {
       if (sessionStorage.getItem('bionic') === '1') {
-        // Delay slightly so DOM is stable
         requestIdleCallback(() => { if (!bionicEnabled) toggleBionic(); });
       }
     } catch(_) {}
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  TEXT-TO-SPEECH (Web Speech API)
-    // ═══════════════════════════════════════════════════════════════════
     let ttsActive = false;
     let ttsUtterance = null;
 
@@ -846,23 +778,16 @@
       if (twa?.HapticFeedback) twa.HapticFeedback.impactOccurred('light');
     }
 
-    // Stop TTS when tab becomes hidden (good UX)
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && ttsActive) toggleTTS();
     });
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  CLIPBOARD
-    // ═══════════════════════════════════════════════════════════════════
     function copyAll() {
       navigator.clipboard.writeText(getRawText())
         .then(() => showToast('Весь ответ скопирован!'))
         .catch(() => showToast('Не удалось скопировать'));
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  TOAST
-    // ═══════════════════════════════════════════════════════════════════
     let toastTimer;
     function showToast(msg) {
       clearTimeout(toastTimer);
@@ -873,10 +798,6 @@
       if (twa?.HapticFeedback) twa.HapticFeedback.notificationOccurred('success');
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  AUTO-REDIRECT — if Telegraph fallback URL is set (server set it
-    //  because our reverse-proxy fetch failed), redirect inside Telegram
-    // ═══════════════════════════════════════════════════════════════════
     const TG_FALLBACK = {{ telegraph_fallback_url | tojson }};
     if (TG_FALLBACK && twa) {
       setTimeout(() => { window.location.href = TG_FALLBACK; }, 900);

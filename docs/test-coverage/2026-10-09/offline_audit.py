@@ -5,7 +5,6 @@ credentials before imports, guard the repository .env and Python socket connects
 Allow only stdlib Windows socketpair plumbing for asyncio. Use from this dated
 repository location; the report explains measured vs. unexecuted boundaries.
 """
-# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -36,7 +35,6 @@ for name in (
     "GEMAIBOT_REQUIRE_BROWSER_TESTS",
 ):
     os.environ.pop(name, None)
-# Mirror tests/conftest.py before any application import; values are synthetic.
 root_tree = ast.parse((ROOT / "tests/conftest.py").read_text(encoding="utf-8"))
 for node in root_tree.body:
     if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "_SAFE_TEST_ENV" for t in node.targets):
@@ -66,7 +64,6 @@ def offline_audit(event, args):
     ):
         raise PermissionError("Coverage audit does not read the repository .env")
     if event == "socket.connect":
-        # Windows asyncio uses a TCP socketpair internally; permit only stdlib socketpair.
         caller = sys._getframe(1)
         if caller.f_code.co_name == "_fallback_socketpair" and caller.f_globals.get("__name__") == "socket":
             return

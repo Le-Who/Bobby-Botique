@@ -208,8 +208,6 @@ def test_current_probe_events_are_read_after_more_than_500_historical_events(mon
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
         assert query["limit"] == ["500"]
         scoped = query["query"][0].endswith('|= "' + current_run + '"')
-        # A forward query without run filtering reaches its server limit on
-        # previous events; current stdout is already ingested but not returned.
         lines = [current_line] if scoped else [historical_line] * 500
         response = {
             "status": "success",

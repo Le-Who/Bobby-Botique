@@ -76,8 +76,6 @@ class GlobalLLMSemaphore:
         self._scope: contextvars.ContextVar[_SemaphoreScope | None] = contextvars.ContextVar(
             f"{redis_key}_scope", default=None
         )
-        # Admission and lease lifetime are separate policies even while their
-        # initial defaults match. Changing a wait budget must not shorten a lease.
         self._lease_ttl = float(timeout)
         self._renew_interval = max(0.01, self._lease_ttl / 3)
         self._cleanup_timeout = 5.0
@@ -95,8 +93,6 @@ class GlobalLLMSemaphore:
             safe_until = scope.last_confirmed + self._lease_ttl
             try:
                 await asyncio.sleep(min(self._renew_interval, _remaining(safe_until)))
-                # Count from before the command: delayed acknowledgement cannot
-                # extend the local validity of the server's earlier renewal.
                 started = time.monotonic()
                 async with asyncio.timeout(min(5.0, _remaining(safe_until))):
                     renewed = await redis.eval(_RENEW_SLOT, 1, self._key, token)
@@ -148,8 +144,6 @@ class GlobalLLMSemaphore:
 
         wait_started_ns = time.monotonic_ns()
         deadline = time.monotonic() + float(self._timeout)
-        # Fail fast: bounded wait queue. Max waiters = 3x concurrency limit before rejecting.
-        # This prevents 1-hour delays and hanging placeholders when system is swamped.
         waiter_limit = self._limit * 3
         if self._waiting_count >= waiter_limit:
             emit(
@@ -168,7 +162,6 @@ class GlobalLLMSemaphore:
 
         self._waiting_count += 1
         try:
-            # 1. Acquire local semaphore first (limits per-node concurrency to max limit)
             async with asyncio.timeout(_remaining(deadline)):
                 await self._local_semaphore.__aenter__()
         except TimeoutError:
@@ -217,13 +210,10 @@ class GlobalLLMSemaphore:
                     _remaining(deadline)
                     started = time.monotonic()
                     try:
-                        # Server time owns expiry; the client only bounds waiting.
                         admitted = await redis_client.eval(
                             _ADMIT_SLOT, 1, self._key, self._lease_ttl, self._limit, token
                         )
                     except Exception as error:
-                        # Only initial infrastructure failure may degrade locally.
-                        # Deadline expiry still rejects, even with socket retries.
                         _remaining(deadline)
                         scope.mode = "local_fallback"
                         emit(
@@ -261,8 +251,6 @@ class GlobalLLMSemaphore:
                         return self
                     await asyncio.sleep(min(0.5, _remaining(deadline)))
         except (TimeoutError, asyncio.CancelledError) as exc:
-            # __aexit__ is not called by async-with when __aenter__ fails.
-            # We already own the local slot and may have inserted a Redis token.
             try:
                 emit(
                     "concurrency.acquire_finished",
@@ -307,8 +295,6 @@ class GlobalLLMSemaphore:
             except Exception as e:
                 logging.warning("Semaphore release unavailable key=%s type=%s", self._key, type(e).__name__)
 
-        # Caller cancellation must not abandon the bounded release attempt.
-        # This request-scoped child is always awaited, including on timeout.
         cleanup = asyncio.create_task(release_distributed())
         cancelled = exc_val if isinstance(exc_val, asyncio.CancelledError) else None
         try:
@@ -318,7 +304,6 @@ class GlobalLLMSemaphore:
                 except asyncio.CancelledError as error:
                     if cancelled is None or (scope is not None and cancelled.args == (scope.cancellation_marker,)):
                         cancelled = error
-            # Retrieve any unexpected failure rather than orphaning the child.
             cleanup.result()
         finally:
             self._renewal.set(None)
@@ -343,8 +328,6 @@ class GlobalLLMSemaphore:
                 scope_error_type=exc_type.__name__ if exc_type is not None else None,
             )
         if scope and scope.lease_lost:
-            # Consume only our cancellation, preserving independent caller or
-            # shutdown cancellation and its original exception/message.
             internal_cancel = cancelled is not None and cancelled.args == (scope.cancellation_marker,)
             caller_cancelled = (
                 scope.cancellation_sent
@@ -357,8 +340,6 @@ class GlobalLLMSemaphore:
                 and exc_val is not None
                 and not isinstance(exc_val, asyncio.CancelledError)
             ):
-                # The provider failed while a ready renewal was losing its token.
-                # Retain that original body failure instead of our exit marker.
                 cancelled = None
             if (
                 internal_cancel

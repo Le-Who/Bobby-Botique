@@ -65,20 +65,16 @@ class Task:
         return max(1, self.max_retries)
 
 
-# ── Redis key constants ─────────────────────────────────────────────────
-_QUEUE_PREFIX = "gemaibotv2:queue"  # List per priority: gemaibotv2:queue:4, :3, :2, :1
-_PROCESSING_KEY = "gemaibotv2:processing"  # Legacy unowned processing list; preserved during rolling upgrades
+_QUEUE_PREFIX = "gemaibotv2:queue"
+_PROCESSING_KEY = "gemaibotv2:processing"
 _OWNERS_KEY = "gemaibotv2:queue:owners"
 _LEASE_PREFIX = "gemaibotv2:queue:lease"
 _LEASE_SECONDS = 60
 _LEASE_RENEW_INTERVAL = 15.0
 _REDIS_TIMEOUT = 5.0
-_TASK_HASH_PREFIX = "gemaibotv2:task"  # Hash per task: gemaibotv2:task:{id}
-_IDLE_POLL_TIMEOUT = 30.0  # seconds — fallback poll when Event not fired
+_TASK_HASH_PREFIX = "gemaibotv2:task"
+_IDLE_POLL_TIMEOUT = 30.0
 
-# Claims and disposition are fenced by a unique queue-instance lease. A crashed
-# owner's processing list persists without TTL and is recovered atomically only
-# after its lease expires. Recovery never deletes a whole shared list.
 _ACQUIRE_LEASE = """
 if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
     redis.call('SADD', KEYS[2], ARGV[1])
@@ -229,7 +225,6 @@ async def erase_legacy_user(redis, user_id: int):
                 try:
                     task = _task_from_json(raw)
                 except ValueError, KeyError, TypeError, UnicodeDecodeError:
-                    # A malformed entry cannot be attributed safely; do not print it.
                     raise RuntimeError("legacy_payload_requires_operator_erasure") from None
                 if task.user_id == user_id:
                     removed += await redis.lrem(key, 1, raw)
@@ -250,8 +245,6 @@ async def recover_legacy_processing(redis, *, confirm_drained: bool = False):
             except ValueError, KeyError, TypeError, AttributeError:
                 continue
             if not safe:
-                # A drained worker is not evidence that an external effect did
-                # not happen. Recovery must neither replay nor discard it.
                 continue
             task.attempts_started += 1
             task.retry_count = task.attempts_started

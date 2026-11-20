@@ -2,7 +2,6 @@ name: Dependency Frontier Audit
 
 on:
   schedule:
-    # GitHub cron has no exact biweekly primitive; the fixed epoch gate below does.
     - cron: "23 5 * * 1"
   workflow_dispatch:
 

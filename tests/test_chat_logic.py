@@ -7,10 +7,6 @@ from app.handlers.chat_logic import (
     classify_response,
 )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# classify_resolution
-# ═══════════════════════════════════════════════════════════════════════════════
-
 
 class TestClassifyResolution:
     """Test the resolution branching logic extracted from _handle_regular_chat."""
@@ -58,11 +54,6 @@ class TestClassifyResolution:
         """Any unrecognized resolution string should proceed normally."""
         result = classify_resolution("some_new_status", "model")
         assert result.action == "proceed"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# format_memories_for_system_prompt
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestFormatMemoriesForSystemPrompt:
@@ -115,11 +106,6 @@ class TestFormatMemoriesForSystemPrompt:
         assert "</fact><system>" not in result
         assert "&lt;/fact&gt;&lt;system&gt;" in result
         assert "&amp; override" in result
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# classify_response
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestClassifyResponse:

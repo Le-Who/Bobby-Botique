@@ -1,4 +1,3 @@
-/* Shared Daily page behavior. Drafts remain in their owning editors. */
 (function (root) {
   'use strict';
   const bootstrap = JSON.parse(document.getElementById('daily-bootstrap').textContent);
@@ -69,7 +68,6 @@
       const field=control.closest('.field');
       const text=board ? `Клетка ${Number(control.dataset.y)+1}, ${Number(control.dataset.x)+1}`
         : control.placeholder || field?.querySelector('label')?.textContent || control.title;
-      // Older inline filters have no visible label; retain a concrete name.
       const names={'sub-search':'Поиск подписчика','sub-status-filter':'Статус подписки','sub-game-filter':'Игра подписки',
         'offer-status-filter':'Статус предложения','offer-game-filter':'Игра предложения','offer-limit':'Количество предложений'};
       control.setAttribute('aria-label',text || names[control.id] || `Поле ${control.id || index+1}`);
@@ -102,7 +100,6 @@
       });
     });
     const observer=new MutationObserver(()=>{enhanceLabels();});
-    // Labels are enhanced after editor rendering, without replacing controls.
     observer.observe(document.body,{childList:true,subtree:true});
     new ResizeObserver(layout).observe(document.querySelector('.header'));
     new ResizeObserver(layout).observe(document.querySelector('.tab-nav'));

@@ -43,10 +43,6 @@ OLD_BLOCK = (
 )
 
 NEW_BLOCK = (
-    "    # \u2500\u2500 Sequential key rotation via ProviderRouter.get_response() \u2500\u2500\n"
-    "    # QNA_MODEL (gemini-2.5-flash) is stable enough that parallel racing\n"
-    "    # would only waste daily quota. ProviderRouter tries one key at a time,\n"
-    "    # rotating to the next on 503/UNAVAILABLE, with health-aware key selection.\n"
     "    from app.errors import is_error_message\n"
     "    from app.providers.router import get_provider_router\n"
     "\n"
@@ -91,13 +87,11 @@ NEW_DOCSTRING_FRAGMENT = (
 with open(TARGET, encoding="utf-8") as f:
     content = f.read()
 
-# 1. Patch the docstring
 if OLD_DOCSTRING_FRAGMENT not in content:
     print("ERROR: docstring fragment not found", file=sys.stderr)
     sys.exit(1)
 content = content.replace(OLD_DOCSTRING_FRAGMENT, NEW_DOCSTRING_FRAGMENT, 1)
 
-# 2. Patch the generation call
 if OLD_BLOCK not in content:
     print("ERROR: generation block not found", file=sys.stderr)
     sys.exit(1)
@@ -106,12 +100,10 @@ content = content.replace(OLD_BLOCK, NEW_BLOCK, 1)
 with open(TARGET, "w", encoding="utf-8") as f:
     f.write(content)
 
-# 3. Add _TAROT_MODEL constant near _INLINE_FALLBACK_MODEL if not already there
 with open(TARGET, encoding="utf-8") as f:
     content = f.read()
 
 if "_TAROT_MODEL" not in content:
-    # Insert after _INLINE_FALLBACK_MODEL line
     old_const = '_INLINE_FALLBACK_MODEL = "gemini-2.5-flash-lite"\n'
     new_const = (
         '_INLINE_FALLBACK_MODEL = "gemini-2.5-flash-lite"\n'
@@ -131,7 +123,6 @@ if "_TAROT_MODEL" not in content:
     with open(TARGET, "w", encoding="utf-8") as f:
         f.write(content)
 
-# Verify
 with open(TARGET, encoding="utf-8") as f:
     content = f.read()
 

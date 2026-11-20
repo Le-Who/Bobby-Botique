@@ -32,7 +32,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Aspect ratios supported by Gemini native image generation
 SUPPORTED_ASPECT_RATIOS: tuple[str, ...] = (
     "1:1",
     "3:4",
@@ -41,7 +40,6 @@ SUPPORTED_ASPECT_RATIOS: tuple[str, ...] = (
     "16:9",
 )
 
-# Human-readable labels for aspect ratio buttons
 ASPECT_RATIO_LABELS: dict[str, str] = {
     "1:1": "◻️ 1:1",
     "3:4": "📱 3:4",
@@ -50,21 +48,11 @@ ASPECT_RATIO_LABELS: dict[str, str] = {
     "16:9": "🎬 16:9",
 }
 
-# Short human-readable model labels for UI
 MODEL_LABELS: dict[str, str] = {
     GEMINI_IMAGE_MODEL: "✨ Gemini Image",
     **dict.fromkeys(LEGACY_IMAGEN_MODELS, "✨ Gemini Image"),
 }
 
-# ---------------------------------------------------------------------------
-# Per-key RPD budget tracker
-#
-# Primary:  Redis INCR + EXPIREAT(next UTC midnight) — survives bot restarts.
-# Fallback: in-memory dict — only when Redis is not configured. A failed
-# reservation on configured Redis has an unknown outcome and fails closed.
-#
-# Redis key format:  imagen:rpd:<sha256(api_key)[:12]>
-# ---------------------------------------------------------------------------
 
 import datetime as _datetime
 import hashlib as _hashlib
@@ -98,9 +86,6 @@ def _next_midnight_ts() -> int:
     return int(tomorrow.timestamp())
 
 
-# --- Redis helpers ---
-
-
 def _redis_imagen_key(api_key: str) -> str:
     return f"imagen:rpd:{_day_bucket_key(api_key)}"
 
@@ -108,7 +93,7 @@ def _redis_imagen_key(api_key: str) -> str:
 async def _redis_get_usage(api_key: str) -> int | None:
     """Return usage count from Redis, or None if Redis is unavailable."""
     try:
-        from app.cache import redis_client  # lazy import to avoid circular deps
+        from app.cache import redis_client
 
         if redis_client is None:
             return None
@@ -129,15 +114,11 @@ async def _redis_increment_usage(api_key: str) -> int | None:
         rk = _redis_imagen_key(api_key)
         new_val: int = await redis_client.incr(rk)  # type: ignore[assignment]
         if new_val == 1:
-            # First request today — set TTL to next UTC midnight
             await redis_client.expireat(rk, _next_midnight_ts())
         return new_val
     except Exception as exc:
         logger.debug("Imagen Redis incr failed (falling back to memory): %s", type(exc).__name__)
         return None
-
-
-# --- Public interface (auto-selects Redis or in-memory) ---
 
 
 async def _get_key_usage(api_key: str) -> int:
@@ -146,7 +127,6 @@ async def _get_key_usage(api_key: str) -> int:
     if redis_result is not None:
         return redis_result
 
-    # Fallback: in-memory
     async with _KEY_BUCKET_LOCK:
         bk = _day_bucket_key(api_key)
         entry = _KEY_DAY_BUCKET.get(bk)
@@ -192,7 +172,6 @@ async def _reserve_key_usage(api_key: str) -> bool:
                 pending = redis_client.eval(_RESERVE_QUOTA, 1, _redis_imagen_key(api_key), limit, _next_midnight_ts())
                 return bool(await cast(Awaitable[object], pending))
         except Exception as error:
-            # The write outcome is unknown. A local retry could bypass the cap.
             logger.warning("Imagen quota reservation unavailable: %s", type(error).__name__)
             raise QuotaReservationUnavailable from error
     async with _KEY_BUCKET_LOCK:
@@ -213,7 +192,6 @@ async def _increment_key_usage(api_key: str) -> int:
     if redis_result is not None:
         return redis_result
 
-    # Fallback: in-memory
     async with _KEY_BUCKET_LOCK:
         bk = _day_bucket_key(api_key)
         now = time.time()
@@ -264,25 +242,15 @@ async def _consume_user_daily_quota(user_id: int | None) -> bool:
         return True
 
 
-# ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class ImageGenResult:
     """Result of a single image generation call."""
 
     success: bool
-    images: list[bytes] = field(default_factory=list)  # raw PNG/JPEG bytes
+    images: list[bytes] = field(default_factory=list)
     error_message: str = ""
     model_used: str = ""
-    key_suffix: str = ""  # last 4 chars of API key (for debug logging)
-
-
-# ---------------------------------------------------------------------------
-# Provider
-# ---------------------------------------------------------------------------
+    key_suffix: str = ""
 
 
 class ImagenProvider:
@@ -388,7 +356,6 @@ class ImagenProvider:
 
         last_error = ""
         for attempt_number in range(max_retries):
-            # --- Key selection: pick key with budget remaining ---
             selected_key: str | None = None
             try:
                 for key in keys:
@@ -449,7 +416,6 @@ class ImagenProvider:
                     timeout=settings.IMAGE_GEN_TIMEOUT,
                 )
 
-                # Extract image bytes
                 images_bytes: list[bytes] = []
                 output_image = getattr(response, "output_image", None)
                 encoded_data = getattr(output_image, "data", None)
@@ -462,7 +428,6 @@ class ImagenProvider:
                         model,
                         key_id,
                     )
-                    # Rotate key in case this is a silent API refusal
                     keys = [k for k in keys if k != selected_key]
                     last_error = "empty_response"
                     workload_attempt.finish(outcome="failed", level="warning", reason_code=last_error)
@@ -526,7 +491,6 @@ class ImagenProvider:
                 )
 
                 if "paid plan" in err_lower or "limit: 0" in err_lower:
-                    # Google disabled Imagen on Free Tier or requires billing
                     return ImageGenResult(
                         success=False,
                         error_message="paid_tier_required",
@@ -539,12 +503,10 @@ class ImagenProvider:
                     or "resource_exhausted" in err_lower
                     or "429" in err_lower
                 ):
-                    # This failed SDK attempt already consumed its reservation.
                     last_error = "quota"
                     keys = [k for k in keys if k != selected_key]
 
                 elif status_code == 400 or "safety" in err_lower or "block" in err_lower:
-                    # Safety block is not a key problem — fail fast, no rotation
                     return ImageGenResult(
                         success=False,
                         error_message="safety_blocked",
@@ -569,7 +531,6 @@ class ImagenProvider:
         )
 
 
-# Module-level singleton
 _imagen_provider: ImagenProvider | None = None
 
 

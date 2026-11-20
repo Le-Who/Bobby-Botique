@@ -15,8 +15,6 @@ def estimate_image_size_in_bytes(image: Image.Image) -> int:
     width, height = image.size
     mode = image.mode
 
-    # Estimate bytes per pixel based on mode
-    # This is an approximation for memory usage/raw data size check.
     if mode in ("1", "L", "P"):
         bpp = 1
     elif mode in ("RGB", "YCbCr", "LAB", "HSV"):
@@ -26,11 +24,9 @@ def estimate_image_size_in_bytes(image: Image.Image) -> int:
     elif mode == "I;16":
         bpp = 2
     else:
-        # Fallback for less common modes
         try:
             bpp = len(image.getbands())
         except Exception:
-            # Absolute fallback if getbands fails (unlikely for valid image)
             return len(image.tobytes())
 
     return width * height * bpp

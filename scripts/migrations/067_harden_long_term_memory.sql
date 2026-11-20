@@ -1,6 +1,3 @@
--- Migration 067: durable LTM consent, normalized GraphRAG provenance, and retention safety.
--- This migration is additive/idempotent and intentionally does not FORCE RLS so the
--- database owner and configured service roles retain their documented PostgreSQL behavior.
 
 ALTER TABLE chats
     ADD COLUMN IF NOT EXISTS memory_epoch BIGINT NOT NULL DEFAULT 0;
@@ -11,12 +8,6 @@ ALTER TABLE long_term_memory
 ALTER TABLE memory_nodes
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
--- The original graph tables were created manually in some deployments with UUID
--- primary keys. Migration 024b later documented BIGSERIAL as the canonical schema,
--- but CREATE TABLE IF NOT EXISTS could not change those already-existing columns.
--- Normalize that legacy layout before creating BIGINT provenance foreign keys.
--- The numbered migration runner wraps this whole file in one transaction, so the
--- ID remap and every dependent schema change below commit or roll back together.
 CREATE TEMP TABLE migration_067_node_id_map (
     old_id TEXT PRIMARY KEY,
     new_id BIGINT NOT NULL UNIQUE
@@ -55,8 +46,6 @@ DECLARE
     edge_id_is_uuid BOOLEAN;
     dependent_fk RECORD;
 BEGIN
-    -- Keep the mapping snapshot stable if an older replica is still accepting
-    -- graph writes while this deployment starts.
     LOCK TABLE public.memory_nodes, public.memory_edges IN ACCESS EXCLUSIVE MODE;
 
     SELECT attribute.atttypid = 'uuid'::regtype
@@ -68,8 +57,6 @@ BEGIN
       AND NOT attribute.attisdropped;
 
     IF node_id_is_uuid THEN
-        -- Remove only edges whose endpoints cannot be mapped. These are already
-        -- invalid graph rows and would be removed by the tenant-FK cleanup below.
         DELETE FROM public.memory_edges AS edge
         WHERE NOT EXISTS (
                 SELECT 1
@@ -87,9 +74,6 @@ BEGIN
                ROW_NUMBER() OVER (ORDER BY node.id)::BIGINT
         FROM public.memory_nodes AS node;
 
-        -- The old endpoint FKs bind UUID columns to memory_nodes.id. They must be
-        -- dropped before the coordinated rewrite; tenant-aware FKs are recreated
-        -- later in this same migration.
         FOR dependent_fk IN
             SELECT constraint_row.conname
             FROM pg_constraint AS constraint_row
@@ -206,8 +190,6 @@ DROP FUNCTION pg_temp.migration_067_edge_id_to_bigint(TEXT);
 DROP TABLE pg_temp.migration_067_node_id_map;
 DROP TABLE pg_temp.migration_067_edge_id_map;
 
--- A queued capture carrying the old epoch must become stale as soon as the user
--- changes consent from enabled to disabled, regardless of which app process writes it.
 CREATE OR REPLACE FUNCTION bump_memory_epoch_on_ltm_disable()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -230,8 +212,6 @@ CREATE TRIGGER chats_bump_memory_epoch_on_disable
     FOR EACH ROW
     EXECUTE FUNCTION bump_memory_epoch_on_ltm_disable();
 
--- Composite uniqueness lets provenance enforce that its edge, memory, and tenant
--- all agree. The primary keys still remain the canonical single-column BIGINT IDs.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_edges_id_user_id
     ON memory_edges (id, user_id);
 
@@ -241,8 +221,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ltm_id_user_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_nodes_id_user_id
     ON memory_nodes (id, user_id);
 
--- Add tenant endpoint constraints as NOT VALID first: new/updated rows are protected
--- immediately while legacy corruption can be removed without an initial table scan.
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -273,8 +251,6 @@ BEGIN
 END;
 $$;
 
--- Cross-tenant endpoint rows cannot be made authoritative. Remove them before
--- validating; valid historical edges and their source arrays remain untouched.
 DELETE FROM memory_edges AS edge
 WHERE NOT EXISTS (
         SELECT 1
@@ -313,9 +289,6 @@ CREATE TABLE IF NOT EXISTS memory_edge_sources (
         REFERENCES long_term_memory (id, user_id) ON DELETE CASCADE
 );
 
--- Re-runs must also upgrade a table created by an earlier revision of this
--- migration. Legacy rows are intentionally incomplete: one canonical edge row
--- cannot prove which source supplied weight/core/predicate.
 ALTER TABLE memory_edge_sources
     ADD COLUMN IF NOT EXISTS predicate TEXT,
     ADD COLUMN IF NOT EXISTS predicate_embedding halfvec(768),
@@ -323,8 +296,6 @@ ALTER TABLE memory_edge_sources
     ADD COLUMN IF NOT EXISTS is_core BOOLEAN,
     ADD COLUMN IF NOT EXISTS attributes_complete BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Mutable node values need their own exact source snapshots. The canonical node
--- remains a retrieval projection and is rebuilt from these rows after deletion.
 CREATE TABLE IF NOT EXISTS memory_node_sources (
     node_id BIGINT NOT NULL,
     memory_id BIGINT NOT NULL,
@@ -347,8 +318,6 @@ CREATE TABLE IF NOT EXISTS memory_node_sources (
         REFERENCES long_term_memory (id, user_id) ON DELETE CASCADE
 );
 
--- Exact raw-memory support for derived/consolidated facts. Deleting any cited raw
--- source invalidates the derived fact conservatively via the trigger below.
 CREATE TABLE IF NOT EXISTS memory_derivation_sources (
     derived_memory_id BIGINT NOT NULL,
     source_memory_id BIGINT NOT NULL,
@@ -384,8 +353,6 @@ CREATE TRIGGER memory_derivation_sources_delete_derived
     FOR EACH ROW
     EXECUTE FUNCTION delete_derived_memory_on_source_removal();
 
--- Backfill only valid, same-tenant legacy references. Dangling or cross-tenant array
--- entries are deliberately ignored instead of being made authoritative.
 INSERT INTO memory_edge_sources (
     edge_id, memory_id, user_id, predicate, predicate_embedding,
     weight, is_core, attributes_complete
@@ -400,8 +367,6 @@ JOIN long_term_memory AS memory
  AND memory.user_id = e.user_id
 ON CONFLICT (edge_id, memory_id) DO NOTHING;
 
--- Upgrade rows created by an earlier 067 revision without pretending their
--- canonical attributes have exact provenance.
 UPDATE memory_edge_sources AS source
 SET predicate = COALESCE(source.predicate, edge.predicate),
     predicate_embedding = COALESCE(source.predicate_embedding, edge.predicate_embedding),
@@ -421,10 +386,6 @@ ALTER TABLE memory_edge_sources
     ALTER COLUMN weight SET NOT NULL,
     ALTER COLUMN is_core SET NOT NULL;
 
--- A legacy node can be linked to several memories through its incident edges,
--- but there is no evidence identifying which one contributed its mutable values.
--- Backfill conservatively and mark those snapshots incomplete. On source removal
--- the trigger below clears rather than re-attributing those values.
 INSERT INTO memory_node_sources (
     node_id, memory_id, user_id, entity_type, description, embedding,
     wing, room, file_id, file_type, attributes_complete
@@ -441,8 +402,6 @@ JOIN memory_edge_sources AS source
  AND source.user_id = edge.user_id
 ON CONFLICT (node_id, memory_id) DO NOTHING;
 
--- If a deployment accumulated duplicate current facts without migration 025's full
--- unique index, preserve every source on the strongest row before removing duplicates.
 WITH ranked_current_edges AS (
     SELECT
         id,
@@ -475,16 +434,11 @@ USING ranked_current_edges AS ranked
 WHERE edge.id = ranked.id
   AND ranked.row_number > 1;
 
--- Historical versions may repeat a triple. Only the current version is unique.
 DROP INDEX IF EXISTS idx_memory_edges_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_edges_current_unique
     ON memory_edges (user_id, source_node, target_node, predicate)
     WHERE valid_to IS NULL;
 
--- Return TRUE when the edge had to be removed. Complete source snapshots can
--- deterministically rebuild every mutable edge attribute. For legacy/incomplete
--- snapshots, deleting any source removes the edge rather than retaining a value
--- that may have come exclusively from the deleted memory.
 CREATE OR REPLACE FUNCTION recompute_memory_edge_after_source_removal(
     target_edge_id BIGINT,
     target_user_id BIGINT
@@ -555,8 +509,6 @@ BEGIN
 END;
 $$;
 
--- Removing a memory cascades its provenance rows. Recompute the surviving edge,
--- or remove it conservatively, then delete endpoint nodes only when no edge uses them.
 CREATE OR REPLACE FUNCTION delete_orphaned_memory_edge()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -607,9 +559,6 @@ BEGIN
 END;
 $$;
 
--- Mutable node values are a projection of exact source snapshots. A legacy
--- incomplete survivor is privacy-safe only after clearing all source-derived
--- values; the stable entity_name remains because live edges still reference it.
 CREATE OR REPLACE FUNCTION recompute_memory_node_after_source_removal()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -695,9 +644,6 @@ BEGIN
 END;
 $$;
 
--- Extraction can fail after inserting a node but before creating any relation.
--- Sweep only old, never-referenced nodes so an in-flight multi-phase extraction gets
--- a generous grace period while eventual retention still removes orphaned PII.
 CREATE OR REPLACE FUNCTION delete_stale_orphaned_memory_nodes(target_user_id BIGINT)
 RETURNS BIGINT
 LANGUAGE plpgsql
@@ -708,8 +654,6 @@ DECLARE
 BEGIN
     PERFORM pg_advisory_xact_lock(target_user_id);
 
-    -- Legacy/backfill edges with no normalized live provenance cannot support graph
-    -- facts. Remove them before looking for nodes that no edge references.
     WITH unsupported_edges AS (
         SELECT edge.id, edge.user_id
         FROM memory_edges AS edge
@@ -772,7 +716,6 @@ CREATE CONSTRAINT TRIGGER memory_node_sources_recompute_after_delete
     FOR EACH ROW
     EXECUTE FUNCTION recompute_memory_node_after_source_removal();
 
--- Tenant, retention, and foreign-key support indexes.
 CREATE INDEX IF NOT EXISTS idx_ltm_user_created_at
     ON long_term_memory (user_id, created_at DESC, id DESC);
 
@@ -808,7 +751,6 @@ CREATE INDEX IF NOT EXISTS idx_memory_derivation_sources_source_user
 CREATE INDEX IF NOT EXISTS idx_memory_derivation_sources_user_derived
     ON memory_derivation_sources (user_id, derived_memory_id);
 
--- LTM and every derived graph/provenance table share the same tenant boundary.
 ALTER TABLE long_term_memory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_nodes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_edges ENABLE ROW LEVEL SECURITY;

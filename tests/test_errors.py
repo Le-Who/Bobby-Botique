@@ -7,21 +7,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.errors import (
-    # Constants
     GENERIC_ERROR,
     OVERLOADED_ERROR,
     QUOTA_ERROR,
     TIMEOUT_ERROR,
-    # Classes
     APIError,
     build_retry_and_roles_keyboard,
     build_roles_keyboard,
-    # Context manager - tested in async tests
     handle_api_errors,
     is_error_message,
     is_key_related_error,
     is_retryable_error,
-    # Functions
     user_friendly_error,
 )
 
@@ -98,7 +94,6 @@ class TestIsRetryableError:
         assert is_retryable_error("rate limit exceeded") is True
 
     def test_quota_not_retryable(self):
-        # Quota errors are key-related, not retryable by same key
         assert is_retryable_error("daily quota exceeded") is False
 
     def test_empty_not_retryable(self):
@@ -118,7 +113,6 @@ class TestIsKeyRelatedError:
         assert is_key_related_error("Unauthorized") is True
 
     def test_503_not_key_related(self):
-        # 503 is server issue, not key issue
         assert is_key_related_error("503 Service unavailable") is False
 
     def test_timeout_not_key_related(self):

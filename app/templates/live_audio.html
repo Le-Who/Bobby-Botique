@@ -80,7 +80,6 @@
       flex-shrink: 0;
     }
 
-    /* ── Status section ─────────────────────────────────────────────── */
     #status-label {
       font-size: 14px;
       font-weight: 500;
@@ -92,7 +91,6 @@
     #status-label.active { color: var(--accent-ok); }
     #status-label.error  { color: var(--accent-warm); }
 
-    /* ── Waveform visualizer ────────────────────────────────────────── */
     #visualizer-wrap {
       width: 220px;
       height: 220px;
@@ -122,7 +120,6 @@
       border-radius: 50%;
     }
 
-    /* ── Transcript feed ────────────────────────────────────────────── */
     #transcript-area {
       width: 100%;
       max-width: 420px;
@@ -154,7 +151,6 @@
       margin-top: 10px;
     }
 
-    /* ── Controls ───────────────────────────────────────────────────── */
     #controls {
       display: flex;
       align-items: center;
@@ -192,7 +188,6 @@
       font-size: 20px;
     }
 
-    /* ── Error bar ──────────────────────────────────────────────────── */
     #error-bar {
       position: fixed; bottom: 0; left: 0; right: 0;
       padding: 12px 20px;
@@ -456,7 +451,6 @@
 </div>
 
 <script>
-/* ── Telegram WebApp ────────────────────────────────────────────────── */
 const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
@@ -467,7 +461,6 @@ if (tg) {
 const haptic = tg?.HapticFeedback;
 const INIT_DATA = tg?.initData || '';
 
-/* ── DOM refs ───────────────────────────────────────────────────────── */
 const $ = id => document.getElementById(id);
 const statusEl    = $('status-label');
 const micBtn      = $('mic-btn');
@@ -488,7 +481,6 @@ const liveSettingsCancelBtn = $('live-settings-cancel');
 const liveSettingsSaveBtn = $('live-settings-save');
 const errorBar    = $('error-bar');
 
-/* ── State ──────────────────────────────────────────────────────────── */
 let ws = null;
 let recording = false;
 let audioCtx = null;
@@ -537,7 +529,6 @@ function setMicState({ isRecording = recording, isConnecting = pendingRecordingS
   micBtn.classList.toggle('recording', state === 'recording');
 }
 
-/* ── Reconnect: exponential backoff ────────────────────────────────── */
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS  = 8000;
 let reconnectAttempt = 0;
@@ -556,7 +547,7 @@ const PLAYBACK_MIN_LEAD_SEC = 0.12;
 
 function _backoffDelay() {
   const base = Math.min(BACKOFF_BASE_MS * Math.pow(2, reconnectAttempt), BACKOFF_MAX_MS);
-  return base + Math.random() * 500;  // jitter
+  return base + Math.random() * 500;
 }
 
 function esc(value) {
@@ -745,7 +736,6 @@ async function saveLiveSettings() {
 
 
 
-/* ── Error bar ──────────────────────────────────────────────────────── */
 function showError(msg) {
   haptic?.notificationOccurred('error');
   errorBar.textContent = msg;
@@ -765,7 +755,6 @@ function setStatus(text, cls = '') {
   if (cls === 'active') haptic?.notificationOccurred('success');
 }
 
-/* ── Visualizer ─────────────────────────────────────────────────────── */
 let vizAnimId = null;
 let vizAnalyser = null;
 
@@ -810,7 +799,6 @@ function stopViz() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
-/* ── Playback (PCM 24kHz from Gemini → AudioContext) ────────────────── */
 function initPlayback() {
   if (!playbackCtx) {
     playbackCtx = new AudioContext({ sampleRate: 24000 });
@@ -843,8 +831,6 @@ function enqueueAudio(base64Pcm) {
       previousGain.cancelScheduledValues(previous.tailFadeStart);
       previousGain.setValueAtTime(1, previous.tailFadeStart);
     } else {
-      // A late but contiguous packet arrived during the tail ramp. Restore
-      // the current level smoothly instead of jumping back to full gain.
       previousGain.cancelAndHoldAtTime(now);
       previousGain.linearRampToValueAtTime(1, nextPlaybackTime);
     }
@@ -860,8 +846,6 @@ function enqueueAudio(base64Pcm) {
   gain.connect(playbackCtx.destination);
 
   const fadeSeconds = Math.min(PLAYBACK_FADE_MS / 1000, buf.duration / 2);
-  // The last queued packet is provisionally faded for a possible underrun.
-  // A contiguous packet cancels that fade, preserving one continuous waveform.
   if (startsSegment || playbackTurnEnded) {
     gain.gain.setValueAtTime(0, nextPlaybackTime);
     gain.gain.linearRampToValueAtTime(1, nextPlaybackTime + fadeSeconds);
@@ -904,7 +888,6 @@ function flushPlayback() {
   playbackTurnEnded = true;
 }
 
-/* ── WebSocket to Quart proxy ───────────────────────────────────────── */
 function resolveSocketPath(mode) {
   return mode === 'vertex_internet' ? '/webapp/live-vertex/ws' : '/webapp/live/ws';
 }
@@ -953,7 +936,7 @@ function connectWS(options = {}) {
 
   socket.onopen = () => {
     if (ws !== socket) return;
-    reconnectAttempt = 0;       // reset backoff on success
+    reconnectAttempt = 0;
     vizWrap.classList.remove('connecting');
     if (recording || pendingRecordingStart) {
       setStatus('Подключено к AI. Запускаю микрофон…', '');
@@ -1025,7 +1008,6 @@ function connectWS(options = {}) {
         break;
 
       case 'go_away': {
-        // Server will disconnect soon — proactively reconnect.
         const leadMs = Math.max((msg.time_left_seconds || 60) - 5, 1) * 1000;
         console.log(`[live] GoAway: reconnecting proactively in ${leadMs}ms`);
         clearTimeout(reconnectTimer);
@@ -1066,8 +1048,6 @@ function connectWS(options = {}) {
 
       case 'error':
         if (msg.reason === 'connect_failed' && !liveSessionEstablished && attemptedResumption) {
-          // A saved handle can expire or belong to the previous deployed model.
-          // Removing it makes this a single fresh retry, including page reloads.
           resumptionToken = '';
           sessionStorage.removeItem('liveResumptionToken');
           plannedReconnect = true;
@@ -1152,11 +1132,9 @@ function connectWS(options = {}) {
     setStatus('Потеряно соединение. Восстанавливаем...', 'error');
     vizWrap.classList.add('connecting');
     if (recording) {
-      // Mic stays active, but outbound chunks pause until the session reconnects.
       stopViz();
     }
     
-    // Exponential backoff reconnect
     const delay = _backoffDelay();
     reconnectAttempt++;
     console.log(`[live] reconnecting in ${Math.round(delay)}ms (attempt ${reconnectAttempt})`);
@@ -1170,7 +1148,6 @@ function connectWS(options = {}) {
   socket.onerror = () => {};
 }
 
-/* ── Transcript ─────────────────────────────────────────────────────── */
 function appendTranscript(who, text, cls) {
   if (!text) return;
   let draft = transcriptDrafts.get(cls);
@@ -1189,7 +1166,6 @@ function finalizeTranscriptDraft(cls) {
   else transcriptDrafts.clear();
 }
 
-/* ── Mic capture via AudioWorklet ───────────────────────────────────── */
 function releaseMicCapture(capture) {
   if (!capture || capture.disposed) return;
   capture.disposed = true;
@@ -1244,7 +1220,6 @@ async function startMicCapture() {
     capture.worklet.connect(capture.sink);
     capture.sink.connect(capture.context.destination);
 
-    // Publish only resources owned by the still-current start request.
     micStream = capture.stream;
     audioCtx = capture.context;
     workletNode = capture.worklet;
@@ -1268,8 +1243,6 @@ async function startMicCapture() {
 }
 
 function startRecording() {
-  // Unlock output synchronously inside the tap, before websocket/permission
-  // promises consume the browser's transient user activation (mobile WebViews).
   try {
     initPlayback();
     if (playbackCtx.state === 'suspended') void playbackCtx.resume().catch(() => showError('Не удалось включить звук'));
@@ -1302,12 +1275,10 @@ function stopRecording({ preserveStatus = false } = {}) {
   vizWrap.classList.remove('connecting');
   stopViz();
 
-  // Pausing the mic flushes server VAD; manual mode uses explicit activity.
   if (!cancelPendingStart && ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: liveSettings.live_turn_mode === 'manual' ? 'activity_end' : 'audio_stream_end' }));
   }
 
-  // Cleanup mic only
   releaseMicCapture(activeMicCapture);
   activeMicCapture = null;
   workletNode = null;
@@ -1350,7 +1321,6 @@ function endSession() {
   haptic?.notificationOccurred('success');
 }
 
-/* ── Utility ────────────────────────────────────────────────────────── */
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -1360,7 +1330,6 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-/* ── Event Listeners ────────────────────────────────────────────────── */
 micBtn.addEventListener('click', () => {
   if (!recording && !pendingRecordingStart) {
     startRecording();

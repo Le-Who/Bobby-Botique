@@ -124,8 +124,6 @@ async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date, *, di
             logger.warning("daily completion art failed user=%s date=%s: %s", user_id, puzzle_date, exc)
             return False
         logger.warning("daily completion art file_id stale for %s: %s", puzzle_date, exc)
-        # A failed Telegram reference does not authorize changing the gameplay clue.
-        # Recovering this transport handle requires the original stable asset.
         return False
     except TelegramError as exc:
         logger.warning("daily completion art failed user=%s date=%s: %s", user_id, puzzle_date, exc)
@@ -178,7 +176,6 @@ async def render_daily_result_body(
     leaderboard = focus_mode.get("leaderboard") or []
     if leaderboard:
         for idx, row in enumerate(leaderboard, start=1):
-            # Prefer display_name stored from Telegram initData; fall back to masked ID.
             stored_name = (row.get("display_name") or "").strip()
             player = html.escape(stored_name) if stored_name else _user_label(int(row["user_id"]))
             lines.append(f"{idx}. {player} — <b>{int(row['points'])}</b>")
@@ -343,7 +340,6 @@ async def send_daily_completion_bundle(
     """Send the game-over bundle: swap placeholder photo → real art, or fall back."""
     pref = await repo.get_preference(user_id)
 
-    # Mark as sent so the scheduler won't send a duplicate today.
     try:
         from datetime import UTC, datetime
 
@@ -362,7 +358,6 @@ async def send_daily_completion_bundle(
     text, keyboard = await render_daily_result_body(user_id, puzzle_date, focus_difficulty=focus_difficulty)
     existing_result = await repo.get_active_result_message_for_user(user_id, puzzle_date)
 
-    # Check if both games are finished to send an album
     all_results = await repo.get_results_for_user(user_id, puzzle_date)
     both_finished = all(d in all_results and all_results[d].status in ("won", "lost") for d in repo.DAILY_DIFFICULTIES)
 
@@ -425,7 +420,6 @@ async def send_daily_completion_bundle(
         if await _update_result_message(bot, existing_result, text, keyboard, puzzle=puzzle):
             return
 
-    # Try to edit the prompt photo message (placeholder → real art + result caption).
     prompt_msg = await repo.get_active_prompt_message(user_id, puzzle_date)
     puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=focus_difficulty)
     if prompt_msg and puzzle and puzzle.image_file_id:
@@ -453,7 +447,6 @@ async def send_daily_completion_bundle(
         except Exception as exc:
             logger.warning("daily: swap prompt→art failed user=%s: %s — sending separately", user_id, exc)
 
-    # Fallback: send a single result message, preferably as photo+caption.
     await send_daily_result_message(bot, user_id, puzzle_date, focus_difficulty=focus_difficulty)
 
 

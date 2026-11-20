@@ -4,7 +4,6 @@
 @media(max-width:650px){.app-header{position:relative;align-items:flex-start;flex-direction:column;gap:12px}.app-header nav{gap:2px}.app-header nav a{font-size:12px}.workspace{display:block}.sidebar{height:auto;position:static;border-right:0;border-bottom:1px solid var(--line);padding:16px 20px}.sidebar>.eyebrow,.sidebar-note{display:none}.sidebar nav{display:flex;overflow-x:auto;gap:8px}.sidebar nav a{white-space:nowrap;font-size:12px;padding:7px}.sidebar nav span{display:none}main{padding:28px 16px}.control-card{padding:18px}.control-card.dirty{padding-left:15px}.model-row{gap:4px;flex-wrap:wrap}.model-input{flex-basis:calc(100% - 35px)}.model-row .button:first-of-type{margin-left:26px}.card-heading{flex-wrap:wrap;gap:5px}.actions .save{margin-left:0}.actions{gap:6px}.button{padding:9px 11px}.history-row{flex-wrap:wrap}.page-heading{margin-bottom:24px}html{scroll-padding-top:20px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}}
 
-/* The controls share the monitoring dashboard's navy and cyan vocabulary. */
 .app-header{background:#0a0e1aeb;backdrop-filter:blur(12px)}
 .brand{color:var(--accent)}
 .sidebar{background:#0d1523}
@@ -30,7 +29,6 @@
 .filters{display:flex;align-items:end;gap:16px;flex-wrap:wrap;margin-bottom:18px}.filters .field{flex:1;min-width:180px}.filters .muted{font-size:12px;padding-bottom:10px}.control-card[hidden]{display:none}
 @media(max-width:650px){.history-list{padding:0 14px}.badges{justify-content:flex-start}.add-custom input{min-width:0;flex-basis:100%}}
 
-/* Section navigation stays available while editing long cards. */
 [hidden]{display:none!important}
 .sidebar nav a[aria-current]{background:var(--accent-soft);color:var(--accent)}
 .page-heading{display:block;margin-bottom:20px}
@@ -104,7 +102,6 @@ input,select{min-height:44px}
   footer{padding-bottom:env(safe-area-inset-bottom)}
 }
 
-/* Queue state remains readable while individual sources or commands are unknown. */
 .model-picker{min-width:0;max-width:270px;font-size:12px}.options>.muted{flex-basis:100%;margin:0}.service-tier{min-width:0;width:100%}
 @media(max-width:650px){.model-picker{margin-left:26px;max-width:calc(100% - 26px);flex-basis:calc(100% - 26px)}.options>.field{width:100%}}
 .queue-lanes,.queue-load{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin:20px 0}

@@ -36,9 +36,6 @@ from app.utils.time import get_pacific_tz
 _SAFE_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
-# ─── Generic daily-count key manager ────────────────────────────────────────
-
-
 class DailyKeyManager:
     """Reusable daily-count key rotation engine.
 
@@ -53,9 +50,6 @@ class DailyKeyManager:
             raise ValueError(f"Unsafe table name: {usage_table!r}")
         self.keys_table = keys_table
         self.usage_table = usage_table
-        # Selection pressure is process-local, not a provider RPM entitlement.
-        # Record before returning a key so concurrent callers spread even before
-        # their daily reservations commit. PostgreSQL remains the RPD authority.
         self._recent_selections: TTLCache = TTLCache(maxsize=4096, ttl=60)
 
     def _today(self) -> date:
@@ -96,7 +90,6 @@ class DailyKeyManager:
             RETURNING request_count;
         """
         result = await db_query(query, (key_hash, model_name, today))
-        # Structured observability: log threshold approach
         if result:
             count = result[0]["request_count"]
             if count == 1:
@@ -206,7 +199,6 @@ class DailyKeyManager:
                 recent.popleft()
             return len(recent), row.get("request_count", 0), recent[-1] if recent else 0
 
-        # There is no await between ordering and recording the selection.
         for row in sorted(results, key=pressure):
             if threshold is None or row.get("request_count", 0) < threshold:
                 try:
@@ -225,12 +217,8 @@ class DailyKeyManager:
         return None
 
 
-# Singletons
 _gemini_km = DailyKeyManager("api_keys", "key_usage")
 _openrouter_km = DailyKeyManager("openrouter_api_keys", "openrouter_key_usage")
-
-
-# ─── Gemini key helpers (public API — signatures unchanged) ──────────────────
 
 
 async def get_model_daily_limit(model_name: str, *, snapshot=None) -> int | None:
@@ -251,7 +239,6 @@ async def get_model_daily_limit(model_name: str, *, snapshot=None) -> int | None
         )
         limit = res[0]["daily_limit"] if res else None
 
-        # Fallback to settings.DAILY_LIMITS when DB has no entry for this model
         if limit is None:
             limit = settings.DAILY_LIMITS.get(model_name)
 
@@ -259,7 +246,6 @@ async def get_model_daily_limit(model_name: str, *, snapshot=None) -> int | None
         return limit
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to fetch limit for %s: %s", model_name, e)
-        # Fallback to config even on DB error
         return settings.DAILY_LIMITS.get(model_name)
 
 
@@ -280,8 +266,6 @@ async def get_model_daily_limits(model_names: list[str], *, snapshot=None) -> di
             missing.append(model)
     if missing:
         try:
-            # The controls inventory previously issued a serial query per cold
-            # model. Batch only misses, retaining explicit null overrides/cache.
             rows = await db_query(
                 "SELECT model_name, daily_limit FROM public.model_configuration WHERE model_name = ANY($1::text[])",
                 (missing,),
@@ -339,7 +323,6 @@ async def get_available_gemini_key(
     *,
     use_cache: bool = False,
 ) -> dict[str, Any] | None:
-    # When exclusions are requested, skip cache (caller wants a *different* key)
     if use_cache and not excluded_hashes:
         cached_key = None
         if model_name in db_manager._active_keys_cache:
@@ -465,8 +448,6 @@ async def reserve_gemini_key_usage(key_hash: str, model_name: str) -> bool:
         minute, _ = await gemini_minute_quota.reserve(scope, minute_limit, pending_for=30)
         if minute is None:
             return False
-    # Keep the minute reservation live through bounded daily storage work.
-    # Uncertain writes retain their slot; never open a second fallback budget.
     async with asyncio.timeout(30):
         current_usage = await _gemini_km.reserve_usage(key_hash, model_name, daily_limit)
     if current_usage is None:
@@ -502,15 +483,10 @@ async def reserve_gemini_key_usage(key_hash: str, model_name: str) -> bool:
     return True
 
 
-# ─── KeyStatusManager (per-model key health, DB-backed) ─────────────────────
-
-
-# Cooldown durations per error category
 _PENALTY_DURATIONS: dict[str, timedelta] = {
     "permanent": timedelta(hours=24),
     "rate_limit": timedelta(seconds=15),
     "transient": timedelta(seconds=15),
-    # "quota" is handled specially (until midnight PT)
 }
 _MAX_SUSPENSION = timedelta(days=7)
 _MAX_TEMPORARY_SUSPENSION = timedelta(seconds=60)
@@ -524,7 +500,6 @@ def _compute_suspended_until(
     now = datetime.now(UTC_TZ)
 
     if category == "quota":
-        # Suspend until midnight Pacific time
         pacific = get_pacific_tz()
         pacific_now = datetime.now(pacific)
         next_midnight_pt = pacific_now.replace(
@@ -537,7 +512,6 @@ def _compute_suspended_until(
 
     base = _PENALTY_DURATIONS.get(category, timedelta(seconds=15))
 
-    # Exponential backoff on repeated failures (capped)
     multiplier = 2 ** min(max(failure_count - 1, 0), 7)
     cap = _MAX_SUSPENSION if category == "permanent" else _MAX_TEMPORARY_SUSPENSION
     cooldown = min(base * multiplier, cap)
@@ -572,18 +546,11 @@ class KeyStatusManager:
             cache_key += f":{retry_after}"
         now_utc = datetime.now(UTC_TZ)
 
-        # Drop duplicate suspension requests within 5 seconds for the same key.
-        # Prevents a "thundering herd" of concurrent DB writes when many Live
-        # WS sessions hit the same quota-exhausted key simultaneously.
-        # NOTE: No asyncio.Lock is needed here. The check + write below has no
-        # `await` between them, so asyncio's cooperative scheduler cannot switch
-        # coroutines mid-way. The entire block executes atomically.
         cached_at = self._suspension_cache.get(cache_key)
         if cached_at is not None and (now_utc - cached_at).total_seconds() < 5:
             return
         self._suspension_cache[cache_key] = now_utc
 
-        # Read current failure_count to compute backoff
         rows = await db_query(
             "SELECT failure_count FROM key_model_status WHERE key_hash = $1 AND model_name = $2",
             (key_hash, model_name),
@@ -593,13 +560,8 @@ class KeyStatusManager:
         suspended_until = _compute_suspended_until(error_category, new_failures)
         google_model = model_name.removeprefix("models/").startswith(("gemini-", "gemma-"))
         if error_category == "rate_limit" and retry_after is not None and google_model:
-            # A provider RetryInfo is stronger evidence than the generic minute
-            # cooldown. Without one, do not revisit a rejected pair after 15s.
             suspended_until = now_utc + timedelta(seconds=min(retry_after, _MAX_SUSPENSION.total_seconds()))
         elif error_category == "rate_limit" and google_model:
-            # Gemini's unspecified 429 does not establish daily exhaustion.
-            # Keep this model/key out for a full minute rather than revisiting
-            # it inside the same short background batch after only 15 seconds.
             suspended_until = max(suspended_until, now_utc + timedelta(seconds=60))
         elif error_category in {"rate_limit", "transient"} and retry_after is not None:
             suspended_until = max(
@@ -692,13 +654,9 @@ class KeyStatusManager:
                     "suspension_expired": expired,
                     "failures": status.get("failure_count", 0),
                     "suspended_until": until.isoformat() if until else None,
-                    # Historical rows may predate credential scrubbing. Mask
-                    # the complete message before the UI's display truncation.
                     "last_error": str(sanitize_event({"message": status.get("last_error") or ""})["message"])[:100],
                 }
             )
-        # Admission permits an expired cooldown even before a later successful
-        # call rewrites the historical row. Counts describe key/model pairs.
         total_failures = sum(s.get("failure_count", 0) for s in statuses)
         return {
             "total_keys_tracked": len(statuses),
@@ -712,7 +670,6 @@ class KeyStatusManager:
         }
 
 
-# Singleton
 _key_status_manager: KeyStatusManager | None = None
 
 
@@ -722,9 +679,6 @@ def get_key_status_manager() -> KeyStatusManager:
     if _key_status_manager is None:
         _key_status_manager = KeyStatusManager()
     return _key_status_manager
-
-
-# ─── Generic monthly-credit key manager ─────────────────────────────────────
 
 
 class MonthlyKeyManager:
@@ -792,7 +746,6 @@ class MonthlyKeyManager:
         await db_query(query, (key_hash, current_month, cost, cost))
 
 
-# Singleton
 _tavily_km = MonthlyKeyManager(
     keys_table="tavily_api_keys",
     usage_table="tavily_key_usage",
@@ -845,9 +798,6 @@ async def force_update_tavily_keys() -> bool:
         return True
     except asyncpg.PostgresError, asyncpg.InterfaceError:
         return False
-
-
-# ─── OpenRouter key helpers (delegates to DailyKeyManager) ───────────────────
 
 
 async def get_available_openrouter_key(

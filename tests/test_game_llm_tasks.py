@@ -26,7 +26,6 @@ class TestLLMTasks:
     async def test_generate_hints_fallback(self):
         """LLM-02: Falls back to regex extraction if JSON decoding fails."""
         with patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response:
-            # Provide non-JSON format that contains quoted hints to trigger fallback parsing
             mock_get_response.return_value = ('Here are the hints:\n1. "F_Hint 1"\n2. "F_Hint 2"\n3. "F_Hint 3"', 15)
 
             result = await generate_hints("слово", "разное")
@@ -42,7 +41,6 @@ class TestLLMTasks:
             patch("app.games.judgement_cache.cache_generated_words", new_callable=AsyncMock) as cache_mock,
             patch("app.games.word_bank.enqueue_bank_hint_prewarm", new_callable=AsyncMock),
         ):
-            # Must be >= 5 words or validate_words returns None
             mock_get_response.return_value = ('["кот", "собака", "тигр", "медведь", "лиса"]', 10)
 
             words = await generate_words_for_category("зверолов_тест", lang="ru")

@@ -1,6 +1,3 @@
--- Migration 020: Add pg_trgm extension and GIN index for hybrid memory search
--- Enables keyword matching alongside pgvector cosine similarity (RRF hybrid search).
--- pg_trgm is safe to CREATE IF NOT EXISTS; GIN index uses gin_trgm_ops for % operator.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 

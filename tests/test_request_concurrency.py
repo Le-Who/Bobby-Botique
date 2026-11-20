@@ -23,7 +23,6 @@ async def request_boundary(monkeypatch):
         messages, "api_logger", MagicMock(log_request=MagicMock(return_value=0), log_response=MagicMock(return_value=0))
     )
     monkeypatch.setattr(messages, "metrics_collector", SimpleNamespace(record_request=AsyncMock()))
-    # Select the ordinary text branch without external interceptors or timers.
     for name in (
         "process_media_group_update",
         "handle_role_rename",
@@ -130,7 +129,6 @@ async def test_request_rejects_busy_user_then_accepts_after_cleanup(monkeypatch,
         assert state.get_user_state(uid).is_processing
         assert state.get_user_lock(uid).locked()
 
-        # The second handler returns while the first remains gated, without queueing.
         await asyncio.wait_for(messages.handle_request(updates[1], context), 1)
         request_boundary.busy.assert_awaited_once_with(updates[1])
         assert len(request_boundary.registered) == 1

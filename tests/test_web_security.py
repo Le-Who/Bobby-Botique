@@ -47,7 +47,6 @@ async def test_login_page_accessible(client):
 @pytest.mark.asyncio
 async def test_login_with_correct_password(client):
     """Test that logging in with correct password creates session."""
-    # First GET to obtain CSRF token
     get_response = await client.get("/login")
     data = (await get_response.get_data()).decode()
     m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
@@ -66,7 +65,6 @@ async def test_login_with_correct_password(client):
 @pytest.mark.asyncio
 async def test_login_with_wrong_password(client):
     """Test that wrong password shows error."""
-    # First GET to obtain CSRF token
     get_response = await client.get("/login")
     data = (await get_response.get_data()).decode()
     m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
@@ -86,7 +84,6 @@ async def test_header_auth_still_works(client):
     """Test that X-Auth-Token header auth still works (backward compat)."""
     headers = {"X-Auth-Token": "test_token"}
     response = await client.get("/", headers=headers)
-    # Should not redirect — auth passed
     assert response.status_code == 200
 
 
@@ -163,7 +160,6 @@ async def test_security_headers_present(client):
 
     csp = response.headers.get("Content-Security-Policy")
     assert "default-src 'self'" in csp
-    # Nonce-based CSP instead of 'unsafe-inline'
     assert "'nonce-" in csp
     assert "'unsafe-inline'" not in csp
     assert "https://fonts.googleapis.com" in csp
@@ -172,15 +168,12 @@ async def test_security_headers_present(client):
 @pytest.mark.asyncio
 async def test_logout_clears_session(client):
     """Test that logout clears session and redirects to login."""
-    # First GET to obtain CSRF token
     get_response = await client.get("/login")
     data = (await get_response.get_data()).decode()
     m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
     csrf_token = m.group(1)
 
-    # Login
     await client.post("/login", form={"password": "test_token", "csrf_token": csrf_token})
-    # Then logout
     response = await client.get("/logout", follow_redirects=False)
     assert response.status_code == 302
     assert "/login" in response.headers.get("Location", "")
@@ -197,9 +190,7 @@ async def test_generate_csp_nonce_format():
         await generate_csp_nonce()
         nonce = g.csp_nonce
 
-        # A 16-byte random sequence encoded with base64url should be exactly 22 chars long
         assert len(nonce) == 22
-        # Check that it's URL safe (alphanumeric, -, _)
         assert re.match(r"^[A-Za-z0-9_-]+$", nonce) is not None
 
 
@@ -227,7 +218,6 @@ async def test_error_leakage_prevented(client):
     secret_message = "SecretDatabaseConnectionString"
     headers = {"X-Auth-Token": "test_token"}
 
-    # Patch render_template in app.web
     with patch("app.web.render_template", side_effect=Exception(secret_message)):
         response = await client.get("/", headers=headers)
         assert response.status_code == 500
@@ -241,19 +231,15 @@ async def test_reader_rate_limiting(client):
     """Verify that the public reader page has rate limiting."""
     from app.web_miniapp import _reader_limiter
 
-    # Lower the limit for testing
     original_max = _reader_limiter.max_requests
     _reader_limiter.max_requests = 2
     try:
-        # Request 1 - OK
         response = await client.get("/webapp/reader?id=00000000-0000-0000-0000-000000000000")
         assert response.status_code == 200
 
-        # Request 2 - OK
         response = await client.get("/webapp/reader?id=00000000-0000-0000-0000-000000000000")
         assert response.status_code == 200
 
-        # Request 3 - Rate Limited
         response = await client.get("/webapp/reader?id=00000000-0000-0000-0000-000000000000")
         assert response.status_code == 429
         data = await response.get_data()

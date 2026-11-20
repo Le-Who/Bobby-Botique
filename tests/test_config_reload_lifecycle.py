@@ -17,7 +17,6 @@ def isolated_manager(monkeypatch):
     )
     monkeypatch.setattr(config, "get_settings_safe", lambda: cached)
     monkeypatch.setattr(config.time, "time", lambda: 600.0)
-    # The real reload changes these globals; retain pytest ownership for restore.
     monkeypatch.setattr(config, "_settings_instance", cached)
     monkeypatch.setattr(config, "settings", cached)
     manager = config.ConfigManager()
@@ -26,8 +25,6 @@ def isolated_manager(monkeypatch):
 
 
 def test_overdue_sync_setting_read_does_not_abandon_reload_coroutine(monkeypatch, recwarn):
-    # Constructing the reload coroutine before checking for a running loop leaks
-    # it when an ordinary synchronous reader first crosses the reload deadline.
     manager, cached = isolated_manager(monkeypatch)
     reads = []
 
@@ -45,8 +42,6 @@ def test_overdue_sync_setting_read_does_not_abandon_reload_coroutine(monkeypatch
 
 
 def test_overdue_sync_reader_keeps_next_async_reload_opportunity(monkeypatch, recwarn):
-    # A synchronous read cannot mark a reload as scheduled when no loop exists:
-    # the next async read at the same time still has to refresh the cached value.
     manager, cached = isolated_manager(monkeypatch)
     refreshed = cached.model_copy(deep=True)
     refreshed.DEFAULT_MODEL = "synthetic-new-model"
@@ -75,8 +70,6 @@ def test_overdue_sync_reader_keeps_next_async_reload_opportunity(monkeypatch, re
 
 @pytest.mark.asyncio
 async def test_overdue_async_reader_owns_one_reload_until_watcher_finishes(monkeypatch):
-    # A valid async loop must still refresh once, preserve shared identity and
-    # retain the task until a blocked watcher completes; readers cannot overlap it.
     manager, cached = isolated_manager(monkeypatch)
     refreshed = cached.model_copy(deep=True)
     refreshed.DEFAULT_MODEL = "synthetic-new-model"
@@ -108,7 +101,6 @@ async def test_overdue_async_reader_owns_one_reload_until_watcher_finishes(monke
         assert cached.DEFAULT_MODEL == "synthetic-new-model"
         assert not reload_task.done()
         assert not exited.is_set()
-        # Cross another interval while the first task still owns the watcher.
         monkeypatch.setattr(config.time, "time", lambda: 1200.0)
         assert manager.get_setting("DEFAULT_MODEL") == "synthetic-new-model"
         assert manager._reload_task is reload_task
@@ -128,8 +120,6 @@ async def test_overdue_async_reader_owns_one_reload_until_watcher_finishes(monke
 
 @pytest.mark.asyncio
 async def test_cancelled_reload_awaits_watcher_cleanup_before_task_returns(monkeypatch):
-    # Runtime cancellation must propagate through the watcher and finish its async
-    # finally before the manager's tracked task reports completion.
     manager, cached = isolated_manager(monkeypatch)
     monkeypatch.setattr(config, "load_settings", lambda: cached.model_copy(deep=True))
     entered = asyncio.Event()

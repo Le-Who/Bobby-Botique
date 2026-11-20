@@ -61,7 +61,6 @@ class TestNewTopicCallback:
         ):
             await new_topic_callback(update, MagicMock())
 
-        # Chat state should be cleared
         assert mock_chat_state.history == []
         assert mock_chat_state.token_count == 0
         assert mock_chat_state.system_prompt is None

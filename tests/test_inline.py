@@ -64,7 +64,6 @@ def test_parse_inline_query_image_intent_quoted():
 
 
 def test_parse_inline_query_edit_intent():
-    # Use an edit keyword, e.g. "измени"
     res = parse_inline_query("измени фото")
     assert res["is_image_intent"] is True
     assert res["has_edit_intent"] is True

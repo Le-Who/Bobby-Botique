@@ -7,10 +7,6 @@ import pytest
 
 from app.utils.metrics_middleware import MetricsMiddleware, track_metrics
 
-# ── MetricsMiddleware ────────────────────────────────────────────────────────
-# metrics_collector is lazily imported inside __aexit__ from app.metrics,
-# so we must patch at app.metrics.metrics_collector level.
-
 
 class TestMetricsMiddleware:
     @pytest.mark.asyncio
@@ -18,11 +14,11 @@ class TestMetricsMiddleware:
     async def test_records_success(self, mock_mc):
         mock_mc.record_request = AsyncMock()
         async with MetricsMiddleware("test_op"):
-            pass  # Success path
+            pass
         mock_mc.record_request.assert_called_once()
         args, kwargs = mock_mc.record_request.call_args
         assert args[0] == "test_op"
-        assert args[2] is True  # success
+        assert args[2] is True
 
     @pytest.mark.asyncio
     @patch("app.metrics.metrics_collector")
@@ -34,7 +30,7 @@ class TestMetricsMiddleware:
                 raise ValueError("boom")
         mock_mc.record_request.assert_called_once()
         args, kwargs = mock_mc.record_request.call_args
-        assert args[2] is False  # success=False
+        assert args[2] is False
         mock_mc.record_error.assert_called_once()
 
     @pytest.mark.asyncio
@@ -45,7 +41,7 @@ class TestMetricsMiddleware:
             await asyncio.sleep(0.05)
         args, kwargs = mock_mc.record_request.call_args
         duration = args[1]
-        assert duration >= 0.04  # Allow small timing variance
+        assert duration >= 0.04
 
     @pytest.mark.asyncio
     @patch("app.metrics.metrics_collector")
@@ -56,9 +52,6 @@ class TestMetricsMiddleware:
         with pytest.raises(RuntimeError, match="test error"):
             async with MetricsMiddleware("op"):
                 raise RuntimeError("test error")
-
-
-# ── track_metrics decorator ──────────────────────────────────────────────────
 
 
 class TestTrackMetrics:
@@ -97,5 +90,4 @@ class TestTrackMetrics:
         async def specific_function():
             pass
 
-        # functools.wraps should preserve the name
         assert specific_function.__name__ == "specific_function"

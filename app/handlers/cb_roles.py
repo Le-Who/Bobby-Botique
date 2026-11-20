@@ -59,7 +59,6 @@ async def role_rename_menu_callback(update: Update, context: ContextTypes.DEFAUL
         return
     roles = await get_user_custom_roles(user_id)
     if not roles:
-        # UX: Add back button even for empty state
         await query.edit_message_text(
             "У вас пока нет кастомных ролей.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="open_roles")]]),
@@ -69,7 +68,6 @@ async def role_rename_menu_callback(update: Update, context: ContextTypes.DEFAUL
     for r in roles:
         buttons.append([InlineKeyboardButton(f"✏️ {r['title']}", callback_data=f"role_rename_pick:{r['id']}")])
 
-    # UX: Add Back button and use edit_message_text
     buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="open_roles")])
     await query.edit_message_text("Выберите роль для переименования:", reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -127,13 +125,10 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_state.system_prompt = role_data["prompt"]
     role_title = role_data["title"]
 
-    # Write метрику (use key for консистентности)
     await role_conv_metrics.record_role_application(role_data["key"])
 
-    # Save state
     await update_user_chat(user_id, chat_state)
 
-    # Update menu - возвращаемся в Hub
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="hub")
     try:
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -149,13 +144,10 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if await reject_busy_interaction(user_id, query.answer):
         return
     chat_state = await get_user_chat(user_id)
-    # Clean up системный промпт (будет использован базовый)
     chat_state.system_prompt = None
     await update_user_chat(user_id, chat_state)
     await role_conv_metrics.record_role_clear()
 
-    # Update menu
-    # Update menu - возвращаемся в Hub
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="hub")
     try:
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -373,7 +365,6 @@ async def role_delete_cancel_callback(update: Update, context: ContextTypes.DEFA
     await query.answer()
     role_id = query.data.split(":")[1]
 
-    # Returnся в детали roles
     user_id = query.from_user.id
     chat_state = await get_user_chat(user_id)
 
@@ -396,12 +387,10 @@ async def role_delete_confirm_callback(update: Update, context: ContextTypes.DEF
 
         await delete_custom_role(role_id, user_id)
 
-        # If удаляемая role была активна, сбрасываем ее
         if role_prompt and chat_state.system_prompt == role_prompt:
             chat_state.system_prompt = None
             await update_user_chat(user_id, chat_state)
 
-        # Update menu - переходим в list "Мои roles"
         text, parse_mode, reply_markup = await menus.get_roles_menu_content(
             user_id, chat_state, view_mode="my_roles", page=0
         )
@@ -446,7 +435,6 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
     role_key = query.data.split(":", 1)[1]
     user_id = query.from_user.id
 
-    # Fetch role data using helper
     role_data = await get_role_data(role_key, user_id)
     prompt = role_data.get("prompt") if role_data else ""
 
@@ -468,9 +456,6 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
             "❌ Не удалось найти промпт.",
             reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
         )
-
-
-# ── Edit prompt callbacks ────────────────────────────────────────────────────
 
 
 async def role_edit_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -640,7 +625,6 @@ async def role_edit_cancel_callback(update: Update, context: ContextTypes.DEFAUL
 
     query = update.callback_query
     user_id = query.from_user.id
-    # Cancellation is allowed during the owned provider call, unlike save/tweak.
     from app.state import get_user_state
 
     owner = get_user_state(user_id).interaction
@@ -694,7 +678,6 @@ async def role_edit_ai_save_callback(update: Update, context: ContextTypes.DEFAU
         async with private_interaction(owner, chat_state) as allowed:
             if not allowed:
                 return
-            # A newer edit of the same saved role also invalidates this preview.
             source = await get_custom_role_prompt(role_id, user_id)
             if not await interaction_current(owner):
                 return
@@ -780,8 +763,6 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_state = await get_user_chat(user_id)
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state)
 
-    # When triggered from an AI response, send as a new message
-    # to preserve the original response text.
     from_response = query.data == "open_roles:from_response"
 
     try:
@@ -791,9 +772,6 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     except telegram.error.BadRequest:
         pass
-
-
-# ── Manual role creation callbacks ────────────────────────────────────────────
 
 
 async def role_create_manual_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

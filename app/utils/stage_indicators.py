@@ -8,8 +8,6 @@ search → analysis → response generation.
 
 import logging
 
-# ── Stage definitions ──────────────────────────────────────────────────────────
-
 STAGES_CHAT = [
     ("🤔", "Думаю..."),
     ("💭", "Формирую ответ..."),
@@ -78,7 +76,6 @@ async def update_stage(
     try:
         await message.edit_text(full_text)
     except Exception as e:
-        # Silently handle "message not modified" and similar
         logging.debug("Stage indicator update skipped: %s", e)
 
     return min(stage_index + 1, len(stage_list) - 1)

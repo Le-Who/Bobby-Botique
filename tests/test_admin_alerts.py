@@ -29,9 +29,6 @@ def _clean_alert_state():
     _unauthorized_last_alerted.clear()
 
 
-# ── Rate limiter ─────────────────────────────────────────────────────────────
-
-
 class TestRateLimiter:
     """Alert rate limiter should cap alerts per window."""
 
@@ -40,12 +37,12 @@ class TestRateLimiter:
 
     def test_rate_limited_after_max_alerts(self):
         now = time.monotonic()
-        for _ in range(5):  # _MAX_ALERTS = 5
+        for _ in range(5):
             _alert_timestamps.append(now)
         assert _is_rate_limited() is True
 
     def test_old_entries_purged(self):
-        old = time.monotonic() - 400  # _WINDOW_SECONDS = 300
+        old = time.monotonic() - 400
         for _ in range(5):
             _alert_timestamps.append(old)
         assert _is_rate_limited() is False
@@ -57,9 +54,6 @@ class TestRateLimiter:
     def test_first_unauthorized_alert_is_allowed_during_process_startup(self):
         with patch("app.admin_alerts.time.monotonic", return_value=1.0):
             assert _can_alert_unauthorized(998877) is True
-
-
-# ── alert_admin ──────────────────────────────────────────────────────────────
 
 
 class TestAlertAdmin:
@@ -79,7 +73,6 @@ class TestAlertAdmin:
 
     @pytest.mark.asyncio
     async def test_rate_limited_does_not_send(self):
-        # Fill up rate limiter
         now = time.monotonic()
         for _ in range(5):
             _alert_timestamps.append(now)
@@ -109,7 +102,6 @@ class TestAlertAdmin:
         mock_app.bot.send_message.side_effect = Exception("Network error")
 
         with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
-            # Should not raise
             await alert_admin(mock_app, "Alert with exception")
 
     @pytest.mark.asyncio
@@ -226,9 +218,6 @@ class TestAlertAdmin:
         assert message not in text
         assert "fingerprint" in text.casefold()
         assert str(len(message)) in text
-
-
-# ── AlertSeverity ────────────────────────────────────────────────────────────
 
 
 class TestAlertSeverity:

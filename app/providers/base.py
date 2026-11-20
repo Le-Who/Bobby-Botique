@@ -21,8 +21,6 @@ from app.errors import user_friendly_error
 from app.providers.stream_types import GenerationEvent, GenerationRequest
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
-# ── Thinking config helpers ──────────────────────────────────────────
-
 _THINKING_BUDGET_MAP = {"off": 0, "low": 1024, "medium": 8192, "high": 24576}
 _THINKING_LEVEL_MAP: dict[str, str] = {
     "off": "minimal",
@@ -48,7 +46,6 @@ def _build_thinking_config(model_name: str, thinking_level: str | None) -> types
     """
     if not thinking_level or thinking_level not in _THINKING_BUDGET_MAP:
         return None
-    # The Developer API also accepts the explicit models/ resource prefix.
     model_name = model_name.removeprefix("models/")
     if is_openrouter_model(model_name) or any(token in model_name for token in ("-transcribe", "-tts", "-live")):
         return None
@@ -64,7 +61,7 @@ def _build_thinking_config(model_name: str, thinking_level: str | None) -> types
             level = "high"
         elif model_name.startswith(("gemini-3.1-flash-image", "gemini-3.1-flash-lite-image")):
             level = "minimal" if thinking_level == "off" else "high"
-        return types.ThinkingConfig(thinking_level=level)  # type: ignore[arg-type]  # Pydantic coerces str→ThinkingLevel
+        return types.ThinkingConfig(thinking_level=level)  # type: ignore[arg-type]
     if not model_name.startswith("gemini-2.5-"):
         return None
     budget = _THINKING_BUDGET_MAP[thinking_level]
@@ -133,7 +130,6 @@ class BaseAIProvider(ABC):
         Returns:
             AIResponse with text and metadata
         """
-        # Validate inputs — returns error string on failure, None on success
         validation_error = self._validate_inputs(history, model_name, user_id, chat_id)
         if validation_error:
             logging.error("Input validation failed: %s", validation_error)
@@ -178,10 +174,6 @@ class BaseAIProvider(ABC):
             )
             return response
         except Exception as e:
-            # Catches APIError, httpx.HTTPError, CircuitBreakerOpenError, and any
-            # other exception that escapes run_with_resilience after all retries,
-            # converting it into a structured AIResponse instead of an unhandled
-            # background-task exception.
             last_error = e
 
         error_msg = user_friendly_error(last_error) if last_error else "Unknown error"
@@ -213,10 +205,10 @@ class BaseAIProvider(ABC):
             return "model_name must be a non-empty string"
 
         if user_id is not None and not isinstance(user_id, int):
-            return "user_id must be an integer"  # type: ignore[unreachable]  # defensive
+            return "user_id must be an integer"  # type: ignore[unreachable]
 
         if chat_id is not None and not isinstance(chat_id, int):
-            return "chat_id must be an integer"  # type: ignore[unreachable]  # defensive
+            return "chat_id must be an integer"  # type: ignore[unreachable]
 
         return None
 
@@ -235,8 +227,6 @@ class BaseAIProvider(ABC):
         ]
         error_lower = error_text.lower()
         return any(pattern in error_lower for pattern in transient_patterns)
-
-    # ── Shared logging helpers (AR-3 dedup) ──────────────────────────────
 
     def _error_response(
         self,
@@ -286,13 +276,11 @@ class BaseAIProvider(ABC):
         """Emit typed generation events and exactly one terminal event."""
 
 
-# Known FreeTheAI routing prefixes — checked BEFORE the generic "/" detection
-# to prevent FTA models from being misrouted to OpenRouter.
 KNOWN_FTA_PREFIXES: tuple[str, ...] = (
     "cat/",
     "yng/",
     "vhr/",
-    "img/",  # img/gpt-image-2 — FTA image generation endpoint
+    "img/",
     "or/google/lyria-",
 )
 

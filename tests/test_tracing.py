@@ -41,14 +41,13 @@ class TestBindRequestSpan:
         with patch("app.tracing.get_request_id", return_value=None):
             with bind_request_span() as ctx:
                 assert ctx["trace_id"] is not None
-                assert len(ctx["trace_id"]) == 32  # uuid4 hex
+                assert len(ctx["trace_id"]) == 32
 
     def test_nested_spans_independent(self):
         with bind_request_span(request_id="outer", span_name="a") as _outer_ctx:
             with bind_request_span(request_id="inner", span_name="b") as inner_ctx:
                 assert inner_ctx["trace_id"] == "inner"
                 assert len(inner_ctx["span_id"]) == 16
-            # After inner exits, outer should be restored
             restored = get_trace_context()
             assert restored["trace_id"] == "outer"
 

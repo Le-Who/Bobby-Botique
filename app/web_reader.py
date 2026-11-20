@@ -10,11 +10,10 @@ from tenacity import (
 
 from app.observability.workload_events import observe_workload_call
 
-MAX_PAGE_CHARS = 15_000  # ~5K tokens
+MAX_PAGE_CHARS = 15_000
 
 logger = logging.getLogger(__name__)
 
-# Reusable client for connection pooling
 _client = httpx.AsyncClient(timeout=10.0, follow_redirects=True)
 
 

@@ -1,9 +1,6 @@
--- Migration 069: globally unique consent generations and durable provider-use leases.
 
 CREATE SEQUENCE IF NOT EXISTS memory_consent_epoch_seq AS BIGINT;
 
--- Never move the sequence backwards when an idempotent migration runner rechecks
--- this file after live traffic has already allocated newer generations.
 SELECT setval(
     'memory_consent_epoch_seq',
     GREATEST(
@@ -19,8 +16,6 @@ ALTER TABLE chats
 ALTER TABLE chats
     ADD COLUMN IF NOT EXISTS private_data_blocked BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Replace migration 067's per-row increment. nextval is non-transactional by
--- design, so even a rolled-back attempt can never cause generation reuse.
 CREATE OR REPLACE FUNCTION bump_memory_epoch_on_ltm_disable()
 RETURNS TRIGGER
 LANGUAGE plpgsql

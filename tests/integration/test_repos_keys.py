@@ -40,7 +40,6 @@ def daily_manager(monkeypatch, key_clock):
 @pytest.fixture
 async def selection_keys(db_conn_with_user):
     conn = db_conn_with_user
-    # Exclude pre-existing keys so this test does not depend on seed data.
     excluded = {row["key_hash"] for row in await conn.fetch("SELECT key_hash FROM api_keys")}
     key_a = "integration-gemini-key-a"
     key_b = "integration-gemini-key-b"
@@ -218,7 +217,6 @@ class TestKeyModelStatus:
         assert row["failure_count"] == 1
         assert row["last_error"] == "Rate limit details"
         assert row["suspended_until"] == key_clock + timedelta(hours=24)
-        # An immediate duplicate suspension must not increment the DB counter.
         await manager.suspend_key(key_hash, MODEL, "permanent", "Duplicate")
         assert (
             await conn.fetchval(
@@ -240,8 +238,6 @@ class TestKeyModelStatus:
 
         await manager.record_success(key_hash, MODEL)
 
-        # A success already in flight when another request was throttled must
-        # not erase the provider's newer cooldown.
         assert (
             await conn.fetchval(
                 "SELECT status FROM key_model_status WHERE key_hash=$1 AND model_name=$2", key_hash, MODEL

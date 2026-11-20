@@ -61,7 +61,6 @@ async def test_user_cancellation_awaits_cleanup_and_preserves_other_users(
     await child_started.wait()
     await unrelated_started.wait()
     owner = asyncio.create_task(autosave.cancel_user_memory_tasks(11))
-    # A registered cancellation caller must exclude itself from the child set.
     autosave.register_memory_task(owner, user_id=11)
 
     try:
@@ -100,7 +99,6 @@ async def test_user_cancellation_awaits_cleanup_and_preserves_other_users(
         assert autosave._inflight_memory_tasks_by_user == {12: {unrelated}}
     finally:
         release_cleanup.set()
-        # Let owned cleanup finish before teardown sends any further cancellation.
         await _checkpoint()
         for task in (owner, child, unrelated):
             if not task.done():

@@ -1,5 +1,3 @@
--- 058_add_daily_trivia.sql
--- Daily Trivia game: 5 AI-generated trivia questions per day with explanations and score tracking.
 
 CREATE TABLE IF NOT EXISTS public.daily_trivia_puzzles (
     puzzle_date DATE PRIMARY KEY,

@@ -33,9 +33,6 @@ def _make_update(
     return update
 
 
-# ── authorized_only ──────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_authorized_only_sets_user_context():
     update = _make_update(user_id=100, chat_id=200)
@@ -124,9 +121,6 @@ async def test_authorized_only_context_set_even_if_unauthorized():
     ):
         await handler(update, context)
         mock_ctx.assert_called_once_with(100, 200)
-
-
-# ── admin_only ───────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

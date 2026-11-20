@@ -134,8 +134,6 @@ async def _send_idle_route_choice(update: Update, user_id: int, session: dict, t
     prompt = (
         "Сеанс Таро всё ещё активен, но прошло много времени с последнего сообщения.\n\nКак обработать ваш новый текст?"
     )
-    # Telegram cannot edit a message sent with ReplyKeyboardRemove. Send the
-    # choice directly and keep the existing end-session keyboard available.
     await update.message.reply_text(prompt, reply_markup=keyboard)
 
 
@@ -169,8 +167,6 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    # Reset is an interrupt, including while a provider is running. Never mutate
-    # the old turn's dictionary or history while it still owns a local snapshot.
     if text == "🔄 Новый расклад":
         session = deepcopy(source_session)
         session.update(
@@ -285,8 +281,6 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 if not await interaction_current(owner):
                     return
                 history.append({"role": "model", "parts": [response_text]})
-                # Publish directly to the captured canonical generation. The public
-                # setter is intentionally a replacement/interrupt boundary.
                 if state.tarot_session is source_session:
                     state.tarot_session = session
                     from app.state import _schedule_persist

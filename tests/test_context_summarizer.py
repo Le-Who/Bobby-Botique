@@ -34,9 +34,6 @@ def isolated_summary_settings(monkeypatch):
     )
 
 
-# ── _extract_text ────────────────────────────────────────────────────────────
-
-
 class TestExtractText:
     """_extract_text should handle various message dict formats."""
 
@@ -70,9 +67,6 @@ class TestExtractText:
         assert "text2" in result
 
 
-# ── split_into_chunks ────────────────────────────────────────────────────────
-
-
 class TestSplitIntoChunks:
     """split_into_chunks should split messages into ~CHUNK_SIZE token chunks."""
 
@@ -98,7 +92,7 @@ class TestSplitIntoChunks:
     def test_messages_without_text_skipped(self):
         messages = [
             {"role": "user", "parts": ["Hello"]},
-            {"role": "model", "parts": []},  # Empty — should be skipped
+            {"role": "model", "parts": []},
         ]
         chunks = split_into_chunks(messages)
         joined = "\n".join(chunks)
@@ -107,7 +101,6 @@ class TestSplitIntoChunks:
     def test_max_chunks_respected(self):
         from app.context.token_budget import MAX_CHUNKS
 
-        # Create many messages to exceed MAX_CHUNKS
         messages = [{"role": "user", "parts": ["x" * 5000]} for _ in range(MAX_CHUNKS + 5)]
         chunks = split_into_chunks(messages)
         assert len(chunks) <= MAX_CHUNKS
@@ -115,7 +108,6 @@ class TestSplitIntoChunks:
     def test_large_messages_split_into_multiple_chunks(self):
         from app.context.token_budget import CHUNK_SIZE
 
-        # Create a message that exceeds CHUNK_SIZE tokens (~2 chars per token for Cyrillic)
         big_msg = "a" * (CHUNK_SIZE * 3)
         messages = [
             {"role": "user", "parts": [big_msg]},

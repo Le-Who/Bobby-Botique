@@ -9,15 +9,10 @@ from app.documents.parsers import (
     calculate_file_hash_sync,
 )
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
 
 class TestConstants:
     def test_max_document_text_length(self):
         assert MAX_DOCUMENT_TEXT_LENGTH == 100_000
-
-
-# ── calculate_file_hash_sync ──────────────────────────────────────────────────
 
 
 class TestCalculateFileHashSync:
@@ -56,5 +51,5 @@ class TestCalculateFileHashSync:
     def test_hash_returns_hex_string(self):
         h = calculate_file_hash_sync(b"abc")
         assert isinstance(h, str)
-        assert len(h) == 64  # SHA-256 hex = 64 chars
+        assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)

@@ -95,12 +95,10 @@ async def test_force_update_tavily_keys():
 
         assert result is True
 
-        # Verify DELETE calls
         calls = [call.args[0] for call in mock_db_query.call_args_list]
         assert "DELETE FROM tavily_api_keys" in calls
         assert "DELETE FROM tavily_key_usage" in calls
 
-        # Verify INSERT with encrypted keys
         mock_db_exec_many.assert_called_once()
         query, data = mock_db_exec_many.call_args.args[:2]
         assert "INSERT INTO tavily_api_keys" in query

@@ -84,8 +84,6 @@ class _Connection:
             else:
                 row.update(delta_score=args[2], correct_count=args[3], elapsed_ms=args[4])
                 answers, status, finished = args[5:8]
-            # Match the production pool's JSONB codec: it serializes the Python
-            # list once, rather than accepting an already encoded JSON string.
             assert isinstance(answers, list)
             row.update(answers=deepcopy(answers), status=status)
             if row.get("puzzle_revision_id") is None:

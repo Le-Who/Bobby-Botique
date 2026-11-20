@@ -58,9 +58,6 @@ def build_generate_content_config(model_name: str, **options: Any) -> types.Gene
             options.pop(field, None)
     if options.get("thinking_config") is not None:
         options["thinking_config"] = _normalize_thinking_config(model, options["thinking_config"])
-    # Tiny legacy caps count thought tokens too. On 3.8 its default medium
-    # reasoning can spend the whole allowance before emitting a classifier
-    # label. Keep explicit policies intact; reserve room for bounded callers.
     limit = options.get("max_output_tokens")
     if (
         model.startswith("gemini-3.8-")

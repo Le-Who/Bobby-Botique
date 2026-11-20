@@ -43,7 +43,6 @@ const BroadcastModule = (() => {
     }
   }
 
-  // ── Channel overview ──────────────────────────────────────────────────────
   async function loadOverview() {
     const container = document.getElementById('channel-cards');
     try {
@@ -111,7 +110,6 @@ const BroadcastModule = (() => {
         </div>`;
     }).join('');
 
-    // Bind toggles
     container.querySelectorAll('.channel-toggle-chk').forEach(chk => {
       chk.addEventListener('change', async () => {
         const channel = chk.dataset.channel;
@@ -139,7 +137,6 @@ const BroadcastModule = (() => {
     });
   }
 
-  // ── Subscribers table ─────────────────────────────────────────────────────
   async function loadSubscribers(offset = 0) {
     subOffset = offset;
     const channel = document.getElementById('sub-filter-channel').value;
@@ -205,7 +202,6 @@ const BroadcastModule = (() => {
     }
   }
 
-  // ── Offer history ─────────────────────────────────────────────────────────
   let _selectedUids = new Set();
 
   function _updateBatchBar() {
@@ -344,7 +340,6 @@ const BroadcastModule = (() => {
     } finally { btn.disabled = false; }
   }
 
-  // ── init ──────────────────────────────────────────────────────────────────
   function init() {
     if (initialized) return;
     initialized = true;
@@ -357,17 +352,14 @@ const BroadcastModule = (() => {
       loadSubscribers(subOffset);
       loadOfferHistory(offerOffset);
     });
-    // Subscribers
     document.getElementById('btn-load-subs').addEventListener('click', () => loadSubscribers(0));
     document.getElementById('sub-prev').addEventListener('click', () => loadSubscribers(Math.max(0, subOffset - SUB_LIMIT)));
     document.getElementById('sub-next').addEventListener('click', () => loadSubscribers(subOffset + SUB_LIMIT));
 
-    // Offer history
     document.getElementById('btn-load-offers').addEventListener('click', () => loadOfferHistory(0));
     document.getElementById('offer-prev').addEventListener('click', () => loadOfferHistory(Math.max(0, offerOffset - OFFER_LIMIT)));
     document.getElementById('offer-next').addEventListener('click', () => loadOfferHistory(offerOffset + OFFER_LIMIT));
 
-    // Select all checkbox
     document.getElementById('offer-select-all').addEventListener('change', e => {
       document.querySelectorAll('.offer-row-chk').forEach(chk => {
         chk.checked = e.target.checked;
@@ -377,7 +369,6 @@ const BroadcastModule = (() => {
       _updateBatchBar();
     });
 
-    // Batch send
     document.getElementById('btn-offer-batch-send').addEventListener('click', _sendBatch);
     document.getElementById('btn-offer-batch-clear').addEventListener('click', () => {
       _selectedUids.clear();
@@ -386,10 +377,8 @@ const BroadcastModule = (() => {
       document.querySelectorAll('.offer-row-chk').forEach(c => { c.checked = false; });
     });
 
-    // Quick send
     document.getElementById('btn-offer-quick-send').addEventListener('click', _quickSend);
 
-    // Daily mode buttons
     document.querySelectorAll('#daily-mode-buttons button').forEach(btn => {
       btn.addEventListener('click', () => {
         const mode = btn.getAttribute('data-daily-mode');

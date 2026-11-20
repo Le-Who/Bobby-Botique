@@ -19,10 +19,8 @@ async def test_query_param_auth_rejected(client):
     """
     Test that authentication via query parameter is REJECTED (vulnerability fixed).
     """
-    # Verify accessing protected API endpoint with query param (not header)
     response = await client.get("/api/overview?token=test_secret_token")
 
-    # DESIRED BEHAVIOR: 401 Unauthorized (query params ignored for auth)
     assert response.status_code == 401
 
 

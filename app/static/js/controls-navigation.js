@@ -71,7 +71,6 @@
     });
   }
 
-  // Groups arrive with the API response; restore deep links after their options exist.
   new MutationObserver(restoreFilters).observe(document.getElementById('process-group'), { childList: true });
   new MutationObserver(() => { visibleRevision.textContent = revision.textContent; }).observe(revision, { childList: true, characterData: true, subtree: true });
   window.addEventListener('hashchange', () => showSection());

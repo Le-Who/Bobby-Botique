@@ -11,11 +11,9 @@ def _offline_state_hydration(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_new_chat_command():
-    # Setup standard mock objects
     update = MagicMock()
     context = MagicMock()
 
-    # We care about update.message.reply_text and update.effective_user.id
     update.effective_user.id = 12345
     update.effective_chat.id = 67890
     update.update_id = 11111
@@ -28,7 +26,6 @@ async def test_new_chat_command():
     mock_chat_state.history = [{"role": "user", "content": "hello"}]
     mock_chat_state.token_count = 100
 
-    # Mocking direct imports inside commands
     with (
         patch(
             "app.handlers.commands.get_user_chat",
@@ -45,16 +42,13 @@ async def test_new_chat_command():
 
         await new_chat_command(update, context)
 
-        # Verify side effects
         mock_get.assert_called_once_with(12345)
         mock_update.assert_called_once_with(12345, mock_chat_state)
 
-        # Verify state was cleared
         assert mock_chat_state.history == []
         assert mock_chat_state.token_count == 0
         assert mock_chat_state.system_prompt is None
 
-        # Verify user was notified
         update.message.reply_text.assert_called_once()
         args, kwargs = update.message.reply_text.call_args
         assert "Новый чат" in args[0]

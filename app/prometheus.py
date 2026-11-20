@@ -1,4 +1,3 @@
-# /app/prometheus.py
 """Zero-dependency Prometheus exporter for process-local operational events."""
 
 import os

@@ -1,9 +1,7 @@
-# ── Version Control ───────────────────────────────────────────
 .git/
 .github/
 .gitignore
 
-# ── IDE, Editor & Agent Configs ───────────────────────────────
 .vscode/
 .cursor/
 .Jules/
@@ -21,7 +19,6 @@ walkthrough.md
 task.md
 .playwright-cli/
 
-# ── Python Caches & Virtual Environments ──────────────────────
 __pycache__/
 *.pyc
 *.pyo
@@ -29,7 +26,6 @@ __pycache__/
 .venv/
 venv/
 
-# ── Test & Coverage (not needed in prod) ──────────────────────
 tests/
 pytest.ini
 .coverage
@@ -41,11 +37,9 @@ pytest_output.txt
 tests_output.log
 test_keys_out.txt
 
-# ── Linter / Type Checker Caches ──────────────────────────────
 .ruff_cache/
 .mypy_cache/
 
-# ── Secrets ───────────────────────────────────────────────────
 .env
 .env.*
 ops/redis/secrets/
@@ -55,7 +49,6 @@ ops/redis/bot.env
 ops/redis/migration-*.json
 ops/redis/migration-source.env
 
-# ── Docs (not needed in image) ────────────────────────────────
 README.md
 CHANGELOG.md
 ROADMAP.md
@@ -67,7 +60,6 @@ LICENSE
 docs/*
 !docs/natal-reference-fixture.moira-jpl.json
 
-# ── Dev/Legacy & Artifacts ────────────────────────────────────
 legacy/
 data/
 output/
@@ -77,11 +69,9 @@ artifacts/dependency-frontier/
 northflank.yaml
 docker-compose*.yml
 
-# ── Logs & Output ─────────────────────────────────────────────
 out.log
 out*.log
 
-# ── Dev Scripts ───────────────────────────────────────────────
 test_script.py
 test_sim.py
 test_perf.py
@@ -94,10 +84,8 @@ _test_*.py
 scratch*.py
 script.py
 
-# ── App Data & Caches ─────────────────────────────────────────
 app/games/data/*.json
 
-# ── OS Files ──────────────────────────────────────────────────
 Thumbs.db
 Desktop.ini
 .DS_Store

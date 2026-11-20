@@ -1,6 +1,3 @@
--- A migration-only setup must not expose application tables while waiting for
--- the Python startup path to provision its normal policies. Existing policies,
--- owner access and BYPASSRLS behavior are intentionally left unchanged.
 DO $migration$
 DECLARE
     target_table TEXT;

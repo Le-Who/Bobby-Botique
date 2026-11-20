@@ -158,9 +158,6 @@ class CrocodileTelegramService:
                     from app.games.crocodile import load_game
                     from app.games.crocodile_runtime import game_mutation_lock
 
-                    # Serialize the refresh with accepted guesses/finalization.
-                    # A fresh owned read also excludes late snapshots queued by
-                    # another replica after the terminal game was removed.
                     async with game_mutation_lock(game_id):
                         current = await load_game(game_id)
                         if (

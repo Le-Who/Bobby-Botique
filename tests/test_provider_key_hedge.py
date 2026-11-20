@@ -755,8 +755,6 @@ async def test_cancellation_during_loser_cleanup_also_drains_winner_health_task(
         await asyncio.wait_for(loser_cleaning.wait(), 0.5)
         await asyncio.wait_for(health_started.wait(), 0.5)
         consumer.cancel()
-        # Let the resource finalizer finish normally; owner cancellation must
-        # not act as a second cancellation that interrupts this finalizer.
         release_loser.set()
         with pytest.raises(asyncio.CancelledError):
             await consumer

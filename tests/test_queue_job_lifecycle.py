@@ -113,7 +113,6 @@ async def test_safe_manual_retry_creates_child_with_one_grant_and_original_termi
     store, clock = store_clock
     await submitted(store)
     claim = await store.claim("deferred", "owner")
-    # A safe failure whose next delay cannot fit becomes expired, retaining only a bounded retry capability.
     failed = await store.finish(
         "job", "owner", claim.snapshot.revision, JobResult(JobOutcome.RETRYABLE_FAILURE), delay_seconds=1000
     )

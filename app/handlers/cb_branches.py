@@ -40,13 +40,11 @@ async def branch_create_callback(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("⚠️ Вы уже в ветке. Вернитесь в основную ветку сначала.", show_alert=True)
             return
 
-        # Snapshot current history before the branch point
         branch_id = await create_branch(user_id, chat_state.history, label="whatif")
         if not branch_id:
             await query.answer("❌ Не удалось создать ветку", show_alert=True)
             return
 
-        # Mark chat state as being in a branch
         chat_state.branch_id = branch_id
         if not await update_user_chat(user_id, chat_state):
             await delete_branch(branch_id, user_id)
@@ -56,7 +54,6 @@ async def branch_create_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         clear_retry_request(user_id)
 
-        # Notify user with return button
         keyboard = InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("↩️ К основной ветке", callback_data="branch_return")],
@@ -92,7 +89,6 @@ async def branch_return_callback(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("ℹ️ Вы уже в основной ветке", show_alert=True)
             return
 
-        # Restore snapshotted history
         original_history = await restore_branch(user_id, branch_id)
         if original_history is None:
             await query.answer("❌ Не удалось восстановить ветку", show_alert=True)
@@ -107,7 +103,6 @@ async def branch_return_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         clear_retry_request(user_id)
 
-        # Clean up the branch row
         await delete_branch(branch_id, user_id)
 
         await query.message.reply_text(

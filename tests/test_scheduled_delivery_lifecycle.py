@@ -58,8 +58,6 @@ async def test_ai_admission_is_not_delivery(monkeypatch):
     monkeypatch.setattr(reminders, "try_submit_task", submit)
     mark = AsyncMock()
     monkeypatch.setattr(reminders.scheduled, "finish_delivery", mark)
-    # The durable claim boundary is synthetic here; actual SQL concurrency is
-    # covered by the disposable PostgreSQL contracts.
     ledger = SimpleNamespace(
         claim_reminder=AsyncMock(return_value={"delivery_id": "claim"}),
         recover_abandoned=AsyncMock(),
@@ -517,11 +515,11 @@ async def test_research_voice_keeps_its_owner_after_scheduled_text_settles(
         assert queued["reply_to_message_id"] == 71
         assert queued["source_key"] == build_voice_source_key("research_tts", 42, 71)
         assert queued["voice"] == "synthetic-voice"
-        scheduled_boundary.current = False  # Text claim is now terminal.
+        scheduled_boundary.current = False
         release_voice.set()
         await asyncio.gather(*voice_tasks)
         bot.send_voice.assert_awaited_once()
-        assert len(scheduled_boundary.attempts) == 2  # Placeholder and final edit.
+        assert len(scheduled_boundary.attempts) == 2
     finally:
         release_voice.set()
         await asyncio.gather(*voice_tasks, return_exceptions=True)

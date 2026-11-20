@@ -19,8 +19,6 @@ register_controlled_text(
 )
 from app.handlers.ai_core import _get_ai_response_with_routing
 
-# Regex for fast-path detection
-# OCR-specific keywords
 _OCR_PATTERNS = re.compile(
     r"(перепиши|распознай|что.*написано|какой текст|текст с картинк|"
     r"текст с изображен|перевод текста|скопируй текст|extract text|"
@@ -28,14 +26,12 @@ _OCR_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# Describe-specific keywords to skip LLM entirely
 _DESCRIBE_PATTERNS = re.compile(
     r"(опиши|что это|что нарисовано|что изображено|на что похож|"
     r"describe|what is|what's this)",
     re.IGNORECASE,
 )
 
-# In-memory dict cache for intent classification
 _INTENT_CACHE: dict[tuple[int, str], Literal["ocr", "describe"]] = {}
 _MAX_CACHE_SIZE = 128
 
@@ -44,7 +40,6 @@ async def _call_llm_for_intent(caption: str) -> Literal["ocr", "describe"]:
     """Call lightweight model to classify the caption intent."""
     system_instruction = get_prompt_text("vision.intent")
 
-    # We use settings.INLINE_MODEL (gemini-3.1-flash-lite) for low cost and high speed.
     model = getattr(settings, "INLINE_MODEL", "gemini-3.1-flash-lite")
 
     history = [{"role": "user", "parts": [caption]}]
@@ -53,7 +48,7 @@ async def _call_llm_for_intent(caption: str) -> Literal["ocr", "describe"]:
             preferred_model=model,
             history=history,
             system_instruction=system_instruction,
-            timeout=5.0,  # Fast timeout for intent classification
+            timeout=5.0,
             process_id="vision.intent",
         )
         if response_text:
@@ -85,22 +80,17 @@ async def classify_vision_intent(caption: str | None) -> Literal["ocr", "describ
     if cache_key in _INTENT_CACHE:
         return _INTENT_CACHE[cache_key]
 
-    # Manage cache size
     if len(_INTENT_CACHE) >= _MAX_CACHE_SIZE:
-        # Simple FIFO eviction
         try:
             first_key = next(iter(_INTENT_CACHE))
             _INTENT_CACHE.pop(first_key, None)
         except StopIteration:
             pass
 
-    # 1. Check describe fast path
     if _DESCRIBE_PATTERNS.search(cleaned):
         res: Literal["ocr", "describe"] = "describe"
-    # 2. Check OCR fast path
     elif _OCR_PATTERNS.search(cleaned):
         res = "ocr"
-    # 3. Fallback to LLM
     else:
         try:
             res = await _call_llm_for_intent(cleaned)

@@ -531,8 +531,6 @@ async def test_prepare_daily_puzzle_prefills_hints_and_image(monkeypatch) -> Non
     from app.repos import settings_repo
     from app.runtime_settings import models, store
 
-    # Keep lifecycle prompt registration before the operation pins its registry.
-    # Only durable/provider boundaries are replaced: no DB or network is needed.
     monkeypatch.setattr(models, "refresh_catalogs", AsyncMock())
     monkeypatch.setattr(store, "get_snapshot", AsyncMock(return_value=store.SettingsSnapshot(0, {})))
     setting_keys = {
@@ -653,15 +651,14 @@ async def test_daily_scheduler_skips_sends_when_delivery_disabled() -> None:
 @pytest.mark.asyncio
 async def test_daily_scheduler_waits_until_puzzle_is_fully_prepared() -> None:
     puzzle_date = repo.today_puzzle_date()
-    # A puzzle is "not ready" when hints are absent (image is now optional).
     incomplete_puzzle = repo.DailyPuzzle(
         puzzle_date=puzzle_date,
         target_word="крокодил",
         topic="Разное",
         lang="ru",
-        hints=[],  # no hints → not fully prepared
+        hints=[],
         image_prompt="prompt",
-        image_file_id="",  # no image either (irrelevant to readiness now)
+        image_file_id="",
     )
     _bot = object()
     context = SimpleNamespace(bot=_bot, application=SimpleNamespace(bot=_bot))

@@ -10,7 +10,6 @@
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-    /* ── Design tokens ───────────────────────────────────────────────────── */
     :root {
       --bg:           #0e1c22;
       --surface:      rgba(255,255,255,0.06);
@@ -27,7 +26,6 @@
       --radius-sm:    10px;
       --font:         'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 
-      /* Bubble palette */
       --b-user:       rgba(0,224,255,0.13);
       --b-user-bdr:   rgba(0,224,255,0.28);
       --b-cold:       rgba(100,149,237,0.12);
@@ -43,7 +41,6 @@
       --b-sys:        rgba(255,189,89,0.07);
       --b-sys-bdr:    rgba(255,189,89,0.20);
 
-      /* God Mode / Spectator palette */
       --b-spec:       rgba(167,139,250,0.10);
       --b-spec-bdr:   rgba(167,139,250,0.28);
       --b-spec-cold:  rgba(100,116,237,0.12);
@@ -74,7 +71,6 @@
       pointer-events: none;
     }
 
-    /* ── App shell ───────────────────────────────────────────────────────── */
     #app {
       display: flex;
       flex-direction: column;
@@ -89,7 +85,6 @@
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     button:focus-visible, input:focus-visible { outline: 3px solid #ffe18b; outline-offset: 2px; }
 
-    /* ── Header ──────────────────────────────────────────────────────────── */
     header {
       display: flex;
       align-items: center;
@@ -187,11 +182,8 @@
       box-shadow: inset 0 0 0 1px rgba(0,224,150,0.15);
     }
 
-    /* ── Category pill ───────────────────────────────────────────────────── */
     #category-pill {
-      /* In-flow pill — sits between the mode chips and the chat area,
-         so it never overlaps the daily-modes row or chat bubbles. */
-      display: none; /* hidden until JS sets textContent */
+      display: none;
       align-self: stretch;
       font-size: 12px;
       font-weight: 600;
@@ -223,12 +215,11 @@
     #game-guide.compact { display: none; }
     #game-guide[hidden] { display: none; }
 
-    /* ── Chat area ───────────────────────────────────────────────────────── */
     #chat-area {
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      padding: 6px 12px 6px; /* category pill is now in-flow; no top offset needed */
+      padding: 6px 12px 6px;
       display: flex;
       flex-direction: column;
       gap: 5px;
@@ -236,7 +227,6 @@
       overscroll-behavior: contain;
     }
 
-    /* ── Bubble rows ─────────────────────────────────────────────────────── */
     .bubble-row {
       display: flex;
       animation: b-in .18s cubic-bezier(.2,.8,.25,1) both;
@@ -250,7 +240,6 @@
     .bubble-row.judge  { justify-content: flex-start; }
     .bubble-row.system { justify-content: center; }
 
-    /* ── Bubbles ─────────────────────────────────────────────────────────── */
     .bubble {
       max-width: 88%;
       padding: 10px 13px;
@@ -263,22 +252,18 @@
       transition: background .2s ease, border-color .2s ease;
     }
 
-    /* User bubbles by state */
     .bubble.user            { background:var(--b-user);  border-color:var(--b-user-bdr);  border-bottom-right-radius:4px; }
     .bubble.user.cold       { background:var(--b-cold);  border-color:var(--b-cold-bdr);  box-shadow: inset 0 1px 1px rgba(255,255,255,0.1), 0 0 12px rgba(100,149,237,0.12); }
     .bubble.user.warm       { background:var(--b-warm);  border-color:var(--b-warm-bdr);  box-shadow: inset 0 1px 1px rgba(255,255,255,0.1), 0 0 12px rgba(255,189,89,0.12); }
     .bubble.user.hot        { background:var(--b-hot);   border-color:var(--b-hot-bdr);   box-shadow: inset 0 1px 1px rgba(255,255,255,0.1), 0 0 12px rgba(0,224,150,0.12); }
     .bubble.user.exact_match{ background:var(--b-exact); border-color:var(--b-exact-bdr); box-shadow: inset 0 1px 1px rgba(255,255,255,0.2), 0 0 18px rgba(0,224,150,.25); }
 
-    /* Pending animation */
     .bubble.pending .b-icon { animation: pulse 1.3s ease-in-out infinite; }
     @keyframes pulse { 0%,100%{opacity:.6} 50%{opacity:.9} }
 
-    /* Judge / system bubbles */
     .bubble.judge  { background:var(--b-judge); border-color:var(--b-judge-bdr); border-bottom-left-radius:4px; color:var(--text-dim); font-size:13px; }
     .bubble.system { background:var(--b-sys);   border-color:var(--b-sys-bdr);   font-size:12px; color:var(--accent-mid); text-align:center; padding:5px 12px; border-radius:12px; }
 
-    /* Bubble internals */
     .b-word  { display:block; font-size:15px; font-weight:600; color:var(--text); }
     .b-meta  { display:flex; align-items:center; gap:5px; margin-top:3px; flex-wrap:wrap; }
     .b-icon  { font-size:13px; line-height:1; }
@@ -292,7 +277,6 @@
       touch-action: manipulation;
     }
 
-    /* ── Typing indicator ────────────────────────────────────────────────── */
     #typing-row {
       display: flex;
       align-items: center;
@@ -317,7 +301,6 @@
     .typing-dots span:nth-child(3) { animation-delay: .30s; }
     @keyframes dot { 0%,80%,100%{transform:scale(.55);opacity:.35} 40%{transform:scale(1);opacity:1} }
 
-    /* ── Input zone ──────────────────────────────────────────────────────── */
     #input-zone {
       display: flex;
       align-items: center;
@@ -368,7 +351,6 @@
     #send-btn:active  { transform: scale(0.92) translateY(2px); box-shadow: inset 0 1px 1px rgba(255,255,255,0.2), 0 2px 4px rgba(0,224,255,0.1); }
     #send-btn:disabled { opacity: .3; cursor: not-allowed; transform: none; box-shadow: none; }
 
-    /* ── Win / Loss overlay ──────────────────────────────────────────────── */
     #overlay {
       position: fixed; inset: 0;
       display: grid;
@@ -452,7 +434,6 @@
     #finished-actions button { min-height: 48px; flex: 1; border: 1px solid #476460; border-radius: 14px; background: #1b363a; color: var(--text); font: 600 13px var(--font); cursor: pointer; touch-action: manipulation; }
     #input-zone[hidden], #finished-choose[hidden] { display: none; }
 
-    /* ── Connecting splash ───────────────────────────────────────────────── */
     #connecting {
       position: absolute; inset: 0;
       display: flex; flex-direction: column;
@@ -472,7 +453,6 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .conn-label { font-size: 14px; color: var(--text-dim); }
 
-    /* ── Error bar ───────────────────────────────────────────────────────── */
     #error-bar {
       position: fixed; top: max(8px, env(safe-area-inset-top)); left: 12px; right: 12px;
       padding: 12px 20px;
@@ -489,9 +469,7 @@
     }
     #error-bar.show { transform: translateY(0); }
 
-    /* ── God Mode (Creator / Spectator) styles ───────────────────────────── */
 
-    /* Word banner shown at top for creator */
     #word-banner {
       display: none;
       padding: 10px 16px 8px;
@@ -526,7 +504,6 @@
       white-space: nowrap;
     }
 
-    /* Spectator bubbles — guesser's messages appear left-aligned, mirrored */
     .bubble-row.spectator { justify-content: flex-start; }
     .bubble.spectator {
       background: var(--b-spec);
@@ -542,7 +519,6 @@
       box-shadow: 0 0 16px rgba(0,224,150,.15);
     }
 
-    /* Guesser presence / typing indicator (God Mode) */
     #guesser-presence {
       display: none;
       padding: 5px 16px 4px;
@@ -557,7 +533,6 @@
     #guesser-presence.visible { display: flex; }
     #guesser-presence.hidden  { opacity: 0; }
 
-    /* Reaction button strip (God Mode) */
     #reaction-bar {
       display: none;
       padding: 8px 14px;
@@ -626,7 +601,6 @@
   {% endif %}
   <div id="daily-modes" class="hidden" role="group" aria-label="Сложность игры дня"></div>
 
-  <!-- God Mode: target word banner (creator only) -->
   <div id="word-banner">
     <span id="word-banner-label">Слово</span>
     <span id="word-banner-word"></span>
@@ -641,13 +615,11 @@
 
   <div id="chat-area" role="log" aria-live="polite" aria-relevant="additions"></div>
 
-  <!-- Guesser-side typing indicator (default — judge evaluating) -->
   <div id="typing-row" class="hidden">
     <div class="typing-dots"><span></span><span></span><span></span></div>
     <span>Крокодил оценивает…</span>
   </div>
 
-  <!-- God Mode: guesser is typing indicator -->
   <div id="guesser-presence">
     <div class="typing-dots"><span></span><span></span><span></span></div>
     <span id="guesser-presence-label">Игрок печатает…</span>
@@ -673,7 +645,6 @@
     <button id="finished-choose" type="button">Сменить игру</button>
   </div>
 
-  <!-- God Mode: reaction strip (creator only) -->
   <div id="reaction-bar">
     <button class="react-btn" data-emoji="🔥" title="Горячо!" aria-label="Реакция: Горячо!">🔥</button>
     <button class="react-btn" data-emoji="❄️" title="Холодно!" aria-label="Реакция: Холодно!">❄️</button>
@@ -701,7 +672,6 @@
 <div id="error-bar" role="status" aria-live="assertive"></div>
 
 <script>
-/* ── Telegram WebApp ────────────────────────────────────────────────────── */
 const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
@@ -725,7 +695,6 @@ tg?.onEvent?.('viewportChanged', fitGameViewport);
 document.addEventListener('focusin', fitGameViewport);
 document.addEventListener('focusout', () => requestAnimationFrame(fitGameViewport));
 
-/* ── Config ─────────────────────────────────────────────────────────────── */
 const params    = new URLSearchParams(location.search);
 const START_PARAM = tg?.initDataUnsafe?.start_param
                  || params.get('tgWebAppStartParam')
@@ -747,7 +716,6 @@ const HINTS_TOTAL  = 3;
 let lastSeenSeq    = 0;
 let dailyModesState = [];
 
-/* ── DOM helpers ────────────────────────────────────────────────────────── */
 const $ = id => document.getElementById(id);
 
 function escHtml(s) {
@@ -784,7 +752,6 @@ function dailyModeSuffix(mode) {
   return 'Доступен сегодня';
 }
 
-/* ── Attempts badge ─────────────────────────────────────────────────────── */
 function setAttempts(used, max) {
   const b = $('attempts-badge');
   b.textContent = `${used} / ${max}`;
@@ -794,7 +761,6 @@ function setAttempts(used, max) {
   if (IS_DAILY && dailyModesState.length) renderDailyModes(dailyModesState, currentDailyDifficulty);
 }
 
-/* ── Error bar ──────────────────────────────────────────────────────────── */
 let errorDismissTimer = null;
 function showError(msg, autoDismiss = true) {
   const bar = $('error-bar');
@@ -823,7 +789,6 @@ function renderCategoryPill(msg) {
   pill.innerHTML = html;
 }
 
-/* ── Win/Loss overlay ───────────────────────────────────────────────────── */
 function renderDailyModes(modes = [], activeDifficulty = currentDailyDifficulty) {
   const container = $('daily-modes');
   if (!container) return;
@@ -864,7 +829,6 @@ function renderOverlayLeaderboard(leaderboard = []) {
     const status = row?.status === 'won'
       ? `${row?.attempt_count || 0} / ${row?.max_attempts || 6}`
       : 'X / 6';
-    // Prefer display_name (Telegram first/last name), fall back to masked user_id.
     const name = (row?.display_name || '').trim() || `игрок ${String(row?.user_id || '').slice(-4)}`;
     return `<div class="overlay-list-row"><strong>#${index + 1}</strong><span class="overlay-player-name">${escHtml(name)}</span><span>${escHtml(String(row?.points ?? 0))} очков · ${escHtml(status)}</span></div>`;
   }).join('');
@@ -953,7 +917,6 @@ document.addEventListener('keydown', event => {
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
 });
 
-/* ── Typing indicator ───────────────────────────────────────────────────── */
 const chatArea = $('chat-area');
 let followingChat = true;
 chatArea.addEventListener('scroll', () => {
@@ -964,7 +927,6 @@ function updateTyping() {
   $('typing-row').classList.toggle('hidden', !chatArea.querySelector('.bubble.pending'));
 }
 
-/* ── Chat bubble helpers ────────────────────────────────────────────────── */
 function scrollBottom(force = false) {
   if (!force && !followingChat) return;
   chatArea.scrollTop = chatArea.scrollHeight;
@@ -1044,7 +1006,6 @@ function appendCompletedBubble(word, { status, hint, score, cached = false }, re
   if (replayed) document.getElementById(`bubble-${pid}`)?.classList.add('replayed');
 }
 
-/* ── Spectator bubble helpers (God Mode) ────────────────────────────────── */
 function appendSpectatorBubble(word, { status, hint, score, cached = false }) {
   const row = document.createElement('div');
   row.className = 'bubble-row spectator';
@@ -1071,7 +1032,6 @@ function appendReactionBubble(emoji) {
   const row = document.createElement('div');
   row.className = 'bubble-row system';
   row.innerHTML = `<div class="bubble system">${escHtml(emoji)} Создатель реагирует</div>`;
-  // Fade out after 4s
   chatArea.appendChild(row);
   scrollBottom();
   setTimeout(() => row.remove(), 4000);
@@ -1086,27 +1046,23 @@ function appendHintBubble(text) {
   scrollBottom();
 }
 
-/* ── God mode state ─────────────────────────────────────────────────────── */
 let isCreatorMode = false;
 
 function activateGodMode(targetWord) {
   isCreatorMode = true;
 
-  // Reveal word banner
   const banner = $('word-banner');
   banner.classList.add('visible');
   $('word-banner-word').textContent = targetWord.toUpperCase();
 
-  // Update header title
   $('header-title').textContent = '👁 Режим наблюдателя';
 
-  // Hide guesser input, show reaction bar + guesser presence indicator
   $('input-zone').style.display   = 'none';
   $('hint-btn').style.display     = 'none';
   $('game-guide').hidden = true;
   $('reaction-bar').classList.add('visible');
   $('guesser-presence').classList.add('visible');
-  $('guesser-presence').classList.add('hidden'); // start hidden until typing event
+  $('guesser-presence').classList.add('hidden');
 }
 
 let hintIndex          = 0;
@@ -1162,10 +1118,9 @@ $('hint-btn').addEventListener('click', () => {
   haptic?.impactOccurred('soft');
   ws.send(JSON.stringify({ type: 'hint', hint_index: hintIndex }));
   hintIndex++;
-  startHintCooldown(9000); // per-hint cooldown between requests
+  startHintCooldown(9000);
 });
 
-/* ── WebSocket ──────────────────────────────────────────────────────────── */
 let ws               = null;
 let reconnectAttempts= 0;
 let maxAttempts      = 10;
@@ -1189,7 +1144,7 @@ function connect() {
     $('connecting').classList.add('hidden');
     if (!isCreatorMode) {
       setInputEnabled(true);
-      startHintCooldown(12000); // 12s before first hint available
+      startHintCooldown(12000);
     }
   };
 
@@ -1202,7 +1157,7 @@ function connect() {
   ws.onclose = ev => {
     if (gameOver) return;
     setInputEnabled(false);
-    if (ev.code === 1000) return; // Graceful server close — do not auto-reconnect
+    if (ev.code === 1000) return;
     if (ev.code === 4003) { showError('❌ Ошибка авторизации', false); return; }
     if (ev.code === 4008) { showError('⌛ Игра истекла', false); return; }
     if (ev.code === 4009) { showOverlay({ win:false, word:'', attempts:maxAttempts, maxAttempts }); return; }
@@ -1214,7 +1169,6 @@ function connect() {
   ws.onerror = () => {};
 }
 
-/* ── Server message dispatcher ──────────────────────────────────────────── */
 function handleMessage(msg) {
   updateLastSeenSeq(msg);
   switch (msg.event) {
@@ -1229,9 +1183,6 @@ function handleMessage(msg) {
       if (msg.daily) renderDailyModes(msg.daily_modes || dailyModesState, currentDailyDifficulty);
       if (msg.is_creator) {
         activateGodMode(msg.target_word || '');
-        // If the server signals the game is already finished (creator reconnect
-        // after game ended), mark gameOver so the ws.onclose guard prevents
-        // an infinite reconnect loop.
         gameOver = !!msg.finished;
         updateHintBtn();
       }
@@ -1284,7 +1235,6 @@ function handleMessage(msg) {
         status: msg.status, hint: msg.hint,
         score: msg.score, cached: msg.cached,
       });
-      // Haptic feedback by temperature
       if (msg.status === 'exact_match') {
         haptic?.notificationOccurred('success');
         gameOver = true;
@@ -1336,9 +1286,8 @@ function handleMessage(msg) {
 
     case 'hint': {
       if (msg.available === false) {
-        // Hints not yet ready or exhausted
         showError(msg.text || '⏳ Подсказки ещё готовятся, подожди немного…');
-        if (hintIndex > 0) hintIndex--; // rollback so user can retry
+        if (hintIndex > 0) hintIndex--;
       } else {
         haptic?.impactOccurred('soft');
         appendHintBubble(msg.text || '');
@@ -1352,10 +1301,8 @@ function handleMessage(msg) {
       break;
     }
 
-    // ── Spectator / God Mode events ────────────────────────────────────────
 
     case 'spectator_result': {
-      // Creator sees a new guess result arrive in real-time
       attemptsUsed = (attemptsUsed || 0) + 1;
       setAttempts(attemptsUsed, maxAttempts);
       appendSpectatorBubble(msg.word || '?', {
@@ -1391,14 +1338,12 @@ function handleMessage(msg) {
     }
 
     case 'reaction': {
-      // Guesser sees emoji reaction from creator
       appendReactionBubble(msg.emoji || '👋');
       haptic?.impactOccurred('soft');
       break;
     }
 
     case 'guesser_typing': {
-      // Creator sees typing indicator when guesser is composing
       const presence = $('guesser-presence');
       if (msg.active) {
         presence.classList.remove('hidden');
@@ -1410,7 +1355,6 @@ function handleMessage(msg) {
   }
 }
 
-/* ── Input handling ─────────────────────────────────────────────────────── */
 function updateSendButton() {
   $('send-btn').disabled = $('guess-input').disabled || !$('guess-input').value.trim();
 }
@@ -1430,7 +1374,6 @@ function sendGuess(wordOverride) {
   ws.send(JSON.stringify({ type: 'guess', word, pending_id: pid }));
   if (!isRetry) input.value = '';
   input.focus();
-  // Stop typing indicator
   ws.send(JSON.stringify({ type: 'typing', active: false }));
   appendPendingBubble(word, pid);
   haptic?.impactOccurred('medium');
@@ -1442,7 +1385,6 @@ $('guess-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); sendGuess(); }
 });
 
-/* ── Guesser typing indicator (ephemeral) ───────────────────────────────── */
 let typingTimer = null;
 $('guess-input').addEventListener('input', () => {
   updateSendButton();
@@ -1455,21 +1397,18 @@ $('guess-input').addEventListener('input', () => {
   }, 2500);
 });
 
-/* ── God Mode reaction buttons ──────────────────────────────────────────── */
 document.querySelectorAll('.react-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const emoji = btn.dataset.emoji;
     if (!ws || ws.readyState !== WebSocket.OPEN || !emoji) return;
     ws.send(JSON.stringify({ type: 'reaction', emoji }));
     haptic?.impactOccurred('soft');
-    // Brief feedback text
     const fb = $('reaction-feedback');
     fb.textContent = emoji;
     setTimeout(() => { fb.textContent = ''; }, 1500);
   });
 });
 
-/* ── Boot ───────────────────────────────────────────────────────────────── */
 updateHintBtn();
 setInputEnabled(false);
 if (IS_DAILY || GAME_ID) connect();

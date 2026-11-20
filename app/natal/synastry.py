@@ -52,8 +52,6 @@ async def calculate_synastry(first: BirthInput, second: BirthInput) -> SynastryD
 
 
 def _calculate_in_thread(first: BirthInput, second: BirthInput) -> SynastryData:
-    # The reused natal boundaries are async, but local resolution and calculation
-    # perform synchronous work. Their private event loop belongs to this worker.
     return asyncio.run(_calculate_partners(first, second))
 
 
@@ -88,8 +86,6 @@ async def _partner_chart(birth: BirthInput) -> tuple[PartnerChart, dict[str, tup
         signs = _possible_signs(samples)
         if chart is not None:
             chart.input_quality.moon_uncertainty = len(signs["moon"]) > 1 or chart.input_quality.moon_uncertainty
-            # UNKNOWN has no representative instant that can be published as
-            # precise degrees, retrograde status or natal aspect orbs.
             chart.planets = []
             chart.aspects = []
     else:
@@ -115,7 +111,6 @@ def possible_birth_interval(birth: BirthInput, *, timezone: str | None = None) -
     zone = ZoneInfo(timezone)
     local_start = datetime.combine(birth_date, time())
     local_end = local_start + timedelta(days=1)
-    # Considering both folds makes unusual midnight transitions conservative.
     starts = [local_start.replace(tzinfo=zone, fold=fold).astimezone(UTC) for fold in (0, 1)]
     ends = [local_end.replace(tzinfo=zone, fold=fold).astimezone(UTC) for fold in (0, 1)]
     return min(starts), max(ends) - timedelta(microseconds=1)
@@ -158,8 +153,6 @@ def _distance_interval(first: tuple[float, float], second: tuple[float, float]) 
     lower = first[0] - second[1]
     upper = first[1] - second[0]
     distances = [angular_distance(lower, 0.0), angular_distance(upper, 0.0)]
-    # The triangular angular-distance function changes direction at each
-    # multiple of 180 degrees. Endpoints alone would miss these extrema.
     for multiple in range(math.ceil(lower / 180), math.floor(upper / 180) + 1):
         distances.append(180.0 if multiple % 2 else 0.0)
     return min(distances), max(distances)

@@ -176,7 +176,7 @@ async def test_gemini_payload_uses_pinned_voice_prompt_and_admin_parameters(audi
     assert "Speak softly." in payload["contents"]
     assert "Do not use this later revision." not in payload["contents"]
     assert payload["contents"].index("Speak softly.") < payload["contents"].index("Text to read:")
-    assert payload["config"].temperature == 0.5  # Existing API clamp is preserved.
+    assert payload["config"].temperature == 0.5
     assert payload["config"].max_output_tokens == 4096
     assert payload["config"].speech_config.voice_config.prebuilt_voice_config.voice_name == "FutureLongVoiceName"
 

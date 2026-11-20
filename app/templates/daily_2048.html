@@ -398,7 +398,6 @@
       .board-wrap { width: min(52vw, 520px); }
     }
 
-    /* Three materials, one deterministic board and movement contract. */
     body[data-theme="aero"] {
       --bg: #07334e;
       --page-bg:
@@ -664,7 +663,6 @@
     button:focus-visible, #board:focus-visible { outline: 3px solid #a14900; outline-offset: 3px; }
     .controls button:focus-visible { outline-color: #166e69; }
 
-    /* Keep the board as the visual centre, with quiet scorekeeping around it. */
     #app { width: min(100%, 460px); margin: 0 auto; gap: 12px; }
     h1 { font-size: 32px; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
     .eyebrow { letter-spacing: .12em; font-size: 10px; }
@@ -1121,7 +1119,6 @@
       return Number(spawned.x) === tile.x && Number(spawned.y) === tile.y && Number(spawned.value) === tile.value;
     }
 
-    // Follow the actual lane order. Equal values elsewhere never exchange identity.
     function buildTileModels(direction) {
       const vertical = direction === 'up' || direction === 'down';
       const reverse = direction === 'right' || direction === 'down';
@@ -1156,7 +1153,6 @@
 
     function animateTileFeedback(tile, kind) {
       if (reducedMotion.matches) return;
-      // Scale the face around its own centre; never scale the cell translation.
       const previous = tile.feedback;
       const from = previous ? getComputedStyle(tile.face).transform : 'scale(1)';
       previous?.cancel();
@@ -1180,7 +1176,7 @@
         tile.feedback = null;
         tile.el.classList.remove(kind);
         animation.cancel();
-      }).catch(() => {}); // Reset/reconnect and a later merge own cancellation.
+      }).catch(() => {});
     }
 
     function createTile(x, y, value, spawn = false) {
@@ -1224,7 +1220,6 @@
       }
       const task = visualQueue.shift();
       if (!task.direction) {
-        // A normal acknowledgement adds only the server-selected spawn.
         const current = cloneBoard([]);
         liveTiles.forEach(tile => { current[tile.y][tile.x] = tile.value; });
         const spawned = task.spawned;
@@ -1255,7 +1250,6 @@
             const animation = tile.el.animate([
               { transform: from }, { transform: tileTranslation(model.x, model.y) }
             ], { duration: SLIDE_MS, easing: SLIDE_EASING, fill: 'both' });
-            // Start the group on the current document frame, without a pending-play frame per queued move.
             animation.playbackRate = motionRate;
             animation.startTime = document.timeline.currentTime;
             run.animations.push(animation);
@@ -1265,7 +1259,6 @@
       const finish = () => {
         if (activeMotion !== run || run.epoch !== motionEpoch) return;
         activeMotion = null;
-        // The compositor has reached the cell before changing numbers/removing sources.
         run.animations.forEach(animation => animation.cancel());
         liveTiles = models.map(model => {
           model.absorbed?.feedback?.cancel();
@@ -1289,7 +1282,6 @@
     function accelerateVisualQueue() {
       if (!activeMotion) return;
       const queuedMoves = visualQueue.filter(task => task.direction).length;
-      // Preserve currentTime and every path through its cell. Never jump to a snapshot.
       motionRate = Math.max(motionRate, Math.min(32, 1 + queuedMoves));
       activeMotion.animations.forEach(animation => animation.updatePlaybackRate(motionRate));
     }
@@ -1505,7 +1497,6 @@
           $('connection-status').textContent = unavailableMessage || 'Игра сейчас недоступна. Вернитесь позже.';
           return;
         }
-        // Never replay a move whose acceptance is uncertain. The next snapshot owns recovery.
         if (ev.code === 4003) {
           $('connection-status').textContent = 'Откройте игру заново в Telegram';
           showToast('Ошибка авторизации');

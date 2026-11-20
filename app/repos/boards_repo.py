@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 _TABLE_VERIFIED = False
 
-# ── Schema bootstrap ──────────────────────────────────────────────────────────
 
 _CREATE_DDL_STATEMENTS = [
     """
@@ -54,9 +53,6 @@ async def _ensure_table() -> None:
         _TABLE_VERIFIED = True
     except Exception as exc:
         logger.warning("boards_repo: failed to bootstrap table: %s", exc)
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 
 async def create_board(
@@ -100,7 +96,7 @@ async def link_board_to_chat(
                    message_id = $3,
                    updated_at = NOW()
              WHERE inline_msg_id = $1
-               AND chat_id IS NULL   -- only set once; idempotent
+               AND chat_id IS NULL
             RETURNING id
             """,
             (inline_msg_id, chat_id, message_id),
@@ -122,7 +118,6 @@ async def get_board_by_inline_msg(inline_msg_id: str) -> dict[str, Any] | None:
         if not rows:
             return None
         row = dict(rows[0])
-        # asyncpg returns JSONB as str on some drivers; normalise.
         if isinstance(row.get("entries"), str):
             row["entries"] = json.loads(row["entries"])
         return row
@@ -165,7 +160,7 @@ async def add_entry(
     await _ensure_table()
     entry = {
         "user": user_name,
-        "text": text[:1000],  # safety cap
+        "text": text[:1000],
         "ts": time.time(),
     }
     try:
@@ -178,7 +173,7 @@ async def add_entry(
              WHERE id = $1 AND NOT closed
             RETURNING entries, entries_since_last_synthesis
             """,
-            (board_id, [entry]),  # the connection's JSONB codec encodes the array
+            (board_id, [entry]),
         )
         if not rows:
             return None

@@ -5,10 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from telegram import InlineKeyboardButton
 
-# ==============================================================================
-# FIXTURES
-# ==============================================================================
-
 
 class ChatState:
     """Mock ChatState for testing."""
@@ -36,11 +32,6 @@ def mock_context():
 def chat_state():
     """Fixture providing basic chat state."""
     return ChatState(model="gemini-pro")
-
-
-# ==============================================================================
-# HELPER FUNCTIONS
-# ==============================================================================
 
 
 def verify_button(
@@ -101,12 +92,6 @@ def extract_button_texts(keyboard: list[list[Any]]) -> list[str]:
     return [btn.text for row in keyboard for btn in row]
 
 
-# ==============================================================================
-# UNIT TESTS - Real menu rendering with scoped configuration
-# ==============================================================================
-
-
-# Use the real module with scoped configuration patches
 def get_menu_methods():
     from app.handlers.menus import get_model_menu_content, get_start_menu_content
 
@@ -128,16 +113,13 @@ async def test_start_menu_content_search_on_prompt_set():
     verify_response_structure(response, "HTML")
     text, parse_mode, reply_markup = response
 
-    # Verify text content
     assert "🟢" in text, "Search status indicator missing"
     assert "You are a helpful assistant" in text, "System prompt not displayed"
     assert "gemini-pro" in text, "Model name not displayed"
 
-    # Verify keyboard structure
     keyboard = reply_markup.inline_keyboard
     assert len(keyboard) >= 4, f"Expected at least 4 rows, got {len(keyboard)}"
 
-    # Verify search button dynamically
     search_row, search_col = find_button_by_text(keyboard, "Поиск: 🟢")
     verify_button(
         keyboard,
@@ -160,11 +142,9 @@ async def test_start_menu_content_search_off_prompt_unset():
     verify_response_structure(response, "HTML")
     text, _, reply_markup = response
 
-    # Verify text content
     assert "🔴" in text, "Search disabled status missing"
     assert "gemini-pro" in text, "Model name not displayed"
 
-    # Verify search button
     keyboard = reply_markup.inline_keyboard
     search_row, search_col = find_button_by_text(keyboard, "Поиск: 🔴")
     verify_button(
@@ -190,7 +170,6 @@ async def test_start_menu_buttons_structure():
 
     keyboard = reply_markup.inline_keyboard
 
-    # Find and verify buttons dynamically
     new_chat_pos = find_button_by_text(keyboard, "Новый чат")
     verify_button(keyboard, *new_chat_pos, "💬 Новый чат", "new_chat", partial_match=True)
 
@@ -203,7 +182,6 @@ async def test_start_menu_buttons_structure():
     help_pos = find_button_by_text(keyboard, "Помощь")
     verify_button(keyboard, *help_pos, "❓ Помощь", "help", partial_match=True)
 
-    # Verify new document/conversation buttons
     docs_pos = find_button_by_text(keyboard, "Документы")
     verify_button(keyboard, *docs_pos, "📄 Документы", "open_documents", partial_match=True)
 
@@ -229,21 +207,17 @@ def test_get_model_menu_content_gemini_only(mock_get_keys, mock_settings_obj, mo
     verify_response_structure(response)
     text, _, reply_markup = response
 
-    # Verify text content
     assert "gemini-pro" in text, "Selected model not in text"
     assert "Google Gemini" in text, "Provider name missing"
 
     keyboard = reply_markup.inline_keyboard
     button_texts = extract_button_texts(keyboard)
 
-    # Verify both models present
     assert any("gemini-pro" in btn for btn in button_texts)
     assert any("gemini-flash" in btn for btn in button_texts)
 
-    # Verify no separator (only one provider)
     assert not any("─────────────" in btn for btn in button_texts)
 
-    # Verify selected model has checkmark
     gemini_pro_pos = find_button_by_text(keyboard, "gemini-pro")
     assert "✅" in keyboard[gemini_pro_pos[0]][gemini_pro_pos[1]].text
 
@@ -267,14 +241,12 @@ def test_get_model_menu_content_openrouter_only(mock_get_keys, mock_settings_obj
     verify_response_structure(response)
     text, _, reply_markup = response
 
-    # Verify text content
     assert "OpenRouter" in text, "OpenRouter provider name missing"
     assert "openai/gpt-4" in text or "gpt-4" in text
 
     keyboard = reply_markup.inline_keyboard
     button_texts = extract_button_texts(keyboard)
 
-    # Verify models present (short names)
     assert any("gpt-4" in btn for btn in button_texts)
     assert any("claude-3" in btn for btn in button_texts)
 
@@ -298,11 +270,9 @@ def test_get_model_menu_content_mixed(mock_get_keys, mock_settings_obj, mock_con
     keyboard = reply_markup.inline_keyboard
     button_texts = extract_button_texts(keyboard)
 
-    # Verify both providers present
     assert any("gemini-flash" in btn for btn in button_texts)
     assert any("gpt-4" in btn for btn in button_texts)
 
-    # Verify separator exists (multiple providers)
     assert any("─────────────" in btn for btn in button_texts)
 
 
@@ -322,10 +292,8 @@ def test_get_model_menu_content_no_models(mock_get_keys, mock_settings_obj, mock
     verify_response_structure(response, expected_parse_mode=None, allow_none_markup=True)
     text, _, reply_markup = response
 
-    # Should show error message
     assert "❌ Нет доступных моделей" in text or "Нет доступных" in text
 
-    # Markup can be None when no models available, or contain just a back button
     if reply_markup is not None:
         assert len(reply_markup.inline_keyboard) >= 1, "If markup present, must have at least one row"
 
@@ -344,7 +312,6 @@ def test_context_update(mock_get_keys, mock_settings_obj, mock_context):
     _, get_model_menu_content = get_menu_methods()
     get_model_menu_content(chat_state, mock_context)
 
-    # Verify context was updated
     assert "model_list" in mock_context.user_data
     assert "gemini-1" in mock_context.user_data["model_list"]
     assert "or-1" in mock_context.user_data["model_list"]
@@ -369,19 +336,14 @@ def test_context_model_order_excludes_openrouter_without_keys(mock_get_keys, moc
     ]
 
 
-# ==============================================================================
-# EDGE CASE TESTS
-# ==============================================================================
-
-
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "model,search_enabled,prompt",
     [
-        ("", False, None),  # Empty model
+        ("", False, None),
         ("model-with-very-long-name-that-exceeds-normal-length", True, "prompt"),
-        ("gemini-pro", False, "A" * 500),  # Very long prompt
-        ("special/model:v1.0", True, "Prompt with 特殊字符"),  # Special characters
+        ("gemini-pro", False, "A" * 500),
+        ("special/model:v1.0", True, "Prompt with 特殊字符"),
     ],
 )
 @pytest.mark.asyncio
@@ -394,7 +356,6 @@ async def test_start_menu_edge_cases(model, search_enabled, prompt):
     verify_response_structure(response)
     text, _, reply_markup = response
 
-    # Should not crash and return valid structure
     assert isinstance(text, str)
     assert len(reply_markup.inline_keyboard) > 0
 
@@ -416,14 +377,8 @@ def test_model_menu_nonexistent_selected_model(mock_get_keys, mock_settings_obj,
 
     text, _, reply_markup = response
 
-    # Should not crash and handle gracefully
     keyboard = reply_markup.inline_keyboard
     assert len(keyboard) > 0
-
-
-# ==============================================================================
-# HELPER FUNCTION TESTS
-# ==============================================================================
 
 
 @pytest.mark.unit
@@ -462,11 +417,6 @@ def test_extract_button_texts():
     assert texts == ["Button1", "Button2", "Button3"]
 
 
-# ==============================================================================
-# TELEGRAM OBJECT CONTRACT
-# ==============================================================================
-
-
 @pytest.mark.unit
 def test_model_menu_uses_real_telegram_buttons(mock_context):
     from app.handlers import menus
@@ -488,11 +438,5 @@ def test_model_menu_uses_real_telegram_buttons(mock_context):
     assert any("gemini-pro" in button.text for button in buttons)
 
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
-
 if __name__ == "__main__":
-    # Run with: pytest test_menus.py -v -m unit  # Only unit tests
-    # Run with: pytest test_menus.py -v  # All tests
     sys.exit(pytest.main(["-v", __file__]))

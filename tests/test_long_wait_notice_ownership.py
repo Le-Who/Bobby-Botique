@@ -906,7 +906,6 @@ async def test_real_lyria_terminal_joins_notice_after_generation(request_flow, m
     flow.message.reply_audio = reply_audio
     flow.message.delete = delete
     worker = await start_notice_at_boundary(flow, entered)
-    # Preserve the existing policy: progress/generation leaves stop/retry available.
     assert heartbeat.is_heartbeat_active(1100, chat_id=11)
     assert not audio_sends
     await release_direct_output_after_notice(flow, worker, release)

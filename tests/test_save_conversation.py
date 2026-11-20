@@ -55,22 +55,16 @@ async def test_save_conversation_success(mock_chat_state):
     ):
         mock_get_user_chat.return_value = mock_chat_state
 
-        # Setup db_query side effects
-        # First call: INSERT -> returns [{"id": 1}]
-        # Second call: CALL -> returns [] or whatever, just success
         mock_db_query.side_effect = [[{"id": expected_conv_id}], []]
 
         result = await conv_repo.save_conversation(user_id, title)
 
         assert result == expected_conv_id
 
-        # Verify get_user_chat called
         mock_get_user_chat.assert_called_once_with(user_id)
 
-        # Verify db_query calls
         assert mock_db_query.call_count == 2
 
-        # First call args (INSERT)
         insert_call = mock_db_query.call_args_list[0]
         assert "INSERT INTO" in insert_call[0][0] and "conversations" in insert_call[0][0]
         assert insert_call[0][1] == (
@@ -82,7 +76,6 @@ async def test_save_conversation_success(mock_chat_state):
             mock_chat_state.token_count,
         )
 
-        # Second call args (CALL procedure)
         proc_call = mock_db_query.call_args_list[1]
         assert "CALL save_chat_to_conversation" in proc_call[0][0]
         assert proc_call[0][1] == (user_id, expected_conv_id)
@@ -112,7 +105,7 @@ async def test_save_conversation_insert_failure(mock_chat_state):
         patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query,
     ):
         mock_get_user_chat.return_value = mock_chat_state
-        mock_db_query.return_value = []  # Return empty list simulating failure to return ID
+        mock_db_query.return_value = []
 
         result = await conv_repo.save_conversation(user_id, title)
 
@@ -147,7 +140,6 @@ async def test_save_conversation_no_history():
 
         assert result == expected_conv_id
 
-        # Verify db_query called only once (INSERT)
         assert mock_db_query.call_count == 1
         assert "INSERT INTO" in mock_db_query.call_args[0][0] and "conversations" in mock_db_query.call_args[0][0]
 
@@ -165,9 +157,6 @@ async def test_save_conversation_procedure_failure(mock_chat_state):
     ):
         mock_get_user_chat.return_value = mock_chat_state
 
-        # Setup db_query side effects
-        # First call: INSERT -> returns [{"id": 3}]
-        # Second call: CALL -> raises asyncpg error
         mock_db_query.side_effect = [
             [{"id": expected_conv_id}],
             asyncpg.PostgresError("Procedure failed"),
@@ -177,10 +166,8 @@ async def test_save_conversation_procedure_failure(mock_chat_state):
 
         assert result is None
 
-        # Verify db_query called twice
         assert mock_db_query.call_count == 2
 
-        # Verify error was logged
         mock_logging_error.assert_called_once()
         assert "Error in save_conversation" in mock_logging_error.call_args[0][0]
 

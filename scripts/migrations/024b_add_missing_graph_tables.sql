@@ -1,6 +1,3 @@
--- 024b_add_missing_graph_tables.sql
--- Backfill: create GraphRAG tables that were originally created via the Supabase dashboard
--- and were missed in earlier migration backfills.
 
 CREATE TABLE IF NOT EXISTS memory_nodes (
     id BIGSERIAL PRIMARY KEY,

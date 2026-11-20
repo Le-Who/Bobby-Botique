@@ -196,7 +196,6 @@ class Maintenance:
         return sorted(result, reverse=True)
 
     def stored_bytes(self):
-        # Count unrelated regular files against the budget, but never remove them.
         return sum(path.stat().st_size for path in self.backups.iterdir() if not path.is_symlink() and path.is_file())
 
     def prune(self, *, reserve_bytes=0):
@@ -217,7 +216,6 @@ class Maintenance:
                 retained.add(path)
                 days.add(day)
         total = self.stored_bytes()
-        # Delete only exact snapshot names in this private directory. Never links.
         for _, path, size in reversed(snapshots):
             if path not in retained:
                 regular_file(path)
@@ -259,7 +257,6 @@ class Maintenance:
         old = (previous.get("outcome"), previous.get("issues")) if isinstance(previous, dict) else None
         new = (result["outcome"], result.get("issues"))
         if old != new:
-            # Host CLI events use the systemd journal; no app runtime is imported.
             event = {"event": "redis.maintenance.changed", "operation": filename.removesuffix(".json"), **result}
             sys.stderr.write(json.dumps(event, separators=(",", ":")) + "\n")
 
@@ -318,8 +315,6 @@ class Maintenance:
             self.runner(["docker", "start", name], capture=False)
             yield name
         finally:
-            # A lost create response may still leave a container. Its UUID label
-            # proves ownership before removal; a foreign resource is never touched.
             try:
                 self.remove_owned(name, token)
             except MaintenanceError:
@@ -372,9 +367,6 @@ class Maintenance:
                     newest = snapshots[0][2] if snapshots else 0
                     if size + newest + unrelated > self.max_bytes:
                         raise MaintenanceError("quota_exceeded")
-                    # Growth can consume the space reserved by the previous run.
-                    # Free older copies before staging, preserving the newest
-                    # valid snapshot even if the forthcoming copy/check fails.
                     self.prune(reserve_bytes=size)
                     sync_directory(self.backups)
                     if size + self.stored_bytes() > self.max_bytes:
@@ -491,8 +483,6 @@ class Maintenance:
             if not result["ping_ok"]:
                 issues.append("ping_failed")
             else:
-                # Non-interactive redis-cli exits after this sampling interval.
-                # Its maximum PING RTT excludes Docker exec startup overhead.
                 fields = self.redis("--latency", "-i", "0.1").split()
                 if len(fields) != 4:
                     raise MaintenanceError("invalid_latency")
@@ -565,7 +555,6 @@ def main(argv=None):
         service = Maintenance(arguments.root)
         result = getattr(service, arguments.operation.replace("-", "_"))()
     except Exception:
-        # Never print exception strings: command/library failures can contain data.
         result = {"timestamp": timestamp(utc_now()), "outcome": "maintenance_failed"}
     sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
     return 0 if result["outcome"] == "ok" else 1

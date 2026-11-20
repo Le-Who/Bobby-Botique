@@ -1,4 +1,3 @@
-# /app/handlers/commands.py
 """Core user commands and handler registration.
 
 Admin commands: see cmd_admin.py
@@ -59,7 +58,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     logging.info("Start command from user %s", user_id)
 
-    # ── Deep link routing ────────────────────────────────────────────────────
     payload = (context.args[0] if context.args else "").strip()
 
     if payload.startswith("compat_"):
@@ -73,7 +71,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         from app.cache import get_inline_context
 
-        token = payload[4:]  # strip "ctx_" prefix
+        token = payload[4:]
         ctx = await get_inline_context(token)
 
         if ctx is None:
@@ -84,15 +82,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         chat_state = await get_user_chat(user_id)
-        # Append inline exchange to existing history (it's the most recent interaction)
         inline_history = [
             {"role": "user", "parts": [ctx["q"]]},
             {"role": "model", "parts": [ctx["a"]]},
         ]
-        # Keep up to 20 previous messages, then append the new 2 inline messages
         chat_state.history = chat_state.history[-20:] + inline_history
-        # Force a full rewrite in the DB because we replaced the list
-        # (bypasses the bolt optimization that assumes only append-only changes)
         chat_state._original_length = 0
         await update_user_chat(user_id, chat_state)
 
@@ -115,15 +109,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if payload.startswith("trivia_q_"):
-        # "Узнать больше (ИИ)" deep link from Daily Trivia review screen.
-        # Payload format: trivia_q_{YYYYMMDD}_{question_index}
-        # e.g.  trivia_q_20260724_2  → puzzle 2026-07-24, question index 2
         import html as _html
         from datetime import date as _date
 
         from app.repos.daily_trivia import get_question_by_date_and_index
 
-        parts = payload[9:].rsplit("_", 1)  # strip "trivia_q_", split on last "_"
+        parts = payload[9:].rsplit("_", 1)
         try:
             date_str, idx_str = parts
             puzzle_date = _date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
@@ -169,7 +160,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         except Exception as exc:
             logging.warning("trivia_q deep link AI failed user=%s: %s", user_id, exc)
             await thinking_msg.delete()
-            # Fallback: show the fact directly, cleanly formatted
             await update.message.reply_text(
                 f"🧠 <b>{_html.escape(q.question)}</b>\n"
                 f"<i>Правильный ответ: {_html.escape(correct_answer)}</i>\n\n"
@@ -178,7 +168,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
             return
 
-        # Write q+a to history so the user can continue the conversation
         chat_state = await get_user_chat(user_id)
         chat_state.history = chat_state.history[-20:] + [
             {"role": "user", "parts": [ai_prompt]},
@@ -234,12 +223,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 @authorized_only
 async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for получения argumentов команды
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
     if not context.args:
-        # UX Improvement: Show current status instead of clearing
         current_prompt = chat_state.system_prompt
         prompt_display = f"`{current_prompt}`" if current_prompt else "_(не задана, используется стандартная)_"
 
@@ -270,7 +257,6 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("✅ Системная инструкция сброшена. Использую стандартное поведение.")
         return
 
-    # Show preview of what was set
     preview = (
         chat_state.system_prompt[:100] + "..." if len(chat_state.system_prompt) > 100 else chat_state.system_prompt
     )
@@ -280,7 +266,6 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 @authorized_only
 async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
@@ -290,7 +275,6 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @authorized_only
 async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
 
     if _is_user_busy(user_id):
@@ -340,7 +324,6 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 @authorized_only
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
@@ -354,14 +337,12 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @authorized_only
 async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
     chat_state.search_enabled = not chat_state.search_enabled
     await update_user_chat(user_id, chat_state)
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
 
-    # Используем TelegramFormatter for правильного экранирования
     formatted_text, parse_mode = TelegramFormatter.format_text(f"🌐 Постоянный режим исследования *{status_text}*.")
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
@@ -463,7 +444,6 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("📭 Нет активного чата для экспорта.\nНачните диалог и попробуйте снова.")
         return
 
-    # Build Markdown
     lines = ["# Экспорт чата GemAI Bot\n"]
     if chat_state.model:
         lines.append(f"**Модель:** `{chat_state.model}`\n")
@@ -568,7 +548,6 @@ async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if not context.args:
-        # Show current level
         label = _thinking_display(chat_state)
         saved_notice = (
             f"Сохранённое предпочтение: {_THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level)}.\n"
@@ -664,7 +643,6 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ],
     ]
 
-    # Add Mini App button if WEBHOOK_URL is configured (HTTPS required for WebApp)
     webapp_base = os.environ.get("WEBHOOK_URL", "").strip().rstrip("/")
     if webapp_base and webapp_base.startswith("https://"):
         keyboard.append(
@@ -682,9 +660,6 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 
-# ── GDPR commands ────────────────────────────────────────────────────────────
-
-
 @authorized_only
 @safe_handler(t("error.command"))
 async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -698,7 +673,6 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
-    # Gather all user data
     chat_settings = {
         "model": chat_state.model,
         "thinking_level": chat_state.thinking_level,
@@ -731,7 +705,6 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "active_conversation": chat_state.history,
     }
 
-    # Add conversation count
     try:
         conv_count = await get_conversation_count(user_id)
         user_data["total_conversations"] = conv_count
@@ -742,15 +715,10 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     user_data["saved_conversations"] = await export_user_conversations(user_id)
 
-    # Export the actual LTM/knowledge-graph records.  This call is intentionally
-    # required: returning a successful but incomplete GDPR archive would be
-    # misleading if the memory export failed.
     from app.repos.memory import export_user_memory
 
     user_data["long_term_memory"] = await export_user_memory(user_id)
 
-    # Add aggregate memory stats as a convenience, without making them a
-    # prerequisite for the complete record export above.
     try:
         from app.repos.memory import get_memory_stats
 
@@ -788,7 +756,6 @@ async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("🛡️ Системный администратор не может удалить свой аккаунт этой командой.")
         return
 
-    # Check if already in confirmation
     args = (update.message.text or "").split()
     if len(args) > 1 and args[1].upper() == "CONFIRM":
         await update.message.reply_text("🗑️ Удаление данных...")
@@ -809,7 +776,6 @@ async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         return
 
-    # Show confirmation prompt
     text = (
         "⚠️ **Запрос на удаление данных**\n\n"
         "Эта операция удалит:\n"
@@ -926,7 +892,6 @@ def register(application: Application) -> None:
 
     register_compatibility_handlers(application)
 
-    # Core user commands
     from app.handlers.natal_chart import build_natal_chart_handler
     from app.natal.city_catalog import warm_city_catalog
 
@@ -972,12 +937,10 @@ def register(application: Application) -> None:
     application.add_handler(MessageHandler(filters.Regex(r"(?i)^/(?:таро|расклад)(?:\s+|$)"), tarot_command))
     application.add_handler(CallbackQueryHandler(tarot_command, pattern=r"^start_tarot$"))
 
-    # Image generation commands (/draw, /img, /image, /generate)
     from app.handlers.cmd_image import draw_command
 
     application.add_handler(CommandHandler(["draw", "img", "image", "generate"], draw_command))
 
-    # Admin commands (from cmd_admin)
     from app.handlers.cmd_admin import (
         add_user_command,
         admin_command,
@@ -1049,7 +1012,6 @@ def register(application: Application) -> None:
 
     application.add_handler(CallbackQueryHandler(wb_callback, pattern=r"^wb:"))
 
-    # Conversation commands (from cmd_conversations)
     from app.handlers.cmd_conversations import (
         conversations_command,
         delete_conversation_command,
@@ -1064,13 +1026,11 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("rename", rename_conversation_command))
     application.add_handler(CommandHandler("delete", delete_conversation_command))
 
-    # Scheduled briefs commands (from scheduled_briefs)
     from app.handlers.scheduled_briefs import subscribe_command, unsubscribe_command
 
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
 
-    # Horoscope subscription wizard (from horoscope_subscription)
     from app.handlers.horoscope_subscription import (
         horoscope_settings_callback,
         horoscope_stop_command,
@@ -1081,27 +1041,22 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("horoscope_stop", horoscope_stop_command))
     application.add_handler(CallbackQueryHandler(horoscope_settings_callback, pattern=r"^horo_settings:"))
 
-    # Tarot Daily callbacks
     from app.handlers.tarot_daily import tarot_daily_callback
 
     application.add_handler(CallbackQueryHandler(tarot_daily_callback, pattern=r"^tarot_daily:"))
 
-    # Reminder command (from cmd_reminders)
     from app.handlers.cmd_reminders import remind_command
 
     application.add_handler(CommandHandler("remind", remind_command))
 
-    # Hidden developer commands
     from app.handlers.cmd_asr_test import asr_test_command
 
     application.add_handler(CommandHandler("asr", asr_test_command))
 
-    # ── Admin /keys wizard (unified provider key management) ─────────────────
     from app.handlers.cmd_keys import build_keys_conversation_handler
 
     application.add_handler(build_keys_conversation_handler())
 
-    # ── Admin /models wizard (zero-downtime model list management) ────────────
     from app.handlers.cmd_models import build_models_conversation_handler
 
     application.add_handler(build_models_conversation_handler())

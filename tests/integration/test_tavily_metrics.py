@@ -14,8 +14,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.usefixtu
     [(1000, 0, True), (1000, 969, True), (1000, 970, False), (1000, 1000, False), (0, 0, False)],
 )
 async def test_tavily_diagnostics_matches_real_monthly_admission(db_conn, monkeypatch, limit, used, allowed):
-    # Temporary names shadow only this connection's unqualified key tables.
-    # No seed keys or persistent rows are modified.
     await db_conn.execute("CREATE TEMP TABLE tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)")
     await db_conn.execute("CREATE TEMP TABLE tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER)")
     manager = keys.MonthlyKeyManager("tavily_api_keys", "tavily_key_usage", limit, 0.97)

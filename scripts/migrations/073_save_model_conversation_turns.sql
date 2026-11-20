@@ -1,5 +1,3 @@
--- Preserve the application's Gemini role and stable turn order when exporting
--- an active chat. Keep the original service-message filters and invoker rights.
 CREATE OR REPLACE PROCEDURE public.save_chat_to_conversation(
     p_user_id BIGINT,
     p_conv_id INTEGER

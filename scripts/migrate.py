@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: T201
 """Standalone migration runner for CI/CD and manual use.
 
 Usage:
@@ -26,7 +25,6 @@ import pathlib
 import sys
 import time
 
-# Allow running from repo root without installing the package
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import asyncpg
@@ -41,9 +39,6 @@ from app.utils.logging_config import setup_detailed_logging, shutdown_detailed_l
 
 MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent / "migrations"
 log = logging.getLogger("migrate")
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def _version(sql_file: pathlib.Path) -> str:
@@ -74,9 +69,6 @@ async def _applied_versions(conn: asyncpg.Connection) -> set[str]:
 async def _pending(conn: asyncpg.Connection) -> list[pathlib.Path]:
     applied = await _applied_versions(conn)
     return [f for f in _discover_files() if _version(f) not in applied]
-
-
-# ── Modes ─────────────────────────────────────────────────────────────────────
 
 
 async def run_check(conn: asyncpg.Connection) -> bool:
@@ -118,8 +110,6 @@ async def run_status(conn: asyncpg.Connection) -> None:
 
 async def run_apply(conn: asyncpg.Connection) -> bool:
     """Apply all pending migrations. Return True if all succeeded."""
-    # Share startup's transaction-scoped lock before initialization/version
-    # reads, so a concurrent runner cannot replay a stale pending list.
     async with conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock(hashtext('gemaibotv2:schema_migrations'))")
         await _ensure_tracking_table(conn)
@@ -181,13 +171,9 @@ async def _run_apply_locked(conn: asyncpg.Connection) -> bool:
                 duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
             )
             all_ok = False
-            # Hard stop — don't apply dependant migrations on a broken predecessor
             break
 
     return all_ok
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 
 async def main(args: argparse.Namespace) -> int:
@@ -221,7 +207,6 @@ async def main(args: argparse.Namespace) -> int:
             await run_status(conn)
             return 0
 
-        # Default: apply
         ok = await run_apply(conn)
         if not ok:
             log.error("One or more migrations failed. Review errors above.")

@@ -14,7 +14,6 @@ from app.resilience_policy import run_with_resilience
 from app.utils.api_logger import api_logger
 from app.utils.network import NetworkErrorHandler
 
-# Robust HTTP client for Tavily API calls
 http_client: httpx.AsyncClient | None = NetworkErrorHandler.create_robust_http_client()
 
 
@@ -57,7 +56,6 @@ async def tavily_search_agent(
     chat_id: int | None = None,
     max_results: int = 5,
 ):
-    # Input validation
     if not isinstance(query, str) or not query.strip():
         raise ValueError("Query must be a non-empty string")
 
@@ -76,7 +74,6 @@ async def tavily_search_agent(
     if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results <= 0:
         raise ValueError("max_results must be a positive integer")
 
-    # Check cache before performing search
     cache_options = {"max_results": max_results} if search_type == "search" else {}
     cached_result = await get_cached_search_result(query, search_type, **cache_options)
     if cached_result:
@@ -89,7 +86,6 @@ async def tavily_search_agent(
 
     api_key = available_key["api_key"]
 
-    # Detailed Tavily API request logging
     start_time = api_logger.log_request(
         "tavily",
         api_key=api_key,
@@ -100,7 +96,6 @@ async def tavily_search_agent(
 
     logging.info("Performing Tavily API call (type=%s, query_length=%d)", search_type, len(query))
 
-    # Record search metrics
     await metrics_collector.record_search_query()
 
     payload = {"api_key": api_key, "query": query}
@@ -125,10 +120,8 @@ async def tavily_search_agent(
         else:
             result = {"type": "search", "results": data.get("results", [])}
 
-        # Cache the result
         await cache_search_result(query, search_type, result, **cache_options)
 
-        # Log successful Tavily API response
         results = result.get("results", [])
         results_count = len(results) if results and result.get("type") == "search" else 1
         api_logger.log_response(
@@ -193,22 +186,19 @@ async def parallel_search(
     if not queries or max_results == 0:
         return []
 
-    # Deduplicate before starting work: simultaneous identical queries all
-    # miss the cache and otherwise spend separate provider requests/credits.
     tasks = [
         tavily_search_agent(
             query=q,
             search_type="search",
             user_id=user_id,
             chat_id=chat_id,
-            max_results=5,  # Get top 5 per query to ensure diversity before dedupping
+            max_results=5,
         )
         for q in dict.fromkeys(q for q in queries if isinstance(q, str) and q.strip())
     ]
 
     results_list: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Deduplicate by URL
     seen_urls: set[str] = set()
     merged_results: list[dict[str, Any]] = []
 
@@ -240,8 +230,6 @@ async def parallel_search(
                         }
                     )
 
-    # Sort by score descending (if Tavily provides sensible scores across queries)
-    # Tavily scores are usually 0.0 to 1.0
     merged_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
     return merged_results[:max_results]

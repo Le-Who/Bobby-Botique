@@ -11,7 +11,6 @@ from datetime import UTC, datetime, timedelta
 
 import ephem
 
-# Standard Zodiac signs (0° to 360°, 30° per sign)
 ZODIAC_SIGNS = [
     "Овен",
     "Телец",
@@ -65,17 +64,14 @@ def is_retrograde(body, observer: ephem.Observer, dt: datetime) -> bool:
     """
     sample = body.copy()
 
-    # Position at dt
     date = _ephem_date(dt)
     sample.compute(date)
     lon1 = _computed_ecliptic_longitude(sample, date)
 
-    # Position at dt + 1 day
     next_date = _ephem_date(dt + timedelta(days=1))
     sample.compute(next_date)
     lon2 = _computed_ecliptic_longitude(sample, next_date)
 
-    # Handle wrap-around at 360 degrees.
     diff = (lon2 - lon1 + 180.0) % 360.0 - 180.0
     return diff < 0
 
@@ -110,7 +106,7 @@ def get_astro_context(dt: datetime | None = None) -> str:
     ven_lon = math.radians(_computed_ecliptic_longitude(venus, date))
     mars_lon = math.radians(_computed_ecliptic_longitude(mars, date))
 
-    moon_phase = moon.phase  # percentage illumination 0-100
+    moon_phase = moon.phase
     merc_retro = is_retrograde(mercury, observer, dt)
     ven_retro = is_retrograde(venus, observer, dt)
     mars_retro = is_retrograde(mars, observer, dt)

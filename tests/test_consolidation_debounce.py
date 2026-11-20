@@ -47,40 +47,32 @@ class TestConsolidationDebounce:
         for _ in range(_MSG_GATE - 1):
             should_check_consolidation(42)
 
-        # This is the MSG_GATE-th call
         assert should_check_consolidation(42) is True
 
     def test_resets_after_trigger(self):
         """After triggering, counter resets and next call returns False."""
         for _ in range(_MSG_GATE - 1):
             should_check_consolidation(42)
-        assert should_check_consolidation(42) is True  # triggers
+        assert should_check_consolidation(42) is True
 
-        # Next call should be False (counter reset)
         assert should_check_consolidation(42) is False
 
     def test_time_gate_override(self):
         """If 15 minutes elapsed, should trigger even with few messages."""
-        should_check_consolidation(42)  # Initialize
+        should_check_consolidation(42)
 
-        # Mock time to advance past TIME_GATE
         with patch("app.repos.memory_consolidation.time") as mock_time:
-            # Simulate 16 minutes later
             mock_time.monotonic.return_value = time.monotonic() + _TIME_GATE + 60
             assert should_check_consolidation(42) is True
 
     def test_independent_user_state(self):
         """Different users should have independent counters."""
-        # User 1: 19 calls
         for _ in range(_MSG_GATE - 1):
             should_check_consolidation(1)
 
-        # User 2: only 1 call
         should_check_consolidation(2)
 
-        # User 1's 20th should trigger
         assert should_check_consolidation(1) is True
-        # User 2's 2nd should not
         assert should_check_consolidation(2) is False
 
     def test_reset_single_user(self):
@@ -91,9 +83,7 @@ class TestConsolidationDebounce:
 
         reset_consolidation_state(1)
 
-        # User 1 reset — first call is False
         assert should_check_consolidation(1) is False
-        # User 2 — still at count 6, should not trigger yet
         assert should_check_consolidation(2) is False
 
     def test_reset_all_users(self):

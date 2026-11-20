@@ -59,7 +59,6 @@ def shuffle_options_and_update_correct_index(questions_raw: list[dict[str, Any]]
             if subject and relation and answer:
                 identity = FactIdentity.create(subject=subject, relation=relation, answer=answer)
 
-        # Shuffle options randomly
         shuffled_options = list(options)
         random.shuffle(shuffled_options)
 
@@ -238,8 +237,6 @@ async def _generate_lane_with_recovery(
                 and str(exc) == "No Gemini keys available for the requested model plan"
             ):
                 raise
-            # A prior transient failure can temporarily suspend every key. Keep
-            # that cause instead of turning its short recovery into a 3h cooldown.
             if attempt == len(GENERATION_RETRY_DELAYS):
                 assert last_transient is not None
                 if last_transient is exc:

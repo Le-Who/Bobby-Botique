@@ -45,7 +45,6 @@
     </nav>
 
     <div class="dash">
-      <!-- TAB: Overview (System Health + Performance) -->
       <div class="tab-panel active" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" tabindex="0">
       <div class="overview-intro">
         <div>
@@ -55,7 +54,6 @@
         </div>
         <div class="overview-cadence"><span class="cadence-mark" aria-hidden="true"></span>Refreshes every 15 seconds</div>
       </div>
-      <!-- ROW 1: System Health -->
         <h2 class="section-title">System Health</h2>
         <div class="card-row quad">
           <div class="card" id="card-cpu">
@@ -121,7 +119,6 @@
         </div>
         <p class="section-description traffic-note" id="traffic-note">Historical API coverage depends on recorded instrumentation.</p>
       </section>
-      <!-- ROW 2: Performance Metrics -->
       <section class="dash-section operations-section" aria-labelledby="operations-heading">
         <h2 class="section-title" id="operations-heading">Request stages and live load</h2>
         <p class="operations-note">Approximate p50/p95/p99 from fixed buckets, over a 900-second process window. Fewer than 20 samples is a low sample. Stage percentiles are not added to calculate total latency. These are observations from one replica.</p>
@@ -153,7 +150,6 @@
         </div>
       </section>
 
-      <!-- ROW 3: Context Summarization -->
       <section class="dash-section">
         <h2 class="section-title">Context Summarization</h2>
         <div class="card-row quad">
@@ -177,14 +173,12 @@
           </div>
         </div>
       </section>
-      </div><!-- end panel-overview -->
+      </div>
 
-      <!-- TAB: AI Providers -->
       <div class="tab-panel" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers" tabindex="0" hidden>
 
       <div class="provider-intro"><div><h1>Provider usage</h1><p>Local counters and recorded key failures. These counters do not verify provider access.</p></div><a href="/controls#diagnostics">Модели, маршруты и причины ограничений</a></div>
 
-      <!-- Reset Time Info -->
       <section class="dash-section">
         <div class="card provider-reset">
           <div class="provider-reset-items">
@@ -194,7 +188,6 @@
         </div>
       </section>
 
-      <!-- ROW 3: AI Keys & Circuit Breakers -->
       <section class="dash-section">
         <h2 class="section-title">Gemini API Keys</h2>
         <p class="section-description">Локальный RPD бота на модель и ключ. Доступность по этому счётчику не подтверждает доступ к модели у провайдера; состояние ключей показано отдельно.</p>
@@ -232,7 +225,6 @@
         </div>
       </section>
 
-      <!-- Tavily Keys -->
       <section class="dash-section">
         <h2 class="section-title">Tavily Search API</h2>
         <div class="card card-wide">
@@ -254,12 +246,10 @@
           </div>
         </div>
       </section>
-      </div><!-- end panel-providers -->
+      </div>
 
-      <!-- TAB: Infrastructure -->
       <div class="tab-panel" id="panel-infra" role="tabpanel" aria-labelledby="tab-infra" tabindex="0" hidden>
 
-      <!-- ROW 4: Database & Queue -->
       <section class="dash-section">
         <h2 class="section-title">Infrastructure</h2>
         <div class="card-row triple">
@@ -350,7 +340,6 @@
         </div>
       </section>
 
-      <!-- ROW: Key Health -->
       <section class="dash-section">
         <h2 class="section-title">Key Health Diagnostics</h2>
         <div class="card card-full">
@@ -372,9 +361,8 @@
           </div>
         </div>
       </section>
-      </div><!-- end panel-infra -->
+      </div>
 
-      <!-- TAB: Errors -->
       <div class="tab-panel" id="panel-errors" role="tabpanel" aria-labelledby="tab-errors" tabindex="0" hidden>
       <section class="dash-section">
         <h2 class="section-title">Recent Errors</h2>
@@ -384,8 +372,8 @@
           </div>
         </div>
       </section>
-      </div><!-- end panel-errors -->
-    </div><!-- end .dash -->
+      </div>
+    </div>
 
     <footer class="dash-footer">
       <span>GemAI Bot v2 Operations Dashboard</span>
@@ -394,9 +382,6 @@
     </footer>
 
     <script nonce="{{ g.csp_nonce }}">
-      // =====================================================================
-      // Dashboard data fetcher — one canonical snapshot every 15 seconds
-      // =====================================================================
 
       const API = {
         dashboard: "/api/dashboard",
@@ -413,7 +398,6 @@
           .replaceAll("'", "&#039;");
       }
 
-      // Clock
       function updateClock() {
         const now = new Date();
         $("clock").textContent = now.toLocaleTimeString("en-GB", {
@@ -443,7 +427,6 @@
         updateDashboardFreshness();
       }, 1000);
 
-      // Tab navigation
       const tabs = [...document.querySelectorAll('.tab')];
       function activateTab(selected) {
         tabs.forEach(tab => {
@@ -480,7 +463,6 @@
       window.addEventListener('popstate', restoreTab);
       restoreTab();
 
-      // Sparkline history buffers (last 20 readings)
       const cpuHistory = [];
       const memHistory = [];
       const MAX_SPARK = 20;
@@ -499,7 +481,6 @@
         </svg>`;
       }
 
-      // Helper: set bar color based on value
       function setBarLevel(barEl, cardEl, pct) {
         barEl.style.width = pct + "%";
         barEl.className = "card-bar-fill";
@@ -513,7 +494,6 @@
         }
       }
 
-      // Helper: set service dot
       function setDot(id, status) {
         const el = $(id);
         el.className = "dot";
@@ -537,7 +517,6 @@
         else el.classList.add("dot-warn");
       }
 
-      // Fetch with session — redirect to login on 401
       async function apiFetch(url) {
         const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
         if (res.status === 401) {
@@ -548,9 +527,6 @@
         return await res.json();
       }
 
-      // =====================================================================
-      // Data loaders
-      // =====================================================================
 
       function sourceStateText(name, source) {
         if (!source) return name + ": unknown";
@@ -636,13 +612,11 @@
         $("disk-val").textContent = s.disk_percent != null ? disk + "%" : "Unavailable";
         setBarLevel($("disk-bar"), $("card-disk"), disk);
 
-        // Services
         const svc = d.services;
         setDot("svc-db", svc.database);
         setDot("svc-redis", svc.redis);
         setDot("svc-bot", d.lifecycle?.state || svc.bot);
 
-        // Metrics
         const m = d.metrics;
         renderTraffic(m?.traffic, d.traffic_source || d.sources?.traffic || null);
         if (m && d.metrics_available !== false) {
@@ -664,7 +638,6 @@
           $("cache-hit").textContent = "—";
         }
 
-        // Summarization
         const sm = d.summarization;
         if (sm && d.summarization_available !== false) {
           $("sum-triggered").textContent = (sm.triggered || 0).toLocaleString();
@@ -687,7 +660,6 @@
         $("last-update").textContent =
           "Updated: " + new Date().toLocaleTimeString();
 
-        // Sparklines
         if (Number.isFinite(s.cpu_percent)) cpuHistory.push(cpu);
         if (Number.isFinite(s.memory_percent)) memHistory.push(memory);
         if (cpuHistory.length > MAX_SPARK) cpuHistory.shift();
@@ -808,7 +780,6 @@
         if (!d) return;
         renderGemini(d.gemini);
 
-        // --- Tavily keys ---
         const tBody = $("tavily-tbody");
         const tEmpty = $("tavily-empty");
         const tRows = d.tavily?.rows || [];
@@ -858,7 +829,6 @@
             .join("");
         }
 
-        // --- Reset time info ---
         const ri = d.reset_info;
         if (ri) {
           $("reset-time").textContent = ri.gemini_resets || "—";
@@ -951,9 +921,6 @@
         $("c-mem-items").textContent = cache.redis_available === false ? "Unavailable" : cache.redis_keys ?? "—";
       }
 
-      // =====================================================================
-      // Poll loop
-      // =====================================================================
 
       let dashboardRefreshPending = false;
       async function refreshAll() {
@@ -1030,16 +997,12 @@
         }).join('');
       }
 
-      // Initial load
       refreshAll();
       setInterval(refreshAll, 15000);
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) refreshAll();
       });
 
-      // =====================================================================
-      // Key Health loader
-      // =====================================================================
       function renderKeyHealth(d) {
         if (!d) return;
         const tbody = $('kh-tbody');
@@ -1069,9 +1032,6 @@
         }).join('');
       }
 
-      // =====================================================================
-      // SSE Live Updates (real-time between polls)
-      // =====================================================================
       (function initSSE() {
         const evtSrc = new EventSource('/api/events');
 
@@ -1082,7 +1042,6 @@
             renderSourceFreshness(d.sources);
             if (d.lifecycle?.state) setDot("svc-bot", d.lifecycle.state);
 
-            // Update system metrics in real-time
             if (d.system) {
               if (d.system.cpu_percent != null) {
                 $('cpu-val').textContent = d.system.cpu_percent + '%';
@@ -1100,10 +1059,7 @@
               }
             }
 
-            // Probed service health belongs to the canonical snapshot. A
-            // legacy SSE pool-presence hint cannot establish connectivity.
 
-            // Update queue (if visible)
             if (d.sources?.queue?.available === false) {
               renderQueue({ available: false });
             } else if (d.queue) {
@@ -1111,15 +1067,12 @@
               $('q-running').textContent = d.queue.processing ?? '—';
             }
 
-            // Calendar traffic belongs to the canonical snapshot. Legacy SSE
-            // totals mix scopes and must never overwrite selected-period counts.
             if (d.metrics && Object.prototype.hasOwnProperty.call(d.metrics, "traffic")) {
               renderTraffic(d.metrics.traffic, d.sources?.traffic || trafficSourceSnapshot);
             } else if (d.sources?.traffic?.available === false) {
               renderTraffic(null, d.sources.traffic);
             }
 
-            // Partial SSE updates cannot establish a fresh complete snapshot.
             updateDashboardFreshness();
           } catch (err) {
             console.warn('SSE parse error:', err);

@@ -8,11 +8,8 @@ This module runs on startup to catch drift between expected and actual schema.
 
 import logging
 
-# Every table the application depends on.  Kept in sync with 000_init_schema.sql
-# and subsequent CREATE TABLE migrations.
 EXPECTED_TABLES = frozenset(
     {
-        # Core (000_init_schema)
         "users",
         "chats",
         "roles",
@@ -66,7 +63,6 @@ EXPECTED_TABLES = frozenset(
         "natal_reports",
         "tarot_daily_subscriptions",
         "user_achievements",
-        # Added by later migrations / 018 backfill
         "user_metrics",
         "model_configuration",
         "active_chat_messages",
@@ -74,26 +70,20 @@ EXPECTED_TABLES = frozenset(
         "group_chats",
         "group_members",
         "group_messages",
-        # GraphRAG memory (000/018 backfill + 025/026/026b/027)
         "memory_nodes",
         "memory_edges",
         "memory_edge_sources",
         "memory_node_sources",
         "memory_derivation_sources",
         "private_data_leases",
-        # Feature tables (021, 022)
         "brief_subscriptions",
         "conversation_branches",
         "user_reminders",
-        # Infrastructure
         "schema_migrations",
-        # Runtime-configurable admin settings (034_global_settings)
         "global_settings",
     }
 )
 
-# Critical column-level contract for tables whose runtime shape cannot be
-# inferred safely from table existence alone.
 EXPECTED_COLUMNS = {
     "broadcast_batches": frozenset({"batch_id", "operation_id", "task_id", "mode", "state", "unknown_delivery"}),
     "broadcast_recipients": frozenset({"batch_id", "recipient_id", "privacy_epoch", "state", "owner_token"}),
@@ -205,5 +195,4 @@ async def validate_schema(db_query):
         raise SchemaValidationError(f"Schema validation query failed: {e}") from e
 
 
-# Backward-compatible alias for integrations that imported the old name.
 create_tables = validate_schema

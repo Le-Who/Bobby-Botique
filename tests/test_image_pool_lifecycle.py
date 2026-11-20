@@ -33,7 +33,6 @@ class ManualTimer:
         self.cancelled = True
 
     def fire(self):
-        # A timer callback can already be running when cancellation happens.
         self.function(*self.args, **self.kwargs)
 
 
@@ -205,7 +204,6 @@ async def test_real_pool_preserves_outputs_errors_cache_and_caller_image():
     expected = image_utils._image_worker(raw)
     assert expected is not None
     assert await image_utils.save_image_as_bytes(raw, cache_key="synthetic-image") == expected
-    # Cache hits retain the previous behavior, bypassing even invalid input.
     assert await image_utils.save_image_as_bytes(b"invalid", cache_key="synthetic-image") == expected
     assert await image_utils.save_image_as_bytes(b"invalid") is None
     assert await image_utils.save_image_as_bytes(raw) == expected
@@ -236,7 +234,6 @@ async def test_real_worker_crash_does_not_poison_next_request():
     assert pool is not None
     with pytest.raises(BrokenProcessPool):
         await asyncio.wrap_future(pool.submit(os._exit, 17))
-    # The crashed pool may first be detected by submit or by its result callback.
     with Image.new("RGB", (32, 16)) as image:
         assert await image_utils.save_image_as_bytes(image) is None
         assert await image_utils.save_image_as_bytes(image) is not None
@@ -251,7 +248,6 @@ async def test_real_worker_crash_completes_pending_managed_request_and_cleans_up
         lambda **kwargs: factory(**{**kwargs, "max_workers": 1}),
     )
     pool = image_utils._get_image_process_pool()
-    # Occupy the sole worker so the managed image request cannot finish first.
     sleeper = pool.submit(time.sleep, 10)
     manager = pool._executor_manager_thread
     processes = list(pool._processes.values())

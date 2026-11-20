@@ -64,7 +64,6 @@ def _offline_repositories(monkeypatch):
     monkeypatch.setattr(users, "save_user_state", save)
     monkeypatch.setattr(users, "is_authorized", AsyncMock(return_value=True))
     monkeypatch.setattr("app.utils.decorators.is_authorized", AsyncMock(return_value=True))
-    # Keep real scheduling/persistence, but flush it deterministically below.
     monkeypatch.setattr(state, "_PERSIST_DEBOUNCE_SEC", 3600)
     yield SimpleNamespace(load=load, save=save)
     handle = state._pending_persists.pop(_USER_ID, None)

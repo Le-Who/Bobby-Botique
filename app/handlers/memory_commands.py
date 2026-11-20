@@ -1,4 +1,3 @@
-# /app/handlers/memory_commands.py
 """User-facing /memory command with inline pagination and delete controls.
 
 Provides transparency into what the bot "remembers" and lets users
@@ -39,15 +38,12 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
 
     page = max(0, page)
     offset = page * MEMORIES_PER_PAGE
-    # ⚡ Bolt Optimization: Fetch memories and stats concurrently to reduce DB wait time
     memories, stats = await asyncio.gather(
         list_memories(user_id, offset=offset, limit=MEMORIES_PER_PAGE), get_memory_stats(user_id)
     )
     total = stats.get("total_memories", 0) if stats else 0
     total_pages = max(1, (total + MEMORIES_PER_PAGE - 1) // MEMORIES_PER_PAGE)
 
-    # A deletion on the last page can make the callback's page stale.  Clamp
-    # and re-read instead of rendering impossible counters such as ``3/1``.
     clamped_page = min(page, total_pages - 1)
     if clamped_page != page:
         page = clamped_page
@@ -69,7 +65,6 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
         await target.reply_text(empty_text)
         return
 
-    # Build text
     lines = [f"🧠 **Ваши воспоминания** ({total} всего)\n"]
     for i, m in enumerate(memories, start=offset + 1):
         snippet = m["content"][:120]
@@ -80,7 +75,6 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
 
     formatted_text, parse_mode = TelegramFormatter.format_text("\n".join(lines))
 
-    # Build inline keyboard
     buttons = []
     buttons.append(
         [
@@ -88,7 +82,6 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
             for index, memory in enumerate(memories, start=offset + 1)
         ]
     )
-    # Delete buttons row (one per memory on this page)
     delete_row = []
     for m in memories:
         delete_row.append(
@@ -100,7 +93,6 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
     if delete_row:
         buttons.append(delete_row)
 
-    # Navigation row
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"mem:{user_id}:page:{page - 1}"))
@@ -111,7 +103,6 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
 
     markup = InlineKeyboardMarkup(buttons)
 
-    # Use edit_text if this is a callback update, reply_text otherwise
     if hasattr(target, "edit_text"):
         try:
             await target.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=markup)
@@ -187,7 +178,6 @@ async def memory_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             await query.answer("❌ Не удалось удалить", show_alert=True)
             return
 
-        # Re-render current page
         await _send_memory_page(query.message, user_id, page=page)
     else:
         await query.answer("Кнопка устарела. Откройте /memory заново.", show_alert=True)
@@ -205,8 +195,6 @@ async def _send_memory_detail(target, user_id: int, memory_id: int, list_page: i
         )
         return
     content = str(memory["content"])
-    # 1,400 Unicode codepoints occupy at most 2,800 Telegram UTF-16 units.
-    # Slice the original string so navigation never drops whitespace or emoji.
     count = max(1, (len(content) + 1399) // 1400)
     text_page = min(text_page, count - 1)
     text = f"🧠 Воспоминание · {text_page + 1}/{count}\n\n" + content[text_page * 1400 : (text_page + 1) * 1400]

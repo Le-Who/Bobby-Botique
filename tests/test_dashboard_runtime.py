@@ -194,9 +194,7 @@ console.error = () => {};
 
 def test_metric_card_recovers_from_critical_to_warning_then_normal():
     template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
-    source = template[
-        template.index("      function setBarLevel(") : template.index("      // Helper: set service dot")
-    ]
+    source = template[template.index("      function setBarLevel(") : template.index("      function setDot(")]
     _run_dashboard_script(
         """
 const assert = require('node:assert/strict');
@@ -223,7 +221,9 @@ assert.equal(card.classList.contains('card-critical'), false);
 
 def test_dashboard_fetch_aborts_a_stalled_response():
     template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
-    source = template[template.index("      async function apiFetch(") : template.index("      // Data loaders")]
+    source = template[
+        template.index("      async function apiFetch(") : template.index("      function sourceStateText(")
+    ]
     _run_dashboard_script(
         """
 const assert = require('node:assert/strict');
@@ -241,7 +241,6 @@ AbortSignal.timeout = milliseconds => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${server.address().port}/dashboard`;
   try {
-    // This deadline only bounds the regression if the production abort is absent.
     await assert.rejects(Promise.race([
       apiFetch(url),
       new Promise((resolve, reject) => setTimeout(() => reject(new Error('Fetch remained stalled')), 500)),

@@ -89,7 +89,6 @@ async def test_public_recall_rejects_committed_change_after_embedding_started(
                         "UPDATE chats SET private_data_blocked=true WHERE user_id=$1 RETURNING memory_epoch", USER
                     )
                 assert unchanged == epoch
-        # The active operation still owns E1's lease after a real E3 commit.
         assert await db_conn.fetchval("SELECT memory_epoch FROM private_data_leases WHERE user_id=$1", USER) == epoch
         resume_embedding.set()
         assert await asyncio.wait_for(task, 5) == []

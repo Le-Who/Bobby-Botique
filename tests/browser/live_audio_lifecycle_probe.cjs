@@ -109,7 +109,6 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
         'the late-settings case must reach the page before settings are applied');
       releaseSettings();
     }
-    // Wait for the rendered API settings before choosing the transport.
     await page.locator(`[data-live-connection-mode="${initialConnectionMode}"].active`).waitFor({ state: 'attached' });
     if (payload.scenario === 'rejected_resume') {
       await page.locator('#mic-btn').click();
@@ -153,7 +152,7 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
         socket.receive({ type: 'turn_complete' });
         plannedReconnect = true;
         socket.close();
-        sendAudio(); // OPEN is not provider setupComplete.
+        sendAudio();
         const beforeSetup = metrics.sockets.at(-1).sent.length;
         metrics.sockets.at(-1).receive({ type: 'connected' });
         sendAudio();
@@ -170,7 +169,7 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
     } else if (payload.scenario === 'normal_stop' || payload.scenario === 'manual_stop') {
       await page.waitForFunction(() => document.getElementById('mic-btn').classList.contains('recording'));
       await page.locator('#mic-btn').click();
-      await page.evaluate(() => stopRecording()); // idempotent cleanup
+      await page.evaluate(() => stopRecording());
       const value = await state();
       assert.equal(value.label, 'Начать запись');
       assert.deepEqual(value.stops, [1]); assert.deepEqual(value.closes, [1]);
@@ -197,7 +196,6 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       const fallsBack = payload.terminal !== 'model_unavailable';
       const terminalTarget = await page.evaluate(({ reason, fallsBack }) => {
         if (fallsBack) {
-          // A proactive reconnect can begin while the previous mic request is pending.
           plannedReconnect = true;
           metrics.sockets.at(-1).close();
         }

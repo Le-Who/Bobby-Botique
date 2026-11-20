@@ -27,8 +27,6 @@ def _parsed_workflow(path: Path = CI_WORKFLOW) -> dict:
 
 
 def _triggers(path: Path) -> dict:
-    # BaseLoader preserves the GitHub Actions `on` key instead of interpreting
-    # it as a YAML 1.1 boolean. Job contracts use SafeLoader for real booleans.
     return yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["on"]
 
 
@@ -152,8 +150,6 @@ def test_ci_requires_locked_browser_tests_with_chromium() -> None:
     assert re.fullmatch(r"[0-9a-f]{64}", image.rsplit("sha256:", 1)[1])
     assert "--ipc=host" in job["container"]["options"]
     assert not any("playwright install" in step.get("run", "") for step in job["steps"])
-    # Discover every marked browser test, including new modules. A fixed list
-    # previously omitted the compatibility form from the required Chromium job.
     assert "uv run --locked pytest tests/ -m browser -n 0" in browser_job
     assert not re.search(r"tests/test_\w+\.py", browser_job)
     assert "-m browser -n 0" in browser_job

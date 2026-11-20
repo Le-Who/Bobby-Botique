@@ -37,18 +37,13 @@ class GroupChatManager:
         if not hasattr(self, "initialized"):
             self.active_groups: dict[int, GroupChat] = {}
             self.group_settings: dict[int, dict[str, Any]] = {}
-            self.user_groups: dict[int, set[int]] = defaultdict(set)  # user_id -> set of chat_ids
+            self.user_groups: dict[int, set[int]] = defaultdict(set)
             self._lock = asyncio.Lock()
             self.initialized = True
 
     async def initialize(self):
         """Инициализирует менеджер групповых чатов"""
         try:
-            # NOTE: group_chats, group_members, and group_messages tables
-            # are created by SQL migrations (000_init_schema + 018 backfill).
-            # No inline DDL needed here.
-
-            # Load active groups
             await self._load_active_groups()
 
             logging.info("Group chat manager initialized")
@@ -83,7 +78,6 @@ class GroupChatManager:
                 chat_ids.append(group.chat_id)
 
             if chat_ids:
-                # Load участников всех активных групп одним requestом
                 members = await db.db_query(
                     "SELECT chat_id, user_id FROM group_members WHERE chat_id = ANY($1::bigint[])",
                     (chat_ids,),
@@ -100,18 +94,15 @@ class GroupChatManager:
     async def register_group(self, chat_id: int, title: str, admin_user_id: int) -> bool:
         """Регистрирует новую группу"""
         try:
-            # Check, что user авторfromован
             if not await _is_authorized(admin_user_id):
                 return False
 
             async with self._lock:
-                # Check, не зарегистрирована ли уже group
                 if chat_id in self.active_groups:
                     return False
 
                 if not db.db_manager.is_connected:
                     await db.reconnect_database()
-                # The group and its first member are one durable registration.
                 async with db.db_manager.pool.acquire() as conn, conn.transaction():
                     await db.db_query(
                         "INSERT INTO group_chats (chat_id, title, admin_user_id, member_count) VALUES ($1, $2, $3, 1)",
@@ -124,7 +115,6 @@ class GroupChatManager:
                         conn=conn,
                     )
 
-                # Create объект groups
                 group = GroupChat(
                     chat_id=chat_id,
                     title=title,
@@ -153,7 +143,6 @@ class GroupChatManager:
             if chat_id not in self.active_groups:
                 return False
 
-            # Check, что user авторfromован
             if not await _is_authorized(user_id):
                 return False
 
@@ -161,7 +150,6 @@ class GroupChatManager:
                 if not db.db_manager.is_connected:
                     await db.reconnect_database()
                 async with db.db_manager.pool.acquire() as conn, conn.transaction():
-                    # RETURNING distinguishes a new member from a duplicate.
                     result = await db.db_query(
                         "INSERT INTO group_members (chat_id, user_id) VALUES ($1, $2) ON CONFLICT (chat_id, user_id) DO NOTHING RETURNING user_id",
                         (chat_id, user_id),
@@ -174,7 +162,6 @@ class GroupChatManager:
                             conn=conn,
                         )
 
-                # Update в памяти
                 self.user_groups[user_id].add(chat_id)
                 if result and chat_id in self.active_groups:
                     self.active_groups[chat_id].member_count += 1
@@ -207,7 +194,6 @@ class GroupChatManager:
                             conn=conn,
                         )
 
-                # Update в памяти
                 self.user_groups[user_id].discard(chat_id)
                 if removed and chat_id in self.active_groups:
                     self.active_groups[chat_id].member_count = max(0, self.active_groups[chat_id].member_count - 1)
@@ -316,8 +302,6 @@ class GroupChatManager:
     async def get_group_stats(self, chat_id: int) -> dict[str, Any]:
         """Получает статистику группы"""
         try:
-            # Performance: all three COUNT queries are independent — fire them in
-            # parallel to collapse 3 sequential DB round-trips into ~1 RTT.
             total_messages, recent_messages, active_users = await asyncio.gather(
                 db.db_query(
                     "SELECT COUNT(*) as count FROM group_messages WHERE chat_id = $1",
@@ -347,7 +331,6 @@ class GroupChatManager:
             return {}
 
 
-# Глобальный экземпляр менеджера групповых chatов
 group_chat_manager = GroupChatManager()
 
 

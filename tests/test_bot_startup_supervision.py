@@ -58,7 +58,6 @@ async def test_critical_child_exit_stops_and_awaits_siblings(monkeypatch, critic
     owner = asyncio.create_task(bot.run_bot_and_server())
     try:
         await critical_finished.wait()
-        # A critical exit must start cleanup without an external shutdown signal.
         await asyncio.wait_for(cleanup_started.wait(), timeout=1)
         assert not owner.done(), "failure escaped before sibling cancellation cleanup"
         release.set()

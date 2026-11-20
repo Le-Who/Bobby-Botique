@@ -93,7 +93,7 @@ async def test_access_revoked_during_interpretation_prevents_result_delivery(mon
         bot, SimpleNamespace(user_data=user_data), 777, parse_pair_input(_payload())
     )
 
-    assert bot.send_message.await_count == 1  # Only the initial progress notice.
+    assert bot.send_message.await_count == 1
     assert "compatibility_tarot_context" not in user_data[777]
 
 

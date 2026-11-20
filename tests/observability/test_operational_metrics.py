@@ -96,7 +96,7 @@ def test_metrics_bound_high_cardinality_labels():
         )
 
     pairs = {(provider, model) for provider, model, _outcome in metrics.snapshot()["provider_attempts"]}
-    assert len(pairs) <= 3  # two admitted pairs plus the shared overflow bucket
+    assert len(pairs) <= 3
     assert ("other", "other") in pairs
 
 

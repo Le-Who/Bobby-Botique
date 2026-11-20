@@ -33,11 +33,6 @@ def mock_deps():
         yield {"query": m_query, "exec": m_exec, "mgr": m_mgr, "conn": mock_conn}
 
 
-# ---------------------------------------------------------------------------
-# save_conversation
-# ---------------------------------------------------------------------------
-
-
 class TestSaveConversation:
     @pytest.mark.asyncio
     async def test_inserts_and_returns_id(self, mock_deps):
@@ -78,11 +73,6 @@ class TestSaveConversation:
         assert result is None
 
 
-# ---------------------------------------------------------------------------
-# get_user_conversations
-# ---------------------------------------------------------------------------
-
-
 class TestGetUserConversations:
     @pytest.mark.asyncio
     async def test_returns_list(self, mock_deps):
@@ -119,11 +109,6 @@ class TestGetUserConversations:
         assert "conversations" in query
 
 
-# ---------------------------------------------------------------------------
-# get_conversation_count
-# ---------------------------------------------------------------------------
-
-
 class TestGetConversationCount:
     @pytest.mark.asyncio
     async def test_returns_count(self, mock_deps):
@@ -138,11 +123,6 @@ class TestGetConversationCount:
 
         mock_deps["query"].return_value = []
         assert await get_conversation_count(42) == 0
-
-
-# ---------------------------------------------------------------------------
-# delete_conversation
-# ---------------------------------------------------------------------------
 
 
 class TestDeleteConversation:
@@ -161,11 +141,6 @@ class TestDeleteConversation:
         mock_deps["query"].return_value = []
         result = await delete_conversation(42, 999)
         assert result is False
-
-
-# ---------------------------------------------------------------------------
-# rename_conversation
-# ---------------------------------------------------------------------------
 
 
 class TestRenameConversation:

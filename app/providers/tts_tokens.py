@@ -74,8 +74,6 @@ async def count_speech_tokens(
     capability = (identity[0], identity[2])
     if capability in cache.unavailable or cache.requests >= _MAX_COUNT_REQUESTS:
         return None
-    # Explicit text parts count all caller-controlled speech material. In
-    # particular, using speech_metadata.style here silently omits its tokens.
     contents = types.Content(
         role="user",
         parts=[
@@ -102,8 +100,6 @@ async def count_speech_tokens(
             cache.unavailable.add(capability)
             return None
     except Exception:
-        # Counting is not generation admission and must never penalize a key.
-        # A real TTS request can still validate a source when counting fails.
         cache.unavailable.add(capability)
         return None
     receipt = SpeechTokenReceipt(*identity, count)
@@ -122,8 +118,6 @@ async def plan_speech_chunks(
     timeout: float = 50.0,
 ) -> list[str]:
     """Keep a fitting source whole; measure prefixes only after oversize proof."""
-    # All planning shares a small fraction of the generation deadline. A slow
-    # counter leaves time for real TTS validation instead of penalizing its key.
     deadline = asyncio.get_running_loop().time() + min(_COUNT_TIMEOUT_S, timeout / 5)
 
     async def count(transcript: str) -> SpeechTokenReceipt | None:

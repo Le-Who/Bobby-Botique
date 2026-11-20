@@ -1,4 +1,3 @@
-# /app/handlers/cmd_admin.py
 """Admin-only commands: user management, metrics, cache, queue, config, tavily, cleanup."""
 
 import asyncio
@@ -9,8 +8,6 @@ from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
-
-# google.genai is deferred to reduce startup latency (used only in list_models_command)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
@@ -40,9 +37,6 @@ from app.repos.users import invalidate_user_auth_cache
 from app.utils import time as time_utils
 from app.utils.decorators import admin_only, authorized_only
 from app.utils.formatting import TelegramFormatter
-
-# ⚡ Perf: json_compat wraps orjson for 2-6× faster JSON encode/decode than stdlib.
-# json.loads, json.dumps, and json.JSONDecodeError are all supported.
 from app.utils.json_compat import json
 
 _DAILYCROC_STATUS_REFRESH = "dailycroc_status:refresh"
@@ -282,9 +276,6 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
     current = now or datetime.now(tz=UTC)
     today = daily_croc_repo.today_puzzle_date(current)
 
-    # ⚡ Bolt Optimization: fan out 6 independent I/O calls concurrently.
-    # Previously sequential: 6 separate network round-trips (2 DB queries + 3
-    # settings reads + 1 hint health poll). Now: max(RTTs) instead of sum.
     _results = await asyncio.gather(
         daily_croc_repo.get_delivery_status(today),
         daily_croc_repo.get_puzzles_for_date(today),
@@ -363,14 +354,13 @@ async def _refresh_dailycroc_status_message(query, *, now: datetime | None = Non
 
 @admin_only
 async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     key_data = await get_available_gemini_key(settings.RESEARCH_MODEL)
     if not key_data:
         await update.message.reply_text("Нет доступных API ключей для выполнения запроса.")
         return
     await update.message.reply_text("Запрашиваю список моделей у Google API...")
     try:
-        from google import genai  # deferred — avoids heavy google-genai startup cost
+        from google import genai
 
         client = genai.Client(api_key=key_data["api_key"])
         attempt = start_workload_attempt(
@@ -389,11 +379,9 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             raise
         attempt.finish(outcome="succeeded", model_count=len(remote_models))
 
-        # google-genai SDK: Model has .name and .supported_actions (list of str)
         api_models = set()
         models_list = []
         for m in remote_models:
-            # Filter to models that support generateContent
             actions = getattr(m, "supported_actions", None) or []
             if actions and "generateContent" not in actions:
                 continue
@@ -401,15 +389,13 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             api_models.add(short_name)
             models_list.append(f"- `{short_name}`")
 
-        # Cross-reference with configured models
         configured = set(settings.AVAILABLE_MODELS)
         available = configured & api_models
         missing = configured - api_models
 
         header = f"✅ *Доступные модели ({len(models_list)}):*\n"
-        body = "\n".join(models_list[:50])  # Cap output
+        body = "\n".join(models_list[:50])
 
-        # Show config validation
         validation_parts = [
             "\n\n*🔍 Проверка конфигурации:*\n",
             f"✅ Доступны: `{', '.join(sorted(available)) or 'нет'}`\n",
@@ -465,7 +451,6 @@ async def _send_welcome_to_new_user(user_id: int, context: ContextTypes.DEFAULT_
 
 @admin_only
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for получения argumentов команды
     try:
         args = context.args
         if not args:
@@ -481,7 +466,6 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 @admin_only
 async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for получения argumentов команды
     try:
         args = context.args
         if not args:
@@ -499,14 +483,12 @@ async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 @admin_only
 async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     user_ids = await list_authorized_users()
     await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(str(uid) for uid in user_ids))
 
 
 async def unauthorized_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    # Check admin privileges directly (admin_only decorator is for messages, not callbacks)
     if update.effective_user.id != settings.ADMIN_ID:
         await query.answer("Только администратор может использовать эту кнопку", show_alert=True)
         return
@@ -517,7 +499,6 @@ async def unauthorized_add_callback(update: Update, context: ContextTypes.DEFAUL
         await invalidate_user_auth_cache(user_id)
         await query.answer(f"Пользователь {user_id} добавлен в белый список!")
 
-        # Remove buttons, append success message
         text = query.message.text_html if query.message else ""
         text += f"\n\n✅ <b>Пользователь {user_id} добавлен в whitelist!</b>"
         await query.edit_message_text(text, parse_mode="HTML")
@@ -533,7 +514,6 @@ async def unauthorized_dismiss_callback(update: Update, context: ContextTypes.DE
         return
 
     try:
-        # Just remove the buttons
         await query.edit_message_reply_markup(reply_markup=None)
         await query.answer("Алерт проигнорирован")
     except Exception:
@@ -542,12 +522,10 @@ async def unauthorized_dismiss_callback(update: Update, context: ContextTypes.DE
 
 @admin_only
 async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Показывает полную сводку метрик, статуса ключей и кредитов"""
     try:
         text = await menus.get_metrics_content()
 
-        # Используем TelegramFormatter for надежного форматирования
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
         keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_metrics")]]
@@ -570,7 +548,6 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 @admin_only
 async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Показывает статистику кэша"""
     try:
         stats = await get_cache_stats()
@@ -598,7 +575,6 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Показывает статистику очереди задач"""
     try:
         stats = await task_queue.get_queue_stats()
@@ -629,7 +605,6 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Очищает кэш"""
     try:
         from app.cache import clear_cache
@@ -643,10 +618,8 @@ async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Очищает старые метрики (старше 30 дней)"""
     try:
-        # Delete metrics старше 30 дней
         await clear_old_metrics()
 
         await update.message.reply_text("✅ Старые метрики очищены (старше 30 дней).")
@@ -657,12 +630,10 @@ async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAUL
 
 @admin_only
 async def update_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Команда для обновления ключей Tavily API"""
     try:
         await update.message.reply_text("🔄 Обновляю ключи Tavily API...")
 
-        # Принудительно обновляем keys
         success = await force_update_tavily_keys()
 
         if success:
@@ -682,19 +653,16 @@ async def update_tavily_keys_command(update: Update, context: ContextTypes.DEFAU
 
 @admin_only
 async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Команда для проверки статуса ключей Tavily API"""
     try:
         await update.message.reply_text("🔍 Проверяю статус ключей Tavily API...")
 
-        # Get текущие keys from базы данных
         keys_result = await get_all_tavily_keys()
 
         if not keys_result:
             await update.message.reply_text("❌ В базе данных нет ключей Tavily API")
             return
 
-        # Build отчет
         report_parts = [f"📋 Найдено {len(keys_result)} ключей Tavily API:\n\n"]
         from app.crypto import safe_decrypt
 
@@ -705,7 +673,6 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
                 f"🔑 *Ключ {i}:*\n   Хэш: `{key_hash[:16]}...`\n   API: `{api_key[:10]}...{api_key[-4:]}`\n\n"
             )
 
-        # Check использование
         current_month = time_utils.get_current_month_str()
         usage_result = await get_tavily_usage_for_month(current_month)
 
@@ -718,7 +685,6 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
         else:
             report_parts.append(f"📊 *Использование за {current_month}:*\n   Нет данных\n")
 
-        # Add информацию о limitах
         report_parts.append(
             "\n⚡ *Лимиты:*\n"
             f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n"
@@ -737,7 +703,6 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
 
 @authorized_only
 async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Регистрирует групповой чат"""
     user_id = update.effective_user.id
 
@@ -759,7 +724,6 @@ async def register_group_command(update: Update, context: ContextTypes.DEFAULT_T
 
 @authorized_only
 async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Показывает статистику группы"""
 
     chat = update.effective_chat
@@ -787,7 +751,6 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Показывает статистику документов"""
     try:
         from app.document_processor import document_processor
@@ -816,15 +779,12 @@ async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_T
 
 @admin_only
 async def clear_old_documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Очищает старые документы (старше 3 дней)"""
     try:
         from app.document_processor import document_processor
 
-        # Clean up documents старше 3 дней
         deleted_count = await document_processor.cleanup_old_documents(3)
 
-        # Get статистику after очистки
         stats = await document_processor.get_document_stats()
 
         text = (
@@ -847,14 +807,12 @@ async def clear_old_documents_command(update: Update, context: ContextTypes.DEFA
 
 @admin_only
 async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Показать метрики ролей и бесед"""
     try:
         metrics = await role_conv_metrics.get_metrics_summary()
 
         text_parts = ["📊 *Метрики ролей и бесед:*\n\n"]
 
-        # Метрики ролей
         text_parts.append(
             "*🎭 Роли:*\n"
             f"• Применений ролей: `{sum(metrics['roles']['applications'].values())}`\n"
@@ -863,7 +821,6 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
             f"• Сохранений ролей: `{metrics['roles']['saves']}`\n\n"
         )
 
-        # Популярные roles
         if metrics["roles"]["applications"]:
             text_parts.append("*🔥 Популярные роли:*\n")
             sorted_roles = sorted(
@@ -876,7 +833,6 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
                 text_parts.append(f"• {role_title}: `{count}`\n")
             text_parts.append("\n")
 
-        # Метрики бесед
         text_parts.append(
             "*💬 Беседы:*\n"
             f"• Сохранено: `{metrics['conversations']['saved']}`\n"
@@ -885,7 +841,6 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
             f"• Удалений: `{metrics['conversations']['deleted']}`\n\n"
         )
 
-        # Метрики суммаризации
         text_parts.append(
             "*📝 Суммаризация:*\n"
             f"• Срабатываний: `{metrics['summarization']['triggered']}`\n"
@@ -905,20 +860,16 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
 
 @admin_only
 async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Перезагружает конфигурацию из переменных окружения"""
     try:
         await update.message.reply_text("🔄 Перезагружаю конфигурацию...")
 
-        # Используем существующий ConfigManager
         from app.config import config_manager
 
         await config_manager.force_reload()
 
-        # Get обновленные settings
         new_settings = config_manager.settings
 
-        # Build отчет
         report_parts = [
             "✅ *Конфигурация перезагружена*\n\n",
             "🔑 *API ключи:*\n",
@@ -951,7 +902,6 @@ async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 @admin_only
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Показывает справку по админским командам"""
     try:
         logging.info("Admin command")
@@ -970,7 +920,6 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _check_single_gemini_key(client: httpx.AsyncClient, key_hash: str, api_key: str) -> str:
-    # A fast, lightweight check bypassing the SDK to avoid retry-loops.
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash?key={api_key}"
     attempt = start_workload_attempt(
         workload="provider_health_check",
@@ -1003,7 +952,6 @@ async def _check_single_gemini_key(client: httpx.AsyncClient, key_hash: str, api
 
 @admin_only
 async def check_gemini_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Секретная команда для асинхронной проверки всех ключей Gemini в БД."""
     try:
         msg = await update.message.reply_text("🔄 Запускаю прямую проверку ключей Gemini к Google API...")
@@ -1108,8 +1056,6 @@ async def set_inline_tabs_command(update: Update, context: ContextTypes.DEFAULT_
     )
 
 
-# ── Provider routing ───────────────────────────────────────────────────────────
-
 _VALID_PROVIDERS = frozenset({"opencode", "gemini", "freetheai"})
 _VALID_ON_OFF_VALUES = frozenset({"on", "off"})
 _VALID_DAILY_GAME_MODES = frozenset(
@@ -1152,8 +1098,6 @@ async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYP
     provider = args[0].lower()
     await set_global_setting("primary_provider", provider)
 
-    # Invalidate the in-process cache in config.py so the next request
-    # picks up the new value without needing a restart.
     from app.config import _invalidate_primary_provider_cache  # noqa: PLC0415
 
     _invalidate_primary_provider_cache()
@@ -1492,8 +1436,6 @@ async def set_game_cover_command(update: Update, context: ContextTypes.DEFAULT_T
     await _handle_set_game_cover(args[0], update, context)
 
 
-# ── /wordbank — Word Bank Management ──────────────────────────────────────────
-
 import hashlib as _hashlib
 
 
@@ -1502,14 +1444,13 @@ def _wb_cat_key(category: str) -> str:
     return _hashlib.md5(category.encode()).hexdigest()[:8]  # noqa: S324
 
 
-# Build category key ↔ name mapping at module level (done once on import).
 def _build_wb_cat_map() -> dict:
     from app.games.word_bank import WORD_BANK
 
     return {_wb_cat_key(cat): cat for cat in (WORD_BANK.get("ru") or {})}
 
 
-_WB_CAT_MAP: dict[str, str] = {}  # populated lazily on first use
+_WB_CAT_MAP: dict[str, str] = {}
 
 
 def _get_wb_cat_map() -> dict:
@@ -1519,7 +1460,7 @@ def _get_wb_cat_map() -> dict:
     return _WB_CAT_MAP
 
 
-_WB_PAGE_SIZE = 8  # categories per page
+_WB_PAGE_SIZE = 8
 
 
 async def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMarkup:
@@ -1682,7 +1623,7 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if result is None:
                 raise ValueError("LLM generation failed or timed out.")
             added = len(result)
-            skipped = "Неизвестно"  # duplicates filtered internally
+            skipped = "Неизвестно"
             text = (
                 f"✅ Сгенерированы слова для <b>{cat_name}</b>\n"
                 f"Добавлено: <b>{added}</b> | Дублей отброшено: <b>{skipped}</b>"
@@ -1712,7 +1653,6 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
             return
 
-        # Show first 10 in message, full list as file
         preview_lines = []
         for d in dupes[:10]:
             cats_str = " + ".join(d["categories"])

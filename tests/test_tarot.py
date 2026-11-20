@@ -42,7 +42,6 @@ def test_get_tarot_context_classic():
 
 
 def test_get_tarot_context_legacy_int():
-    # Backward compatibility with integers
     context, names = get_tarot_context(3)
     assert len(names) == 3
     assert "Позиция «Прошлое»" in context
@@ -68,8 +67,6 @@ def test_get_fortune_cookie():
     assert len(name) > 0
 
 
-# These will test functions from app.handlers.inline which are NOT yet implemented or imported in test.
-# They should fail or raise ImportError/AttributeError until we apply the patch, verifying the RED phase.
 def test_build_fortune_cookie_html():
     from app.handlers.inline import _build_fortune_cookie_html
 

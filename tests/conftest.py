@@ -41,12 +41,6 @@ if _original_database_url:
 os.environ.update(_SAFE_TEST_ENV)
 
 
-# ---------------------------------------------------------------------------
-# Runtime decontamination: repair stale MagicMock bindings between modules
-# ---------------------------------------------------------------------------
-
-# Capture the ONE TRUE settings object right after .env is loaded —
-# before any test can mutate os.environ or replace app.config.settings.
 try:
     from app.config import settings as _canonical_settings
 except Exception:
@@ -66,7 +60,6 @@ def _propagate_real_settings():
 
     repaired = []
 
-    # Also restore app.config.settings itself if it drifted
     config_mod = sys.modules.get("app.config")
     if config_mod is not None and not isinstance(config_mod, MagicMock):
         current = getattr(config_mod, "settings", None)
@@ -82,7 +75,7 @@ def _propagate_real_settings():
             continue
         current_settings = getattr(mod, "settings", _SENTINEL)
         if current_settings is _SENTINEL:
-            continue  # module doesn't have a 'settings' attribute
+            continue
         if current_settings is not _canonical_settings:
             setattr(mod, "settings", _canonical_settings)
             repaired.append(mod_name)

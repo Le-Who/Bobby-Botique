@@ -29,8 +29,6 @@ async def transaction(conn=None):
         primary_error: BaseException | None = None
         try:
             async with db.db_manager.pool.acquire(timeout=10) as acquired:
-                # asyncpg detaches the pool proxy as soon as its socket closes.
-                # Keep the native connection and lease generation before awaits.
                 native = getattr(acquired, "_con", acquired)
                 release_counter = getattr(native, "_pool_release_ctr", None)
                 try:
@@ -65,8 +63,6 @@ async def transaction(conn=None):
             if isinstance(error, asyncio.CancelledError):
                 raise
             failure = primary_error if primary_error is not None else error
-            # A lost BEGIN/context setup is safe to retry on a new lease. Once
-            # the caller starts work, even a failed COMMIT may have taken effect.
             if not isinstance(failure, TRANSIENT_DATABASE_ERRORS) or body_entered or attempt == 2:
                 if failure is error:
                     raise
@@ -92,7 +88,6 @@ def subscription_fingerprint(row, variant):
 
 
 async def candidates(channel: str, user_ids: tuple[int, ...], *, mode: str, force: bool = False, variant=""):
-    # No username, birth data, message body or provider output crosses this seam.
     async with transaction() as conn:
         rows = await conn.fetch(
             """SELECT u.user_id,c.memory_epoch,c.private_data_blocked,
@@ -227,8 +222,6 @@ async def create_batch(
             return {**dict(existing), "_created": False}
         if await conn.fetchval("SELECT COUNT(*) FROM public.broadcast_batches WHERE state<>'finished'") >= 10:
             return None
-        # One failed recipient grants one child, even if two tabs use different
-        # operation IDs. An unknown child cannot be bypassed through its parent.
         if parent_batch_id:
             consumed = 0
             for recipient in recipients:
@@ -288,8 +281,6 @@ async def create_batch(
                     recipient["recipient_id"],
                     schedule_key,
                 )
-            # Epoch remains the captured original even if erasure/recreation raced
-            # this insert. The live lease/checkpoint will reject that old epoch.
             inserted = await conn.fetchval(
                 """INSERT INTO public.broadcast_recipients(batch_id,recipient_id,channel,privacy_epoch,schedule_key,subscription_fingerprint,delivery_claimed_at,slot_date)
                    SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE EXISTS(SELECT 1 FROM public.users WHERE user_id=$2)
@@ -543,8 +534,6 @@ async def observed_counts(channel, *, day=None, mode="delivery"):
 
 async def purge_retained_recipients():
     async with transaction() as conn:
-        # At most 1000 rows per maintenance call; attempts cascade with snapshots.
-        # A fixed statement cutoff lets the existing created_at index bound the scan.
         return await conn.execute("""DELETE FROM public.broadcast_recipients WHERE (batch_id,recipient_id,channel) IN
             (SELECT batch_id,recipient_id,channel FROM public.broadcast_recipients
              WHERE created_at<statement_timestamp()-INTERVAL '30 days' ORDER BY created_at LIMIT 1000)""")

@@ -34,7 +34,6 @@ async def test_tts_attempt_finishes_sdk_cleanup(monkeypatch, cancel_parent):
             started.set()
             await asyncio.Event().wait()
         finally:
-            # Cleanup completes asynchronously; merely calling cancel is insufficient.
             await asyncio.sleep(0)
             stopped.set()
 

@@ -2,14 +2,11 @@
 import os
 import sys
 
-# Force unbuffered output for container log visibility
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
-# Configure the logging pipeline before importing application configuration or
-# integrations that can emit startup diagnostics.
 from app.utils.logging_config import (
     install_asyncio_exception_handler,
     setup_detailed_logging,
@@ -19,7 +16,6 @@ from app.utils.logging_config import (
 if __name__ == "__main__":
     setup_detailed_logging()
 
-# Install uvloop on Linux/Docker for 2-4× event loop throughput
 if sys.platform != "win32":
     try:
         import uvloop
@@ -98,10 +94,8 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
                 fields={"original_error_id": error_id},
             )
 
-    # Send message to user if possible
     if isinstance(update, Update) and update.effective_message:
         try:
-            # Avoid infinite loops if error happens during sending error message
             text = strip_error_tag(user_friendly_error(error if isinstance(error, Exception) else str(error)))
             await update.effective_message.reply_text(text)
         except Exception as notification_error:
@@ -118,8 +112,6 @@ from hypercorn.asyncio import serve
 from hypercorn.config import Config as HypercornConfig
 
 from app import database
-
-# Import custom modules
 from app.config import settings
 from app.group_chat import initialize_group_chats
 from app.handlers import callbacks, commands, messages
@@ -128,13 +120,10 @@ from app.metrics import metrics_collector
 from app.queue import start_task_queue, stop_task_queue
 from app.update_processor import UserScopedUpdateProcessor
 from app.update_queue import OutstandingUpdateQueue
-
-# Import extracted modules
 from app.web import quart_app
 from app.webhook_admission import AdmissionClosed, WebhookAdmissionGate, _await_owned
 from app.webhook_security import webhook_secret_matches as _webhook_secret_matches
 
-# Global shutdown event
 shutdown_event = asyncio.Event()
 
 
@@ -148,18 +137,14 @@ def signal_handler(signum, _frame):
     """Обработчик сигналов для корректного завершения"""
     logging.info(f"Received signal {signum}, initiating graceful shutdown...")
 
-    # Устанавливаем флаг завершения
     shutdown_event.set()
 
-    # Для Render важно правильно обработать SIGTERM
     if signum == signal.SIGTERM:
         logging.info("SIGTERM received - Render is shutting down the service")
 
-        # Даем 30 секунд на graceful shutdown
         def force_shutdown():
             time.sleep(30)
             logging.warning("Force shutdown after timeout")
-            # Lock release removed
             sys.exit(1)
 
         force_thread = threading.Thread(target=force_shutdown, daemon=True)
@@ -180,29 +165,24 @@ async def basic_monitoring():
     """Базовый мониторинг работы бота"""
     logging.info("Monitoring task started - will run continuously until shutdown")
 
-    # Счетчик для периодических проверок
     check_counter = 0
 
     while not shutdown_event.is_set():
         try:
-            await asyncio.sleep(300)  # Каждые 5 минут
+            await asyncio.sleep(300)
             if shutdown_event.is_set():
                 break
 
             check_counter += 1
 
-            # Простая проверка базы данных
             if await database.check_database_health():
                 logging.info("Database connection: OK")
             else:
                 logging.warning("Database unavailable")
-                # Attempt reconnect
                 await database.ensure_database_connection()
 
-            # Каждые 12 проверок (1 час) выполняем расширенную диагностику
             if check_counter % 12 == 0:
                 try:
-                    # Проверяем метрики только если база данных доступна
                     if await database.check_database_health():
                         from app.queue import task_queue
 
@@ -219,7 +199,6 @@ async def basic_monitoring():
                 except Exception as e:
                     logging.warning(f"Extended monitoring failed: {e}")
 
-            # Логируем статус бота
             logging.info("Bot monitoring: All systems operational")
 
         except Exception as e:
@@ -237,9 +216,6 @@ async def _cleanup_application(
         return
     if webhook_admission is not None:
         webhook_admission.close()
-        # Error cleanup can itself be cancelled before reaching the PTB-stop
-        # barrier. Keep its full resource sequence owned independently of the
-        # shared stop task, which may already have a terminal result.
         child = asyncio.create_task(
             _cleanup_application_resources(application, reason, webhook_admission=webhook_admission),
             name="webhook-application-cleanup",
@@ -280,15 +256,13 @@ async def _cleanup_application_resources(
     except Exception as cleanup_error:
         logging.warning("Cleanup error (voice queue): %s", cleanup_error)
 
-    # Send shutdown alert to admin
     try:
         from app.admin_alerts import alert_admin_shutdown
 
         await alert_admin_shutdown(application, reason=reason)
     except Exception:
-        pass  # Best-effort
+        pass
 
-    # ── Stop task queue (let running tasks finish) ────────────────────────
     try:
         await asyncio.wait_for(stop_task_queue(), timeout=10.0)
     except TimeoutError:
@@ -318,7 +292,6 @@ async def _cleanup_application_resources(
     await _drain_request_tasks()
     await _flush_request_persistence()
 
-    # Close module-level HTTP clients
     try:
         from app.providers import close_http_clients
 
@@ -403,7 +376,6 @@ async def run_bot_with_retry():
             .concurrent_updates(UserScopedUpdateProcessor(50))
         )
 
-        # Inject Local Bot API Server if configured
         local_server_url = settings.TELEGRAM_LOCAL_SERVER_URL
         if local_server_url:
             custom_request = HTTPXRequest(
@@ -413,9 +385,6 @@ async def run_bot_with_retry():
                 write_timeout=60.0,
                 pool_timeout=60.0,
             )
-            # base_url  → API calls:   http://tg-api:8081/bot{token}/sendMessage
-            # base_file_url → file DL: http://tg-api:8081/file/bot{token}/path
-            # Derive base_file_url from base_url: /bot → /file/bot
             file_url = local_server_url.replace("/bot", "/file/bot", 1)
             builder = (
                 Application.builder()
@@ -437,7 +406,6 @@ async def run_bot_with_retry():
         if isinstance(application.update_queue, OutstandingUpdateQueue):
             register_ingress(application.update_queue.metrics_snapshot)
 
-        # Register bot singleton for non-PTB code (e.g. WS game handler)
         from app.bot_instance import register_bot
 
         register_bot(application.bot, application=application)
@@ -446,17 +414,14 @@ async def run_bot_with_retry():
         callbacks.register(application)
         messages.register(application)
 
-        # Memory management commands (/memory, inline delete callbacks)
         from app.handlers import memory_commands
 
         memory_commands.register(application)
 
-        # Native reaction feedback (replaces inline 👍/👎 buttons as ambient signal)
         from app.handlers.msg_reactions import register as register_reactions
 
         register_reactions(application)
 
-        # Inline mode — cross-chat bot interaction via @mention
         from telegram.ext import ChosenInlineResultHandler, InlineQueryHandler
 
         from app.handlers.inline import (
@@ -475,19 +440,14 @@ async def run_bot_with_retry():
 
         install_command_aliases(application)
 
-        # Register global error handler
         application.add_error_handler(global_error_handler)
 
         await application.initialize()
 
-        # Keep Telegram's slash-command menu synchronized with the same
-        # localized catalog that powers /help. A transient Bot API failure is
-        # logged inside the installer and must not prevent the bot from starting.
         from app.bot_commands import install_public_command_menu
 
         await install_public_command_menu(application.bot)
 
-        # Register TaskManager error callback for critical background alerts
         from app.admin_alerts import AlertSeverity, alert_admin
         from app.utils.background_tasks import get_task_manager
 
@@ -501,7 +461,6 @@ async def run_bot_with_retry():
 
         get_task_manager().register_error_callback(_bg_task_alert)
 
-        # Restore admin-managed model lists from DB (zero-downtime model mgmt)
         try:
             from app.repos.models_repo import sync_models_from_db
 
@@ -511,23 +470,18 @@ async def run_bot_with_retry():
 
         await application.start()
 
-        # Choose polling or webhook based on WEBHOOK_URL
         webhook_url = os.environ.get("WEBHOOK_URL", "").strip()
 
-        # Explicit allowed_updates whitelist — only subscribe to what we handle.
-        # Using Update.ALL_TYPES is wasteful (delivers business_connection, polls, etc.
-        # that we have no handlers for) and can cause rare fallthrough crashes.
         _ALLOWED_UPDATES = [
-            "message",  # New text/photo/voice/document
-            "edited_message",  # User corrected a message → in-place edit UX
-            "callback_query",  # Inline keyboard button presses
-            "inline_query",  # Inline mode — @mention in other chats
-            "chosen_inline_result",  # Required for in-place inline message editing
-            "message_reaction",  # Native 👍/👎 reactions → ambient feedback
+            "message",
+            "edited_message",
+            "callback_query",
+            "inline_query",
+            "chosen_inline_result",
+            "message_reaction",
         ]
 
         if webhook_url:
-            # ── Webhook mode ─────────────────────────────────────────────
             webhook_path = _telegram_webhook_path(settings.TELEGRAM_BOT_TOKEN)
             full_url = f"{webhook_url.rstrip('/')}{webhook_path}"
             webhook_secret = (settings.WEBHOOK_SECRET_TOKEN or "").strip()
@@ -556,7 +510,6 @@ async def run_bot_with_retry():
                     cloud_release.pending_update_count,
                 )
 
-            # Register webhook route on Quart app
             @quart_app.route(webhook_path, methods=["POST"])
             async def webhook_handler():
                 from quart import request as quart_request
@@ -578,10 +531,6 @@ async def run_bot_with_retry():
                     return "Bad Request: invalid update payload", 400
 
                 async def admit_update():
-                    # Capacity, claims, origin and queue handoff share one owner.
-                    # The gate keeps this operation alive across request cancellation.
-                    # Webhook mode has no polling producer: while dedupe awaits,
-                    # only completions can change outstanding capacity, freeing it.
                     if application.update_queue.full():
                         logging.warning("Webhook update_queue is full; returning 503 for retry")
                         return "Service Unavailable", 503
@@ -605,7 +554,6 @@ async def run_bot_with_retry():
                         if claim is None:
                             return "", 200
 
-                    # PTB owns processing concurrency; ingress only enqueues.
                     if isinstance(update_id, int):
                         from app.observability.ingress import webhook_origins
 
@@ -646,7 +594,6 @@ async def run_bot_with_retry():
             )
             logging.info("Bot started in WEBHOOK mode")
         else:
-            # ── Long-polling mode ────────────────────────────────────────
             await application.updater.start_polling(
                 allowed_updates=_ALLOWED_UPDATES,
                 drop_pending_updates=True,
@@ -656,36 +603,32 @@ async def run_bot_with_retry():
 
         bot_lifecycle.set("ready")
 
-        # Send startup alert to admin
         try:
             from app.admin_alerts import alert_admin_startup
 
             await alert_admin_startup(application)
         except Exception:
-            pass  # Non-critical
+            pass
 
-        # Schedule hourly briefs checker
         try:
             from app.handlers.scheduled_briefs import check_and_send_briefs
 
             if application.job_queue:
                 application.job_queue.run_repeating(
                     check_and_send_briefs,
-                    interval=3600,  # Every hour
-                    first=60,  # First run 60s after boot
+                    interval=3600,
+                    first=60,
                     name="briefs_scheduler",
                 )
                 logging.info("Scheduled briefs hourly job registered")
         except Exception as e:
             logging.warning("Failed to register briefs scheduler: %s", e)
 
-        # Expired records are excluded at read time; this job also reclaims them
-        # physically and lets database cascades remove graph provenance.
         try:
             if application.job_queue:
                 application.job_queue.run_repeating(
                     cleanup_ltm_job,
-                    interval=21600,  # Every six hours
+                    interval=21600,
                     first=180,
                     name="ltm_retention_cleanup",
                 )
@@ -703,7 +646,6 @@ async def run_bot_with_retry():
                 reconcile_broadcast_journal, interval=60, first=60, name="broadcast_journal_recovery"
             )
 
-        # Schedule Daily Crocodile prompt/discovery delivery (hourly)
         try:
             from app.handlers.daily_crocodile import check_daily_crocodile_jobs
 
@@ -718,7 +660,6 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register Daily Crocodile scheduler: %s", e)
 
-        # Schedule prepared inline Tarot card-of-day generation (hourly gate, PT evening only)
         try:
             from app.handlers.tarot_daily import check_tarot_daily_jobs
 
@@ -747,46 +688,41 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register Tarot daily delivery job: %s", e)
 
-        # Schedule reminder delivery poll (every 60 seconds)
         try:
             from app.handlers.cmd_reminders import check_and_deliver_reminders
 
             if application.job_queue:
                 application.job_queue.run_repeating(
                     check_and_deliver_reminders,
-                    interval=60,  # Every 60 seconds
-                    first=30,  # First run 30s after boot
+                    interval=60,
+                    first=30,
                     name="reminder_delivery",
                 )
                 logging.info("Reminder delivery job registered (60s interval)")
         except Exception as e:
             logging.warning("Failed to register reminder delivery job: %s", e)
 
-        # Schedule horoscope delivery poll (every 60 seconds, checks exact HH:MM match)
         try:
             from app.handlers.scheduled_horoscopes import check_and_send_horoscopes
 
             if application.job_queue:
                 application.job_queue.run_repeating(
                     check_and_send_horoscopes,
-                    interval=60,  # Every minute — matches HH:MM granularity
-                    first=45,  # First run 45s after boot (offset from reminder job)
+                    interval=60,
+                    first=45,
                     name="horoscope_delivery",
                 )
                 logging.info("Horoscope delivery job registered (60s interval)")
         except Exception as e:
             logging.warning("Failed to register horoscope delivery job: %s", e)
 
-        # Wait for shutdown event
         try:
             await shutdown_event.wait()
         except asyncio.CancelledError:
             logging.info("Bot run task received CancelledError (shutdown initiated).")
-            # Don't re-raise here; let the finally block perform cleanup.
         finally:
             logging.info("Stopping bot...")
             bot_lifecycle.set("draining")
-            # We shield the shutdown calls to ensure they run even if the cancellation propagates
             if webhook_url:
                 logging.info("Webhook mode shutdown: preserving Telegram webhook for zero-downtime deploy.")
                 await webhook_admission.shutdown(application.stop)
@@ -803,8 +739,6 @@ async def run_bot_with_retry():
     except asyncio.CancelledError as cancellation:
         bot_lifecycle.set("draining")
         if application and webhook_admission is not None:
-            # Startup can be cancelled after route registration. Own the existing
-            # cleanup behind the admission barrier and retain the original reason.
             try:
                 await webhook_admission.shutdown(lambda: _cleanup_application(application))
             except asyncio.CancelledError as later_cancellation:
@@ -818,7 +752,6 @@ async def run_bot_with_retry():
         bot_lifecycle.set("failed")
         if application:
             await _cleanup_application(application, webhook_admission=webhook_admission)
-        # Propagate to trigger restart if needed, or exit
         raise e
 
 
@@ -959,8 +892,6 @@ async def run_bot_and_server():
 
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
-        # PTB/HTTP cleanup can submit final writes. Once those producers have
-        # stopped, their accepted jobs must finish before transport teardown.
         try:
             await asyncio.wait_for(stop_task_queue(), timeout=10.0)
         except Exception as error:
@@ -975,8 +906,6 @@ async def run_bot_and_server():
         except Exception as e:
             logging.error("Error closing provider clients: %s", e)
 
-        # Resource cleanup (task queue, metrics, DB) is handled by main()'s
-        # finally-block to avoid double-free.
         logging.info("Async tasks cancelled; returning to main() for resource cleanup.")
 
 
@@ -1007,7 +936,6 @@ async def startup_health_check():
     """Проверяет здоровье всех критических систем при запуске"""
     logging.info("Performing startup health check...")
 
-    # Run DB connection and Telegram API check in parallel
     db_ok = False
     telegram_ok = False
 
@@ -1026,10 +954,6 @@ async def startup_health_check():
         try:
             import httpx
 
-            # When a local Bot API server is configured the token is logged out
-            # from the cloud, so api.telegram.org/getMe returns 400.  Hit the
-            # local server instead.  Its base_url is like "http://tg-api:8081/bot"
-            # so we append "{token}/getMe" to form the full URL.
             local_server = settings.TELEGRAM_LOCAL_SERVER_URL or ""
             if local_server:
                 get_me_url = f"{local_server.rstrip('/')}{settings.TELEGRAM_BOT_TOKEN}/getMe"
@@ -1068,7 +992,6 @@ async def startup_health_check():
 
 
 async def main():
-    # Quart is ASGI-native; no event loop injection needed.
     from app.dashboard_sources import bot_lifecycle
 
     bot_lifecycle.set("starting")
@@ -1089,7 +1012,6 @@ async def main():
 
             await refresh_runtime_settings(force=True)
 
-            # Register config→DB watcher for model migration (AR-4)
             from app.config import config_manager
             from app.repos.chats import model_migration_watcher
 
@@ -1105,7 +1027,6 @@ async def main():
             memory_manager.start()
             logging.info("Memory manager initialized")
 
-            # Register image cache clearing as a memory-pressure callback
             from app.utils.image_utils import clear_image_cache
 
             memory_manager.add_cleanup_callback(clear_image_cache)
@@ -1137,14 +1058,12 @@ async def main():
         except Exception as e:
             logging.warning(f"Startup health check failed: {e}")
 
-        # Register signal handlers for graceful shutdown on Linux/Docker
         if sys.platform != "win32":
             try:
                 loop = asyncio.get_running_loop()
                 for sig in (signal.SIGINT, signal.SIGTERM):
                     loop.add_signal_handler(sig, lambda: shutdown_event.set())
             except NotImplementedError:
-                # Windows implementation of asyncio loop doesn't support add_signal_handler
                 logging.warning("Signal handlers not supported on this platform")
 
         logging.info("Starting main application loop...")
@@ -1185,7 +1104,6 @@ async def main():
             retries=3,
             base_delay=0.5,
         )
-        # Shut down image process pool (no async needed)
         try:
             from app.utils.image_utils import shutdown_image_pool
 
@@ -1200,7 +1118,6 @@ if __name__ == "__main__":
     container_id = os.environ.get("HOSTNAME", "unknown")
     logging.info("Starting bot... (container=%s, pid=%s)", container_id, os.getpid())
 
-    # Install uvloop for 2-4× event loop throughput (Linux/Docker only)
     if sys.platform != "win32":
         try:
             import uvloop

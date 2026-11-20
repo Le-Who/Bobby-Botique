@@ -29,7 +29,6 @@ from app.web_reader import read_url
 
 logger = logging.getLogger(__name__)
 
-# ── URL normalization for deduplication ──────────────────────────────────────
 _TRACKING_PARAMS = frozenset(
     {
         "utm_source",
@@ -66,7 +65,6 @@ def _normalize_url(url: str) -> str:
         hostname = (parsed.hostname or "").lower()
         if hostname.startswith("www."):
             hostname = hostname[4:]
-        # Parse and filter query params
         params = parse_qs(parsed.query, keep_blank_values=True)
         filtered = {k: sorted(v) for k, v in params.items() if k.lower() not in _TRACKING_PARAMS}
         canon_query = urlencode(filtered, doseq=True)
@@ -77,10 +75,9 @@ def _normalize_url(url: str) -> str:
         return url
 
 
-# ── Improvement 2: Page content cache (multi-layer) ──────────────────────────
 _page_cache: dict[str, str] = {}
 _page_cache_times: dict[str, float] = {}
-_PAGE_CACHE_TTL = 1800  # 30 minutes
+_PAGE_CACHE_TTL = 1800
 
 
 def _get_cached_page(url: str) -> str | None:
@@ -89,7 +86,6 @@ def _get_cached_page(url: str) -> str | None:
     ts = _page_cache_times.get(key)
     if ts is not None and (time.monotonic() - ts) < _PAGE_CACHE_TTL:
         return _page_cache.get(key)
-    # Expired or missing — evict if present
     _page_cache.pop(key, None)
     _page_cache_times.pop(key, None)
     return None
@@ -98,9 +94,7 @@ def _get_cached_page(url: str) -> str | None:
 def _set_cached_page(url: str, content: str) -> None:
     """Cache page content with monotonic timestamp."""
     key = hashlib.sha256(url.encode()).hexdigest()
-    # Enforce global maxsize=500 to prevent unbounded growth
     if len(_page_cache) >= 500 and key not in _page_cache:
-        # Evict oldest entry
         oldest_key = min(_page_cache_times, key=_page_cache_times.get)  # type: ignore[arg-type]
         _page_cache.pop(oldest_key, None)
         _page_cache_times.pop(oldest_key, None)
@@ -108,10 +102,7 @@ def _set_cached_page(url: str, content: str) -> None:
     _page_cache_times[key] = time.monotonic()
 
 
-# ── Improvement 3: Source quality scoring ────────────────────────────────────
-# Domain classification for search result enrichment
 _DOMAIN_TIERS: dict[str, str] = {
-    # Tier A: Official / Academic
     "github.com": "code_repository",
     "stackoverflow.com": "developer_qa",
     "arxiv.org": "academic",
@@ -127,7 +118,6 @@ _DOMAIN_TIERS: dict[str, str] = {
     "wikipedia.org": "encyclopedia",
     "en.wikipedia.org": "encyclopedia",
     "ru.wikipedia.org": "encyclopedia",
-    # Tier B: Trusted community
     "reddit.com": "community",
     "habr.com": "community",
     "medium.com": "blog_platform",
@@ -135,7 +125,6 @@ _DOMAIN_TIERS: dict[str, str] = {
     "news.ycombinator.com": "community",
 }
 
-# Trusted domain prefixes (matched with startswith)
 _TRUSTED_PREFIXES = ("docs.", "documentation.", "wiki.", "api.")
 
 
@@ -151,17 +140,14 @@ def _classify_domain(url: str) -> tuple[str, str]:
     except Exception:
         return ("unknown", "C")
 
-    # Strip www. prefix
     if hostname.startswith("www."):
         hostname = hostname[4:]
 
-    # Exact match
     if hostname in _DOMAIN_TIERS:
         dtype = _DOMAIN_TIERS[hostname]
         tier = "A" if dtype in ("official_docs", "academic", "code_repository", "developer_qa", "encyclopedia") else "B"
         return (dtype, tier)
 
-    # Check parent domain (e.g. "old.reddit.com" → "reddit.com")
     parts = hostname.split(".")
     if len(parts) > 2:
         parent = ".".join(parts[-2:])
@@ -174,7 +160,6 @@ def _classify_domain(url: str) -> tuple[str, str]:
             )
             return (dtype, tier)
 
-    # Trusted prefix heuristic (docs.*, readthedocs.io, etc.)
     if any(hostname.startswith(p) for p in _TRUSTED_PREFIXES):
         return ("official_docs", "A")
     if "readthedocs" in hostname:
@@ -190,7 +175,6 @@ def _classify_freshness(published_date: str) -> str:
     try:
         from datetime import UTC, datetime
 
-        # Tavily returns ISO 8601 dates
         dt = datetime.fromisoformat(published_date.replace("Z", "+00:00"))
         now = datetime.now(UTC)
         delta = now - dt
@@ -216,7 +200,6 @@ def _enrich_search_results(results: list[dict]) -> list[dict]:
     return results
 
 
-# ── Improvement 4: Query deduplication ───────────────────────────────────────
 def _jaccard_similarity(a: str, b: str) -> float:
     """Word-level Jaccard similarity between two strings."""
     set_a = set(a.lower().split())
@@ -246,7 +229,6 @@ def _find_duplicate_queries(
     return duplicates
 
 
-# ── Improvement 5: Citation validation ───────────────────────────────────────
 import re
 
 _URL_PATTERN = re.compile(r"\[([^\]]*)\]\((https?://[^\)]+)\)")
@@ -260,7 +242,6 @@ def _validate_citations(answer: str, known_urls: set[str]) -> list[str]:
     cited_urls = {m.group(2) for m in _URL_PATTERN.finditer(answer)}
     unknown = []
     for url in cited_urls:
-        # Normalize: strip trailing slash and fragment
         normalized = url.rstrip("/").split("#")[0]
         if not any(normalized.startswith(k.rstrip("/").split("#")[0]) for k in known_urls):
             unknown.append(url)
@@ -303,13 +284,11 @@ class AgenticSearch:
     ):
         self.model_name = model_name
         self.api_key = api_key
-        # Reuse cached genai.Client to avoid per-request TLS/TCP setup
         self.client = get_cached_genai_client(api_key)
         self.max_iterations = int(settings.AGENTIC_MAX_ITERATIONS)
         self.max_pages = int(settings.AGENTIC_MAX_PAGES)
         self.max_tokens = int(settings.AGENTIC_MAX_TOKENS)
         self.timeout_seconds = float(settings.AGENTIC_TIMEOUT_SECONDS)
-        # Agentic RAG: when LTM is enabled, the agent can call recall_memory
         self._ltm_enabled = ltm_enabled
         self._ltm_api_key = ltm_api_key
         self._ltm_expected_epoch = ltm_expected_epoch
@@ -373,7 +352,6 @@ class AgenticSearch:
             ),
         ]
 
-        # Agentic RAG: add recall_memory tool when LTM is enabled
         if self._ltm_enabled:
             from app.repos.memory_tools import get_memory_tool_declaration
 
@@ -441,9 +419,7 @@ class AgenticSearch:
                     input_chars=sum(len(query) for query in queries if isinstance(query, str)),
                 )
                 results = await parallel_search(queries, user_id=user_id, chat_id=chat_id, max_results=10)
-                # Improvement 3: Enrich search results with quality metadata
                 results = _enrich_search_results(results)
-                # Deduplicate results by normalized URL
                 if seen_urls is not None:
                     unique_results = []
                     for r in results:
@@ -484,7 +460,6 @@ class AgenticSearch:
                     source_host=source_host,
                 )
 
-                # Improvement 2: Check session-level cache first, then global cache
                 if session_page_cache is not None and url in session_page_cache:
                     emit(
                         "cache.lookup_finished",
@@ -510,7 +485,6 @@ class AgenticSearch:
 
                 content = await read_url(url, timeout=12.0)
 
-                # Truncate content to limit token usage
                 limit = int(settings.AGENTIC_PAGE_CONTENT_LIMIT)
                 if len(content) > limit:
                     content = content[:limit] + f"\n\n[...truncated at {limit} chars. Full content at {url}]"
@@ -523,7 +497,6 @@ class AgenticSearch:
                         output_chars=limit,
                     )
 
-                # Cache the result at both levels
                 _set_cached_page(url, content)
                 if session_page_cache is not None:
                     session_page_cache[url] = content
@@ -531,11 +504,9 @@ class AgenticSearch:
                 return complete({"content": content})
 
             elif name == "conclude_research":
-                # We handle conclude differently in the main loop, but just in case
                 return complete({"status": "concluded"})
 
             elif name == "recall_memory":
-                # Agentic RAG: search user's long-term memory
                 safe_args = args if isinstance(args, dict) else {}
                 query = safe_args.get("query", "")
                 if not query:
@@ -664,7 +635,6 @@ class AgenticSearch:
         except Exception as error:
             if dispatched:
                 budget.record_usage(None)
-            # An SDK TimeoutError alone does not exhaust the request budget.
             if isinstance(error, TimeoutError) and timeout.expired():
                 budget.reason = "deadline"
             if attempt is not None:
@@ -703,28 +673,20 @@ class AgenticSearch:
         Returns:
             AgenticResult with the final answer, total tokens, and LLM call count.
         """
-        await on_status(STAGES_AGENTIC_RESEARCH[0][1])  # "Планирую исследование..."
-        # 1. Prepare configuration and context
+        await on_status(STAGES_AGENTIC_RESEARCH[0][1])
         contents: list[Any] = []
         concluding_answer: str | None = None
         total_tokens = 0
         llm_calls = 0
 
-        # Improvement 2: Per-session URL→content cache
         session_page_cache: dict[str, str] = {}
-        # Improvement 3: Track all URLs seen (for citation validation + dedup)
         seen_urls: set[str] = set()
-        # Improvement 4: Track all previous search queries (for dedup)
         previous_queries: list[str] = []
-        # Improvement 4: Wall-clock start time
         start_time = budget.started_at
-        # Track deduplicated pages across the session
         pages_deduplicated = 0
 
         try:
-            # Inject conversation history so the agent has context from prior turns
             if history:
-                # Take only the last 10 entries to avoid token overflow
                 for entry in history[-10:]:
                     role = entry.get("role", "user")
                     parts_data = entry.get("parts", [])
@@ -750,13 +712,11 @@ class AgenticSearch:
             if tc:
                 config.thinking_config = tc
 
-            # 2. Main reasoning loop
             pages_read = 0
             iterations = 0
             while iterations < self.max_iterations:
                 iterations += 1
 
-                # Improvement 4: Time cutoff — check BEFORE starting the LLM call
                 elapsed = time.monotonic() - start_time
                 try:
                     budget.check_iteration()
@@ -774,13 +734,11 @@ class AgenticSearch:
                 )
 
                 try:
-                    # Model thinks and decides (requires tools)
                     response = await self._generate_budgeted(
                         contents=contents,
                         config=config,
                         budget=budget,
                     )
-                    # Track usage: +1 API call, accumulate tokens
                     llm_calls += 1
                     response_tokens = self._extract_token_count(response)
                     total_tokens += response_tokens
@@ -804,14 +762,12 @@ class AgenticSearch:
                     logger.warning("Agent returned empty message content")
                     break
 
-                # Append model's response to history
                 contents.append(message_content)
 
                 parts = message_content.parts or []
                 fc_parts = [p for p in parts if p.function_call]
 
                 if fc_parts:
-                    # ── Phase 1: Parse all calls, extract args, check conclude ──
                     parsed_calls: list[tuple[str, dict, types.FunctionCall]] = []
                     for part in fc_parts:
                         call = part.function_call
@@ -825,7 +781,6 @@ class AgenticSearch:
                             call_args = {}
                         call_name = str(call.name) if call.name else "unknown"
 
-                        # Short-circuit on conclude
                         if call_name == "conclude_research":
                             logger.info("Agent decided to conclude research.")
                             concluding_answer = str(
@@ -841,7 +796,6 @@ class AgenticSearch:
                         logger.info("Agent concluded research successfully.")
                         await on_status(STAGES_AGENTIC_RESEARCH[4][1])
 
-                        # Improvement 3: Citation validation (log-only)
                         unknown_citations = _validate_citations(concluding_answer, seen_urls)
                         if unknown_citations:
                             logger.info(
@@ -857,8 +811,6 @@ class AgenticSearch:
                             pages_deduplicated=pages_deduplicated,
                         )
 
-                    # ── Phase 2: Batch validate page limits & query dedup ──
-                    # (Risk 1.1 mitigation: validate ALL read_page calls upfront)
                     executable_calls: list[tuple[str, dict, types.FunctionCall]] = []
                     responses_by_call: dict[int, types.Part] = {}
 
@@ -881,11 +833,9 @@ class AgenticSearch:
                             executable_calls.append((call_name, call_args, call_obj))
 
                         elif call_name == "search_web":
-                            # Improvement 4: Query deduplication guard
                             queries = call_args.get("queries", [])
                             dupes = _find_duplicate_queries(queries, previous_queries)
                             if dupes and len(dupes) == len(queries):
-                                # ALL queries are duplicates — send advisory
                                 emit(
                                     "research.tool_denied",
                                     operation="research.tool",
@@ -902,14 +852,11 @@ class AgenticSearch:
                                     },
                                 )
                                 continue
-                            # Track queries for future dedup
                             previous_queries.extend(queries)
                             executable_calls.append((call_name, call_args, call_obj))
                         else:
                             executable_calls.append((call_name, call_args, call_obj))
 
-                    # ── Phase 3: Parallel execution (Improvement 1) ──
-                    # Improvement 5: Build a status summary BEFORE executing
                     search_queries_str = ""
                     read_urls_str = ""
                     for cn, ca, _ in executable_calls:
@@ -924,7 +871,6 @@ class AgenticSearch:
                                 domain = url[:40]
                             read_urls_str += f"📖 {domain}\n"
 
-                    # Improvement 5: Send rich status update
                     if search_queries_str:
                         detail = f"🔍 {search_queries_str}"
                         await on_status(
@@ -937,7 +883,6 @@ class AgenticSearch:
                             detail=read_urls_str.strip(),
                         )
 
-                    # Execute all validated tools in parallel with semaphore
                     _sem = asyncio.Semaphore(3)
 
                     async def _run_tool(call_obj: types.FunctionCall, _s: asyncio.Semaphore = _sem) -> dict:
@@ -969,7 +914,6 @@ class AgenticSearch:
                     else:
                         tool_results = []
 
-                    # Match the original call order, including calls denied locally.
                     for i, (call_name, _call_args, _call_obj) in enumerate(executable_calls):
                         result = tool_results[i]
                         if isinstance(result, asyncio.CancelledError):
@@ -977,14 +921,12 @@ class AgenticSearch:
                         elif isinstance(result, BaseException):
                             result_dict = {"error": f"Execution failed: {result}"}
                         else:
-                            result_dict = dict(result)  # type: ignore[arg-type]  # _execute_tool returns dict
-                        # Accumulate dedup metrics and strip metadata before sending to model
+                            result_dict = dict(result)  # type: ignore[arg-type]
                         pages_deduplicated += result_dict.pop("_dedup_count", 0)
                         responses_by_call[id(_call_obj)] = _function_response_part(_call_obj, call_name, result_dict)
 
                     function_responses = [responses_by_call[id(call)] for _, _, call in parsed_calls]
 
-                    # Append all tool results to history for the model to see in the next turn
                     if function_responses:
                         contents.append(
                             types.Content(
@@ -996,23 +938,20 @@ class AgenticSearch:
                     if batch_timed_out:
                         break
 
-                    # Update status indicating we are processing/refining
                     if iterations < self.max_iterations:
                         await on_status(
                             STAGES_AGENTIC_RESEARCH[3][1],
                             detail=f"Итерация {iterations}/{self.max_iterations} • {pages_read} стр. прочитано • {len(seen_urls)} источников",
                         )
 
-                    continue  # Loop again with the new context
+                    continue
                 else:
-                    # No function calls - this means the model decided to answer directly as text
                     logger.info("Agent provided direct text answer without using conclude_research.")
                     direct_text = (
                         "".join(part.text for part in parts if isinstance(part.text, str) and part.thought is not True)
                         or "❌ Отсутствует текст в ответе."
                     )
 
-                    # Improvement 3: Citation validation (log-only)
                     unknown_citations = _validate_citations(direct_text, seen_urls)
                     if unknown_citations:
                         logger.info(
@@ -1028,12 +967,10 @@ class AgenticSearch:
                         pages_deduplicated=pages_deduplicated,
                     )
 
-            # 3. Force conclusion if loop maxed out or broke unexpectedly
             logger.warning("Agentic loop finished without explicit conclusion. Forcing synthesis.")
             await on_status(STAGES_AGENTIC_RESEARCH[-1][1])
 
             try:
-                # Build a fresh config for synthesis — do NOT mutate the loop's config
                 synthesis_config = build_generate_content_config(
                     self.model_name,
                     system_instruction=render_prompt_text(
@@ -1044,7 +981,6 @@ class AgenticSearch:
                     temperature=0.2,
                     tools=None,
                 )
-                # Propagate thinking_config if present on the original
                 if hasattr(config, "thinking_config") and config.thinking_config:
                     synthesis_config.thinking_config = config.thinking_config
                 contents.append(
@@ -1065,7 +1001,6 @@ class AgenticSearch:
                     budget=budget,
                     synthesis=True,
                 )
-                # Track usage for the forced synthesis call
                 llm_calls += 1
                 total_tokens += self._extract_token_count(response)
                 if response.text:
@@ -1086,14 +1021,5 @@ class AgenticSearch:
             )
 
         finally:
-            # MEMORY LEAK FIX:
-            # The `contents` list accumulates all model responses and tool results (up to 3 web pages x 15KB each).
-            # The GenAI SDK's proto-plus objects create deep reference cycles with internal channels.
-            # Python's refcount GC cannot collect these immediately when `contents` falls out of scope,
-            # resulting in ~250MB RAM bloat after a deep dive until cyclic GC runs.
-            # Explicitly clear the container and force cyclic GC collection.
-            # NOTE: gc.collect() is synchronous and blocks the event loop ("stop-the-world").
-            # Running it in a thread pool prevents freezing all concurrent I/O (streaming, polling).
-            # generation=1 targets young objects (where proto-plus cycles live) for minimal pause.
             contents.clear()
             await asyncio.to_thread(gc.collect, 1)

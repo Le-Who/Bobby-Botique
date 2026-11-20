@@ -8,7 +8,6 @@ class TestChatLogicRegressionContracts:
         """Exhausted OpenRouter models retain the correct provider identity."""
         from app.handlers.chat_logic import classify_resolution
 
-        # The real function detects OpenRouter by '/' in model name
         result = classify_resolution("all_exhausted", "anthropic/claude-3")
         assert result.provider_name == "OpenRouter"
 
@@ -18,7 +17,6 @@ class TestChatLogicRegressionContracts:
 
         result = format_memories_for_system_prompt([])
 
-        # Must return empty string
         assert result == "", "Empty memories must return empty string"
 
     def test_response_empty_detection(self):
@@ -46,8 +44,6 @@ class TestChatLogicRegressionContracts:
 
         result = classify_resolution("confirm_fallback", "gemini-pro", "gemini-flash")
 
-        # Both models must appear in the message
         assert "gemini-pro" in result.user_message
         assert "gemini-flash" in result.user_message
-        # "Продолжить?" should be the call-to-action
         assert "Продолжить?" in result.user_message

@@ -79,9 +79,6 @@ async def _until(predicate):
 
 async def test_real_ptb_fetcher_cannot_turn_polling_backlog_into_unbounded_wrappers(application, caplog):
     """Ten thousand updates cannot bypass the bound after PTB fetches them."""
-    # This verifies capacity/drain, not the file writer's throughput. A previous
-    # logging integration test may leave debug handlers configured in the suite.
-    # Keep warnings/errors and all actual update/queue/processor behavior active.
     caplog.set_level(logging.WARNING, logger="app.observability")
     caplog.set_level(logging.WARNING, logger="telegram.ext.Application")
     queue = application.update_queue
@@ -102,7 +99,6 @@ async def test_real_ptb_fetcher_cannot_turn_polling_backlog_into_unbounded_wrapp
             for update_id in range(10_000):
                 producers.append(asyncio.create_task(queue.put(_Update(update_id, handler(update_id)))))
             await _until(lambda: queue.empty() and application.update_processor._user_locks.get(7) is not None)
-            # Let every runnable producer/fetcher/wrapper reach its blocking point.
             await asyncio.sleep(0)
             await asyncio.sleep(0)
             assert queue.full(), "Fetching must not release ingress capacity before task_done"

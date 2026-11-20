@@ -10,20 +10,14 @@ from typing import Any
 
 from app.prompt_registry import estimate_tokens_cyrillic
 
-# ============================================================================
-# TOKEN BUDGET CONFIGURATION
-# ============================================================================
-
-# Context cap at 128K — Flash models degrade beyond this (research-backed)
 DEFAULT_TOKEN_BUDGET = 128_000
-RESPONSE_RESERVE = 12_000  # 3 full Telegram messages (4K chars each)
-SUMMARY_BUDGET = 4_000  # Rich summaries for novel-writing use cases
-MIN_HISTORY_MESSAGES = 4  # Always keep at least this many recent messages
+RESPONSE_RESERVE = 12_000
+SUMMARY_BUDGET = 4_000
+MIN_HISTORY_MESSAGES = 4
 
-# Summarization thresholds
-LLM_SUMMARY_TOKEN_THRESHOLD = 30_000  # Min dropped tokens to trigger LLM tier
-CHUNK_SIZE = 10_000  # Tokens per chunk for refine-chain summarization
-MAX_CHUNKS = 6  # Max chunks per summarization (cost control)
+LLM_SUMMARY_TOKEN_THRESHOLD = 30_000
+CHUNK_SIZE = 10_000
+MAX_CHUNKS = 6
 SUMMARIZATION_MODEL = "gemini-3.1-flash-lite"
 
 
@@ -32,10 +26,10 @@ class TokenBudget:
     """Token allocation across context layers."""
 
     total: int = DEFAULT_TOKEN_BUDGET
-    system_prompt: int = 0  # Filled after system prompt is resolved
-    summary: int = 0  # Filled if summary exists
-    history: int = 0  # Computed as remainder
-    user_message: int = 0  # Filled from current message
+    system_prompt: int = 0
+    summary: int = 0
+    history: int = 0
+    user_message: int = 0
     response_reserve: int = RESPONSE_RESERVE
 
     @property
@@ -82,8 +76,6 @@ def truncate_to_token_budget(text: str, token_limit: int, suffix: str = "...") -
         prefix = ""
 
     result = prefix + suffix
-    # The estimator uses floor division, but keep this invariant explicit in
-    # case its implementation changes independently.
     while result and estimate_tokens_cyrillic(result) > token_limit:
         prefix = prefix[:-1]
         result = prefix + suffix
@@ -96,13 +88,11 @@ class AssembledContext:
 
     history: list[dict[str, Any]]
     system_instruction: str
-    # Canonical persisted turns after trimming.  Unlike ``history`` this never
-    # contains the synthetic summary exchange or the current request.
     retained_history: list[dict[str, Any]] = field(default_factory=list)
     summary: str | None = None
     budget: TokenBudget = field(default_factory=TokenBudget)
     was_truncated: bool = False
     dropped_messages: list[dict[str, Any]] = field(default_factory=list)
     messages_dropped: int = 0
-    audit_hash: str = ""  # Hash of assembled prompt for debugging
-    llm_summarization_scheduled: bool = False  # True if async LLM summary was fired
+    audit_hash: str = ""
+    llm_summarization_scheduled: bool = False

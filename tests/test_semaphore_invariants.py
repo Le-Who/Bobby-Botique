@@ -25,37 +25,28 @@ def make_semaphore(limit: int) -> GlobalLLMSemaphore:
     return GlobalLLMSemaphore(limit=limit, timeout=60, redis_key="test_semaphore_key")
 
 
-# ─── Happy path ───────────────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_semaphore_acquired_and_released_on_success():
     """Semaphore slot must be released after normal execution."""
-    # Arrange
     sem = make_semaphore(limit=2)
 
-    with patch("app.cache.redis_client", None):  # Force local-only path
-        # Act — acquire and release normally
+    with patch("app.cache.redis_client", None):
         async with sem:
-            pass  # Just hold and release the slot
+            pass
 
-    # Assert — slot must be restored after exit
     assert sem._local_semaphore._value == 2, "Semaphore must fully release after normal exit"
 
 
 @pytest.mark.asyncio
 async def test_semaphore_released_on_exception():
     """Semaphore slot MUST be released even when the body raises an exception."""
-    # Arrange
     sem = make_semaphore(limit=1)
 
     with patch("app.cache.redis_client", None):
-        # Act
         with pytest.raises(ValueError):
             async with sem:
                 raise ValueError("Simulated failure inside semaphore block")
 
-    # Assert — slot must be restored after exception
     assert sem._local_semaphore._value == 1, "Semaphore must release when exception propagates"
 
 
@@ -90,7 +81,6 @@ async def _cancel_scenario(sem: GlobalLLMSemaphore, acquired: asyncio.Event) -> 
 @pytest.mark.asyncio
 async def test_semaphore_limits_concurrency_to_configured_limit():
     """No more than `limit` tasks must be active concurrently."""
-    # Arrange
     limit = 2
     sem = make_semaphore(limit=limit)
     concurrent_peak = 0
@@ -106,17 +96,14 @@ async def test_semaphore_limits_concurrency_to_configured_limit():
                 active -= 1
 
     with patch("app.cache.redis_client", None):
-        # Act — run 5 tasks through a limit-2 semaphore
         await asyncio.gather(*(task() for _ in range(5)))
 
-    # Assert — peak concurrency must never exceed configured limit
     assert concurrent_peak <= limit, f"Peak concurrency {concurrent_peak} exceeded limit {limit}"
 
 
 @pytest.mark.asyncio
 async def test_semaphore_returns_to_full_capacity_after_all_tasks_complete():
     """After all parallel tasks finish, all slots must be returned."""
-    # Arrange
     limit = 3
     sem = make_semaphore(limit=limit)
 
@@ -126,10 +113,8 @@ async def test_semaphore_returns_to_full_capacity_after_all_tasks_complete():
                 await asyncio.sleep(0.02)
 
     with patch("app.cache.redis_client", None):
-        # Act
         await asyncio.gather(*(task() for _ in range(limit * 2)))
 
-    # Assert
     assert sem._local_semaphore._value == limit, f"All {limit} slots must be returned after task completion"
 
 
@@ -181,7 +166,6 @@ async def test_semaphore_local_acquire_timeout_raises_user_limit():
     sem = make_semaphore(limit=1)
     sem._timeout = 0.05
 
-    # Occupy the only slot so the next acquire attempt must wait.
     await sem._local_semaphore.acquire()
     try:
         with patch("app.cache.redis_client", None):

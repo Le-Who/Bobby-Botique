@@ -65,7 +65,6 @@ async def test_ordinary_chat_action_clears_persisted_tarot(module, handler_name,
         patch.object(module, "_is_user_busy", return_value=False, create=True),
     ):
         await getattr(module, handler_name)(update, context)
-        # A later hydration must not bring the stale mode back.
         await state.ensure_state_loaded(user_id)
 
     assert not state.is_in_tarot_mode(user_id)

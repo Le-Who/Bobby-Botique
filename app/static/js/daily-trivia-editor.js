@@ -1,4 +1,3 @@
-// Tab-local authoring state. Draft content is never written to persistent storage.
 function createDailyTriviaDrafts() {
   const entries = new Map();
   const clone = value => structuredClone(value);
@@ -344,7 +343,6 @@ const TriviaModule = (() => {
       `;
     }).join('');
 
-    // Render super questions (editable)
     const superSection = document.getElementById('trivia-super-questions-section');
     const superContainer = document.getElementById('trivia-editor-super-questions');
     if (superQuestions && superQuestions.length > 0) {

@@ -97,7 +97,6 @@ class ScriptedProvider:
                 for event in self.script:
                     yield event
         finally:
-            # Closure must be awaited by the producer, not left to asyncgen GC.
             await asyncio.sleep(0)
             self.closed = True
 
@@ -134,8 +133,6 @@ def install_race(monkeypatch, script):
 async def test_malformed_race_winner_raises_without_terminal_or_mixed_text_and_awaits_producers(
     monkeypatch, suffix, diagnostic
 ):
-    # Returning early at a provider terminal, accepting a wrong phase, or orphaning
-    # an observed iterator would lose protocol errors/closure or expose late text.
     router, request, providers, boundary = install_race(monkeypatch, [TextDelta("Winner"), *suffix])
     events = []
     with pytest.raises(ProviderStreamProtocolError, match=diagnostic):
@@ -153,8 +150,6 @@ async def test_malformed_race_winner_raises_without_terminal_or_mixed_text_and_a
 
 @pytest.mark.asyncio
 async def test_loser_exception_before_winner_is_explicit_and_both_producers_are_awaited(monkeypatch):
-    # A lane error preceding selection must remain explicit, with no partial success
-    # emitted from the other lane while ownership cleanup is still outstanding.
     router, request, providers, _boundary = install_race(monkeypatch, [TextDelta("Winner"), completion()])
     winner_waiting = asyncio.Event()
 
@@ -189,8 +184,6 @@ async def test_loser_exception_before_winner_is_explicit_and_both_producers_are_
 
 @pytest.mark.asyncio
 async def test_loser_error_during_cancellation_after_selection_keeps_winner_terminal(monkeypatch):
-    # A losing lane's exception after selection must not replace the selected
-    # answer, metadata, or single terminal, even if it faults while being closed.
     router, request, providers, _boundary = install_race(monkeypatch, [TextDelta("Winner"), completion()])
     loser_faulted = asyncio.Event()
 
@@ -247,8 +240,6 @@ class RendererBoundary:
     ids=["completed", "partial"],
 )
 async def test_valid_race_has_one_typed_terminal_and_coordinator_exact_outcome(monkeypatch, terminal, outcome_type):
-    # Winner metadata and partial classification must survive actual router+delivery,
-    # and all producer/feedback tasks must be finished at the public result boundary.
     router, request, providers, _boundary = install_race(monkeypatch, [TextDelta("Winner"), terminal])
     renderer = RendererBoundary()
     events = []
@@ -301,8 +292,6 @@ async def test_valid_race_has_one_typed_terminal_and_coordinator_exact_outcome(m
     ids=["missing-terminal", "post-terminal", "wrong-phase", "deferred-after-text", "unsupported-event"],
 )
 async def test_malformed_hedged_model_winner_preserves_protocol_error_and_awaits_lanes(monkeypatch, suffix, diagnostic):
-    # Outer model hedging must not re-cancel a loser already running async cleanup
-    # or hide a protocol error coming from the selected single-key lane.
     router, _request, providers, boundary = install_race(monkeypatch, [TextDelta("Winner"), *suffix])
     backup = "gemini-3.1-flash-lite"
 

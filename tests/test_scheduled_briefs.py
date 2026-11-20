@@ -79,7 +79,6 @@ class TestSubscriptionCRUD:
             assert result is True
             mock_db.db_query.assert_awaited_once()
 
-            # Verify the query contains UPSERT logic
             query = mock_db.db_query.call_args[0][0]
             assert "INSERT INTO brief_subscriptions" in query
             assert "ON CONFLICT" in query
@@ -213,7 +212,7 @@ class TestBriefGeneration:
             call_count += 1
             assert user_id == 42
             if source_type == "consolidated":
-                return []  # No consolidated facts, triggers fallback
+                return []
             if source_type == "user_intent":
                 return mock_memory_rows
             return None
@@ -254,7 +253,6 @@ class TestBriefGeneration:
             )
             consent_check.assert_awaited_once_with(42, 9)
 
-            # Verify the message contains the brief
             sent_text = mock_bot.send_message.call_args[1]["text"]
             assert "бриф" in sent_text.lower() or "ML" in sent_text
 

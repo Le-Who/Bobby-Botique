@@ -1,4 +1,3 @@
-# /app/bot_instance.py
 """Thin singleton for the PTB Bot instance.
 
 bot.py calls ``register_bot(application.bot)`` after PTB initializes.

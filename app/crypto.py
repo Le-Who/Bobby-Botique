@@ -17,8 +17,6 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-# Fixed salt for deterministic key derivation — changing this
-# invalidates all previously encrypted keys.
 _SALT = b"gemaibotv2-key-encryption-salt-v1"
 
 _fernet_instance: Fernet | None = None
@@ -40,7 +38,7 @@ def _get_fernet() -> Fernet:
         algorithm=hashes.SHA256(),
         length=32,
         salt=_SALT,
-        iterations=480_000,  # OWASP 2023 recommendation
+        iterations=480_000,
     )
     key = base64.urlsafe_b64encode(kdf.derive(secret.encode("utf-8")))
     _fernet_instance = Fernet(key)

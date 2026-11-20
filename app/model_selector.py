@@ -1,4 +1,3 @@
-# /app/model_selector.py
 """Smart model auto-selection based on message content.
 
 Analyzes user input characteristics to recommend the optimal model:
@@ -25,12 +24,9 @@ class SelectionResult:
 
     model: str
     reason: str
-    confidence: float  # 0.0 - 1.0
+    confidence: float
 
 
-# ── Model tier ranking (higher = more capable) ──────────────────────────────
-
-# Known application model families only; unknown IDs cannot justify an upgrade.
 _MODEL_TIER = {model: 4 if "flash-lite" in model else 5 for model in CURRENT_GEMINI_MODELS}
 
 
@@ -47,10 +43,8 @@ def _get_tier(model_name: str) -> int:
         return 1
     if "3.5-flash" in name:
         return 5
-    return 2  # Unknown models get middle tier
+    return 2
 
-
-# ── Heuristics ───────────────────────────────────────────────────────────────
 
 _CODE_PATTERNS = re.compile(
     r"(```|def |class |function |import |const |let |var |"
@@ -80,9 +74,6 @@ _CREATIVE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# Performance: single shared tuple used by all three _find_model() calls in
-# select_model(). Eliminates 3 separate 3-element list allocations per call
-# and gives the preference order a single source of truth.
 _UPGRADE_PREFERENCE: tuple[str, ...] = CURRENT_GEMINI_MODELS
 
 
@@ -97,15 +88,11 @@ def select_model(
     Returns None if the current model is already suitable (no change needed).
     Only suggests UPGRADES — never downgrades to a weaker model.
     """
-    # Performance: read the live list directly — _find_model() only iterates, never
-    # mutates, so there is no need for a defensive list() copy on every call.
     configured = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else None
     available = configured if isinstance(configured, list) else DEFAULT_GEMINI_MODELS
     if not available:
         return None
 
-    # Skip suggestions for OpenRouter / Opencode Go / FreeTheAI models — different provider,
-    # tier logic is Gemini-specific and inapplicable across providers.
     from app.providers import is_freetheai_model, is_opencode_model, is_openrouter_model
 
     if current_model and (
@@ -118,7 +105,6 @@ def select_model(
     current_tier = _get_tier(current_model) if current_model else 0
     msg_len = len(user_message)
 
-    # ── Code tasks → best available model ────────────────────────────────
     if _CODE_PATTERNS.search(user_message):
         code_model = _find_model(available, _UPGRADE_PREFERENCE)
         if code_model and code_model != current_model and _get_tier(code_model) > current_tier:
@@ -128,7 +114,6 @@ def select_model(
                 confidence=0.6,
             )
 
-    # ── Deep reasoning → thinking model ──────────────────────────────────
     if _REASONING_PATTERNS.search(user_message) or msg_len > 1000:
         reasoning_model = _find_model(available, _UPGRADE_PREFERENCE)
         if reasoning_model and reasoning_model != current_model and _get_tier(reasoning_model) > current_tier:
@@ -138,7 +123,6 @@ def select_model(
                 confidence=0.5,
             )
 
-    # ── Creative tasks → flagship model ──────────────────────────────────
     if _CREATIVE_PATTERNS.search(user_message):
         creative_model = _find_model(available, _UPGRADE_PREFERENCE)
         if creative_model and creative_model != current_model and _get_tier(creative_model) > current_tier:
@@ -148,12 +132,6 @@ def select_model(
                 confidence=0.5,
             )
 
-    # ── Short / trivial messages: NO suggestion
-    # Rationale: suggesting a downgrade (flash → flash-lite) hurts quality.
-    # Suggesting the same tier (flash → flash) is pointless.
-    # Short messages are fast on any model — no need to switch.
-
-    # No strong signal — keep current model
     return None
 
 

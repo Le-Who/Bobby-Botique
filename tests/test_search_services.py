@@ -6,8 +6,6 @@ import pytest
 
 from app.search_services import parallel_search, tavily_search_agent
 
-# ── Input validation ─────────────────────────────────────────────────────────
-
 
 class TestTavilySearchValidation:
     """tavily_search_agent should validate inputs before making API calls."""
@@ -91,9 +89,6 @@ class TestTavilySearchPayload:
         payload = mock_api_call.await_args.args[0]
         assert payload["include_answer"] is True
         assert result == {"type": "answer", "content": "The answer"}
-
-
-# ── Parallel search deduplication ────────────────────────────────────────────
 
 
 class TestParallelSearch:

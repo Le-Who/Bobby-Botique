@@ -109,9 +109,6 @@ async def test_speech_during_a_reply_waits_for_provider_idle_instead_of_being_di
                     await asyncio.sleep(0.005)
             assert provider_audio == [b"\x01\0", b"\x02\0"]
             if release == "idle_then_transcript":
-                # A waiter released before a late transcript can send one frame
-                # even if the event was wrongly cleared again. The next frame
-                # must also pass, preserving the rest of the user's utterance.
                 await incoming.put(json.dumps({"type": "realtime_input", "data": "AwA="}))
                 async with asyncio.timeout(1):
                     while len(provider_audio) < 3:

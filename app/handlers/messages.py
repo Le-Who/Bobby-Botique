@@ -1,4 +1,3 @@
-# /app/handlers/messages.py
 """Thin message router — dispatches incoming messages to specialized sub-modules.
 
 Sub-modules:
@@ -32,9 +31,6 @@ from telegram.ext import (
 
 from app import state
 from app.config import settings
-
-# Deferred to avoid heavy startup penalty
-# from app.handlers.cmd_image import _get_draw_state, _run_generation
 from app.handlers.msg_document import handle_document, handle_document_mode_interaction
 from app.handlers.msg_media import (
     process_media_group_update,
@@ -133,19 +129,16 @@ def chunk_message(text: str, max_length: int = 4096) -> list[str]:
 
         window = text[start_idx : start_idx + max_length]
 
-        # 1. Try newline split
         nl_pos = window.rfind("\n")
         if nl_pos > 0:
             chunk = text[start_idx : start_idx + nl_pos].strip()
             start_idx += nl_pos + 1
         else:
-            # 2. Try space split
             sp_pos = window.rfind(" ")
             if sp_pos > 0:
                 chunk = text[start_idx : start_idx + sp_pos].strip()
                 start_idx += sp_pos + 1
             else:
-                # 3. Hard cut
                 chunk = window.strip()
                 start_idx += max_length
 
@@ -157,7 +150,6 @@ def chunk_message(text: str, max_length: int = 4096) -> list[str]:
 
 async def _send_busy_ephemeral(update: Update) -> None:
     """Send localized busy toast that self-destructs after 4s."""
-    # Use effective_message — works for both new and edited message contexts
     msg_obj = update.effective_message
     text = msg_obj.text if msg_obj else None
     lang = detect_language(text)
@@ -182,8 +174,6 @@ async def _cancel_and_drain(task: asyncio.Task, *, cancellation: asyncio.Cancell
     """Keep cancelled request work owned through asynchronous cleanup."""
     if not task.done() and not task.cancelling():
         task.cancel()
-    # Task callbacks run in registration order. Include the already-registered
-    # resource cleanup even when the task is done but its callbacks are queued.
     completion: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     task.add_done_callback(lambda _owner: completion.set_result(None))
     while not completion.done():
@@ -361,7 +351,6 @@ async def _handle_request(
         )
         return
 
-    # Safe: we are registered only for UpdateType.MESSAGE
     effective_msg = update.effective_message
     if not effective_msg:
         return
@@ -369,13 +358,10 @@ async def _handle_request(
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # Hydrate persisted user state from DB (lazy, fast no-op if already loaded)
     from app.state import ensure_state_loaded
 
     await ensure_state_loaded(user_id)
 
-    # Filters run before lazy hydration. Recheck the restored mode so the first
-    # message after a restart follows the same route as subsequent messages.
     from app.middleware.debounce import accepts_speech_message, starts_long_speech
 
     if (
@@ -393,19 +379,16 @@ async def _handle_request(
     request_id = set_request_id(f"tgmsg-{chat_id}-{getattr(update, 'update_id', 'na')}")
     set_user_context(user_id, chat_id)
 
-    # Immediate typing indicator — instant feedback before any processing
     try:
         submit_task(send_chat_action(context.bot, chat_id))
     except Exception:
-        pass  # Non-critical
+        pass
 
-    # Correlation contract: request_id is propagated as trace_id baseline.
     with bind_request_span(request_id, span_name="telegram-message"):
         if not isinstance(user_id, int) or user_id <= 0:
             logging.error("Invalid user_id: %s", user_id)
             return
 
-        # ── 2. Telegram API logging ──────────────────────────────────────────
         message_type = (
             "photo"
             if effective_msg.photo
@@ -421,7 +404,6 @@ async def _handle_request(
             message_type=message_type,
         )
 
-        # ── 3. Validation ────────────────────────────────────────────────────
         message_text = effective_msg.text if effective_msg.text else "No text"
         if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
             logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
@@ -429,8 +411,6 @@ async def _handle_request(
             return
 
         if speech_reservation.continuation:
-            # Physical source parts belong to the first admitted operation.
-            # Every update still passes authorization and collection bounds.
             is_rate_ok, is_auth_ok = True, await is_authorized(user_id)
         else:
             is_rate_ok, is_auth_ok = await asyncio.gather(check_user_rate_limit(user_id), is_authorized(user_id))
@@ -456,10 +436,6 @@ async def _handle_request(
             await effective_msg.reply_text(t("error.rate_limit"))
             return
 
-        # ── 3b. Collaborative board reply aggregation ────────────────────────
-        # Must be intercepted BEFORE dedup/auth guards because board replies
-        # arrive via Telegram's via_bot privacy exception (no admin rights needed)
-        # and are not regular user-to-bot messages.
         try:
             from app.handlers.board_handler import try_handle_board_reply
 
@@ -468,7 +444,6 @@ async def _handle_request(
         except Exception as _board_err:
             logging.debug("Board reply check skipped: %s", _board_err)
 
-        # ── 3c. Request dedup (double-tap prevention) ────────────────────────
         if effective_msg.text:
             from app.middleware.dedup import is_duplicate_request
 
@@ -513,12 +488,9 @@ async def _handle_request(
         if await try_handle_speech_collection(update, context, speech_reservation, on_admitted=finish_voice_edit):
             return
 
-        # Album accumulation schedules provider work, so it requires the same
-        # authorization and rate admission as ordinary photo requests.
         if await process_media_group_update(update, context, user_id, chat_id):
             return
 
-        # ── 4. Document uploads ──────────────────────────────────────────────
         if effective_msg.document:
             logging.info(
                 "Processing document from user %s: %s",
@@ -528,18 +500,15 @@ async def _handle_request(
             await handle_document(update, context)
             return
 
-        # ── 4b. Voice messages ───────────────────────────────────────────────
         if effective_msg.voice:
             logging.info("Processing voice message from user %s", user_id)
 
-            # Dedup guard (prevents double-processing from Telegram retries)
             from app.middleware.dedup import is_duplicate_voice
 
             if await is_duplicate_voice(user_id, effective_msg.voice.file_unique_id):
                 logging.debug("Voice dedup: skipping duplicate voice for user %s", user_id)
                 return
 
-            # Duration guard (skip very short accidental recordings)
             if int(getattr(effective_msg.voice, "duration", 0)) < 1:
                 await effective_msg.reply_text(t("voice.too_short", detect_language(None)))
                 return
@@ -554,7 +523,6 @@ async def _handle_request(
                 await _retire_admitted_interaction(user_id, admission_owner)
                 placeholder_message = await effective_msg.reply_text(t("voice.processing", "ru"))
             except Exception, asyncio.CancelledError:
-                # No worker owns cleanup until the placeholder has been sent.
                 _release_admission(user_id, admission_owner)
                 raise
 
@@ -628,10 +596,6 @@ async def _handle_request(
             )
             return
 
-        # ── 5. State-machine dispatchers (role/rename flows) ─────────────────
-
-        # ── 5b. Draw prompt input interception ──────────────────────────────
-        # If the user previously pressed "✏️ Изменить промпт", capture text here.
         from app.handlers.cmd_image import handle_draw_prompt_input
 
         if await handle_draw_prompt_input(update, context):
@@ -654,12 +618,10 @@ async def _handle_request(
             finish_voice_edit()
             return
 
-        # ── 6. Document mode ─────────────────────────────────────────────────
         if await handle_document_mode_interaction(update, context, user_id):
             finish_voice_edit()
             return
 
-        # ── 7. Save last user input for retry button ─────────────────────────
         try:
             from app.state import set_last_sent_message
 
@@ -668,11 +630,6 @@ async def _handle_request(
         except Exception:
             logging.exception("Error saving last sent message text")
 
-        # ── 7b. Debounce rapid-fire text/forward messages ────────────────────
-        # Aggregation window: merges multi-message "split taps" and forwarded
-        # bursts into a single AI request, preserving author attribution,
-        # original timestamps, and a clean user-instruction / forwarded-content
-        # split.  Applies to ALL non-photo, non-voice, non-document text.
         is_photo = bool(effective_msg.photo)
         debounce_result = None
         if not is_photo and not effective_msg.voice and not effective_msg.document:
@@ -684,15 +641,9 @@ async def _handle_request(
                 bot=context.bot,
             )
             if debounce_result is None:
-                # Absorbed — the first caller in this window will process the
-                # merged result when the window fires.
                 return
-            # Build a structured, author-attributed context block for the LLM.
             message_text = debounce_result.build_llm_context()
 
-            # ── Persist forwarded-batch metadata for downstream handlers ──────
-            # ai_chat uses this to show the "💾 Сохранить тезисы" memory button.
-            # agent.py uses photo_messages to route to multimodal handler.
             if context.user_data is not None:
                 context.user_data["_fwd_batch"] = debounce_result.has_forwarded_content
                 fwd_photos = debounce_result.forwarded_photo_messages
@@ -706,7 +657,6 @@ async def _handle_request(
         from app.handlers.msg_speech import handle_speech_request, speech_request_for_message
 
         if effective_msg.text and message_text:
-            # The merged text is the actual request, including its search prefix.
             state.set_last_sent_message(user_id, message_text)
 
         if effective_msg.text and not is_photo:
@@ -724,7 +674,6 @@ async def _handle_request(
                     _release_admission(user_id, speech_owner)
                 return
 
-        # Resolve speech before topic-based intents so its transcript stays data.
         if (
             effective_msg.text
             and update.effective_chat.type == "private"
@@ -749,9 +698,6 @@ async def _handle_request(
         )
         reply_with_voice = voice_intent.explicit_tts
 
-        # ── 7c. Implicit image generation intent ─────────────────────────────
-        # Matches: "Бот, нарисуй..." / "изобрази..." / "сгенерируй картинку..."
-        # Bypasses conversational AI; routes straight to Canvas 2.0 pipeline.
         from app.handlers.cmd_image import check_draw_intent_async
 
         _draw_prompt = await check_draw_intent_async(message_text)
@@ -785,8 +731,6 @@ async def _handle_request(
                         from app.handlers.cmd_image import _get_draw_state, _run_generation
 
                         _ds = _get_draw_state(context)
-                        # Temporarily suppress heartbeat — image pipeline sends
-                        # its own typing heartbeat via ChatAction.UPLOAD_PHOTO.
                         try:
                             await _ph.delete()
                         except Exception:
@@ -826,13 +770,8 @@ async def _handle_request(
                 finish_voice_edit()
             return
 
-        # ── 8. Create placeholder & heartbeat, then process AI request ───────
         user_state = state.get_user_state(user_id)
         if user_state.is_processing or state.get_user_lock(user_id).locked():
-            # ── Network-Stall Cancellation (Plan §7) ─────────────────────
-            # If the previous task is stuck waiting for HTTP headers (TTFB >15s),
-            # cancel it and process the new message. If the task is healthy
-            # (actively streaming/searching), show the usual busy toast.
             if state.is_task_stalled(user_id):
                 was_cancelled = state.cancel_active_task(user_id)
                 if was_cancelled:
@@ -840,10 +779,7 @@ async def _handle_request(
                         "Network-stall cancellation: cancelled stalled task for user %s (new message arrived)",
                         user_id,
                     )
-                    # Brief yield for the cancelled task's finally-block to release user_lock
                     await asyncio.sleep(0.15)
-                    # Cleanup can retain admission after releasing the lock
-                    # while it retires a notice, or a newer request can own it.
                     if user_state.is_processing or state.get_user_lock(user_id).locked():
                         await _send_busy_ephemeral(update)
                         return
@@ -854,9 +790,6 @@ async def _handle_request(
                 await _send_busy_ephemeral(update)
                 return
 
-        # ── Intent Direct Routing (Plan §4) ──────────────────────────────
-        # For text-only messages, try resolving via lightweight APIs
-        # (weather, currency) before consuming an LLM call.
         admission_owner = _reserve_admission(user_id, effective_msg, chat_id)
         await _retire_admitted_interaction(user_id, admission_owner)
 
@@ -930,7 +863,6 @@ async def _handle_request(
             _release_admission(user_id, admission_owner)
             raise
 
-        # Track this placeholder so edited_message handler can reuse it
         _bind_request_response(user_id, placeholder_message.message_id, chat_id)
 
         done_event = asyncio.Event()
@@ -939,9 +871,6 @@ async def _handle_request(
 
         async def task_wrapper() -> None:
             try:
-                # Lock inversion fix: acquire user lock BEFORE the global semaphore.
-                # This ensures a single user doesn't consume all global slots while waiting for their own lock.
-                # Semaphore is now acquired inside process_long_request based on request classification.
                 async with state.get_user_lock(user_id):
                     logging.info("Starting task processing for user %s", user_id)
                     if not is_photo:
@@ -966,7 +895,6 @@ async def _handle_request(
 
                     stop_heartbeat(placeholder_message.message_id)
 
-                    # Keep last-bot-message current after agent finishes editing in-place
                     _bind_request_response(user_id, placeholder_message.message_id, chat_id)
 
                     logging.info("Completed task processing for user %s", user_id)
@@ -979,7 +907,6 @@ async def _handle_request(
                     await metrics_collector.record_request("handle_message", elapsed, success=True, user_id=user_id)
 
             except asyncio.CancelledError:
-                # Task was cancelled because user edited the message — clean up silently
                 logging.info("task_wrapper: cancelled for user %s (edit supersede)", user_id)
                 stop_heartbeat(placeholder_message.message_id)
             except Exception as e:
@@ -1042,7 +969,6 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = update.effective_chat.id
     edited_msg = update.edited_message
 
-    # Only handle plain text edits (photo/voice edits are uncommon and use new messages)
     if not edited_msg.text:
         return
 
@@ -1089,9 +1015,6 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
     state.register_active_task(user_id, admission_owner)
     state.get_user_state(user_id).is_processing = True
     try:
-        # Retain admission ownership while the predecessor completes all cleanup,
-        # including error UI outside the canonical lock. A further edit drains
-        # this admission owner in turn before reusing the same placeholder.
         if previous_owner is not None and previous_owner is not admission_owner:
             await _cancel_and_drain(previous_owner)
         await _retire_admitted_interaction(user_id, admission_owner)
@@ -1103,7 +1026,6 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
             await handle_speech_request(update, context, speech_request)
             return
 
-        # ── Find or create the placeholder ───────────────────────────────────
         last = state.get_last_bot_message(user_id)
         if isinstance(edited_message_id, int):
             source = message_request(user_id)
@@ -1213,15 +1135,11 @@ class _SpeechSourceFilter(filters.MessageFilter):
 
 
 async def _handle_speech_command_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # This blocking pre-handler claims only slash-prefixed source continuations.
-    # Other commands keep their existing registrations and control semantics.
     await handle_request(update, context)
     raise ApplicationHandlerStop
 
 
 def register(application: Application) -> None:
-    # NEW messages only — explicit UpdateType.MESSAGE guard prevents
-    # edited_message / channel_post from leaking into these handlers.
     _msg = filters.UpdateType.MESSAGE
     speech_source_filter = _SpeechSourceFilter()
     application.add_handler(
@@ -1231,13 +1149,11 @@ def register(application: Application) -> None:
         group=-99,
     )
 
-    # Explicit menu entries take priority over an existing Tarot session.
     from app.handlers.cmd_tarot import tarot_command
     from app.handlers.menu_intents import TAROT_MENU_RE
 
     tarot_intent_filter = filters.ChatType.PRIVATE & filters.TEXT & filters.Regex(TAROT_MENU_RE)
 
-    # Tarot Mode Interceptor
     from app.handlers.tarot_chat import (
         handle_tarot_end_session_message,
         handle_tarot_idle_choice_callback,
@@ -1273,7 +1189,6 @@ def register(application: Application) -> None:
     application.add_handler(MessageHandler(_msg & filters.Document.ALL, handle_request, block=False))
     application.add_handler(MessageHandler(_msg & filters.VOICE, handle_request, block=False))
 
-    # EDITED messages — text only (photo/voice edits use new messages)
     application.add_handler(
         MessageHandler(
             filters.UpdateType.EDITED_MESSAGE & filters.TEXT & ~filters.COMMAND,

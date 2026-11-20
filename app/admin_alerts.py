@@ -1,4 +1,3 @@
-# /app/admin_alerts.py
 """Admin alert system — rate-limited Telegram notifications for critical events.
 
 Sends alerts to the bot admin (ADMIN_ID) when critical errors occur,
@@ -36,33 +35,25 @@ class AlertSeverity(Enum):
     CRITICAL = "🚨"
 
 
-# ── Rate limiter ─────────────────────────────────────────────────────────────
-
 _alert_timestamps: list[float] = []
-_MAX_ALERTS = 5  # max alerts per window
-_WINDOW_SECONDS = 300.0  # 5 minutes
+_MAX_ALERTS = 5
+_WINDOW_SECONDS = 300.0
 
 
 def _is_rate_limited() -> bool:
     """Check if we've exceeded the alert rate limit."""
     now = time.monotonic()
-    # Purge old entries
     while _alert_timestamps and now - _alert_timestamps[0] > _WINDOW_SECONDS:
         _alert_timestamps.pop(0)
     return len(_alert_timestamps) >= _MAX_ALERTS
 
 
 def _record_alert() -> None:
-    # Reserve before transport yields. Failed sends consume capacity too, so an
-    # outage cannot create an unbounded stream of alert delivery attempts.
     _alert_timestamps.append(time.monotonic())
 
 
-# ── Unauthorized user alert cooldown ─────────────────────────────────────────
-# Per-user cooldown prevents alert spam when a user writes multiple messages.
-
 _unauthorized_last_alerted: dict[int, float] = {}
-_UNAUTHORIZED_COOLDOWN_S = 600.0  # 10 minutes per user
+_UNAUTHORIZED_COOLDOWN_S = 600.0
 
 
 def _can_alert_unauthorized(user_id: int) -> bool:
@@ -79,9 +70,6 @@ def _can_alert_unauthorized(user_id: int) -> bool:
 
 def _record_unauthorized_alert(user_id: int) -> None:
     _unauthorized_last_alerted[user_id] = time.monotonic()
-
-
-# ── Public API ───────────────────────────────────────────────────────────────
 
 
 async def alert_admin(
@@ -114,7 +102,6 @@ async def alert_admin(
     if not admin_id:
         return
 
-    # Build alert text
     parts = [
         f"{severity.value} *{severity.name}*",
         "",
@@ -142,7 +129,6 @@ async def alert_admin(
         parts.append(f"Error ID: `{error_id}`")
 
     text = "\n".join(parts)
-    # Hard cap at Telegram limit
     if len(text) > 4000:
         text = text[:3990] + "\n…"
 
@@ -165,7 +151,6 @@ async def alert_admin(
             },
         )
     except Exception:
-        # Never let alerting crash the main flow
         logger.warning(
             "Failed to send admin alert",
             extra={"_event_name": "alert.delivery_failed", "alert_fingerprint": alert_fingerprint},
@@ -192,7 +177,7 @@ async def alert_admin_shutdown(app: Application, reason: str = "normal") -> None
             parse_mode=fmt_pm,
         )
     except Exception:
-        pass  # Best-effort on shutdown
+        pass
 
 
 async def alert_admin_startup(app: Application) -> None:
@@ -223,7 +208,7 @@ async def alert_admin_startup(app: Application) -> None:
             parse_mode=fmt_pm,
         )
     except Exception:
-        pass  # Best-effort on startup
+        pass
 
 
 async def alert_admin_raw(
@@ -323,7 +308,6 @@ async def alert_admin_unauthorized_user(
         f"<b>Message fingerprint:</b> <code>{content_fingerprint}</code>"
     )
 
-    # Note: url="tg://user?id=USER_ID" opens the user's profile in Telegram clients
     keyboard = InlineKeyboardMarkup(
         [
             [

@@ -630,7 +630,6 @@ async def test_report_theme_keeps_real_diagrams_and_precision_limits_in_browser(
         const center = new DOMPoint(circle.cx.baseVal.value, circle.cy.baseVal.value).matrixTransform(matrix);
         return { dx: glyph.x - center.x, dy: glyph.y - center.y };
       }));
-      // Text-anchor centers the advance width; natural side bearings may differ by a subpixel.
       assert.ok(glyphOffsets.every(({ dx, dy }) => Math.abs(dx) < 1 && Math.abs(dy) < 0.5), JSON.stringify(glyphOffsets));
       const iconOffsets = await page.locator('.brand-mark, .point-symbol, .entry-symbol, .point-arrow, .entry-arrow, .disclosure-icon').evaluateAll(cells => cells.filter(cell => cell.getClientRects().length).map(cell => {
         const svg = cell.querySelector('svg');

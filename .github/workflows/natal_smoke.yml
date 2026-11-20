@@ -2,8 +2,8 @@ name: Natal Smoke Test
 
 on:
   schedule:
-    - cron: '0 3 * * *' # Every day at 3:00 AM UTC
-  workflow_dispatch: # Allow manual trigger
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 jobs:
   smoke-test:

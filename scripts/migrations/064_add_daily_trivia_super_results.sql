@@ -1,5 +1,3 @@
--- 064_add_daily_trivia_super_results.sql
--- Create daily_trivia_super_results table for tracking super game attempts
 
 CREATE TABLE IF NOT EXISTS public.daily_trivia_super_results (
     user_id       BIGINT   NOT NULL,

@@ -1,4 +1,3 @@
-# app/utils/multimodal_processor.py
 """Multimodal content processor — transcribes/describes media via Gemini models.
 
 Handles voice messages, images, and document text with:
@@ -26,17 +25,12 @@ from app.providers.gemini import get_cached_genai_client
 from app.providers.gemini_config import build_generate_content_config
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
-# ── Constants ────────────────────────────────────────────────────────────────
-
 TRANSCRIPTION_MODEL = "gemini-3.1-flash-lite"
 IMAGE_DESCRIPTION_MODEL = "gemini-3.1-flash-lite"
 
-# High thinking level for accurate ASR on noisy/accented audio.
 THINKING_CONFIG_HIGH = types.ThinkingConfig(thinking_level="high")  # type: ignore[arg-type]
-# Medium thinking for faster image descriptions.
 THINKING_CONFIG_MEDIUM = types.ThinkingConfig(thinking_level="medium")  # type: ignore[arg-type]
 
-# Resilience policy for media processing (tuned for API quota/network hiccups)
 _MEDIA_RESILIENCE = ResiliencePolicy(
     max_retries=2,
     base_delay_s=1.5,
@@ -44,7 +38,6 @@ _MEDIA_RESILIENCE = ResiliencePolicy(
     timeout_s=30.0,
 )
 
-# ── System Prompts ───────────────────────────────────────────────────────────
 
 _VOICE_SYSTEM_PROMPT = (
     "You are a precise speech-to-text transcription assistant.\n"
@@ -83,9 +76,6 @@ _DOCUMENT_SUMMARY_PROMPT = (
     "do not invent missing decisions, action owners or deadlines.\n"
 )
 
-# Separate prompt used ONLY by process_media_for_memory (LTM path).
-# Adds modality/tone metadata tags before the summary to enrich the embedding
-# vector for hybrid RRF retrieval (semantic + pg_trgm keyword matching).
 _VOICE_LTM_PROMPT = (
     "You are a precise speech-to-text analysis assistant.\n"
     "Rules:\n"
@@ -105,9 +95,6 @@ register_controlled_text("media.asr", _VOICE_SYSTEM_PROMPT, "ASR: транскр
 register_controlled_text("media.image_description", _IMAGE_SYSTEM_PROMPT, "Анализ изображения")
 register_controlled_text("media.document_summary", _DOCUMENT_SUMMARY_PROMPT, "Краткое содержание документа")
 register_controlled_text("media.voice_memory", _VOICE_LTM_PROMPT, "Голос для памяти")
-
-
-# ── Internal: resolve a working API key ──────────────────────────────────────
 
 
 async def _get_api_key_for_media(
@@ -135,7 +122,6 @@ async def _get_api_key_for_media(
     return None, None
 
 
-# Max number of different API keys to try before giving up
 _MAX_KEY_ROTATIONS = 3
 
 
@@ -200,7 +186,6 @@ async def _generate_with_resilience(
     status_mgr = get_key_status_manager()
 
     for key_attempt in range(_MAX_KEY_ROTATIONS):
-        # Resolve a key, excluding already-tried ones
         current_api_key = api_key if key_attempt == 0 else None
         current_key_hash: str | None = None
 
@@ -265,7 +250,6 @@ async def _generate_with_resilience(
             return text.strip() if text else None
 
         try:
-            # Pre-create circuit breaker with media-specific config (60s monitor)
             from app.circuit_breaker import CircuitBreakerConfig
             from app.circuit_breaker import get_circuit_breaker as _get_cb
 
@@ -285,7 +269,6 @@ async def _generate_with_resilience(
                 circuit_name=_media_cb_name,
             )
 
-            # Record success so the key avoids unnecessary cooldowns
             await status_mgr.record_success(current_key_hash, model)
 
             if attempts > 1 or key_attempt > 0:
@@ -306,7 +289,6 @@ async def _generate_with_resilience(
             error_category = classify_key_error(error_str)
             is_transient = is_retryable_exception(e)
 
-            # Suspend key on 503 / 429 using KeyStatusManager so other pipelines avoid it
             if error_category != "permanent" or "api_key" in error_str.lower() or "400" in error_str:
                 await status_mgr.suspend_key(
                     current_key_hash,
@@ -323,13 +305,11 @@ async def _generate_with_resilience(
                     _MAX_KEY_ROTATIONS,
                     e,
                 )
-                continue  # Try next key
+                continue
             else:
-                # Non-transient (invalid key, bad request) — don't rotate
                 logging.error("Media processing failed with non-transient error (%s): %s", model, e)
                 break
 
-    # All keys exhausted
     logging.error(
         "Media processing failed after %d key rotations (%s): %s",
         len(tried_key_hashes),
@@ -345,10 +325,6 @@ async def _generate_with_resilience(
     return None
 
 
-# ── Intent classification model chain ───────────────────────────────────────
-# Tried in order until one succeeds. gemini-3.1-flash-lite is first (cheap);
-# gemini-3.5-flash is the stable high-quality fallback;
-# opencode-go/big-pickle is used as final insurance (different infra pool).
 _INTENT_MODEL_CHAIN = [
     "gemini-3.1-flash-lite",
     "gemini-3.5-flash",
@@ -395,7 +371,6 @@ async def _classify_intent_plan(prompt_parts: list[types.Part], api_key: str | N
     for model in model_chain:
         try:
             if is_opencode_model(model):
-                # ── Opencode path ─────────────────────────────────────────
                 from app.handlers.ai_core import _resolve_ai_request
 
                 key_data, model_used, _ = await _resolve_ai_request(model, use_openrouter=False)
@@ -406,7 +381,6 @@ async def _classify_intent_plan(prompt_parts: list[types.Part], api_key: str | N
                     logging.debug("Intent key resolver did not select the configured model")
                     continue
 
-                # Build minimal OpenAI-style history from the single text part
                 text = "".join(p.text for p in prompt_parts if hasattr(p, "text") and p.text)
                 if not text:
                     continue
@@ -424,12 +398,11 @@ async def _classify_intent_plan(prompt_parts: list[types.Part], api_key: str | N
                 logging.debug("Intent Opencode %s returned empty/error, trying next", model)
 
             else:
-                # ── Gemini path (with key rotation) ──────────────────────
                 result = await _generate_with_resilience(
                     parts=prompt_parts,
                     model=model,
                     system_prompt="",
-                    thinking_config=None,  # Disabled: Intent extraction is trivial, avoid CoT overhead
+                    thinking_config=None,
                     api_key=None if policy.explicit else api_key,
                 )
                 if result:
@@ -442,11 +415,6 @@ async def _classify_intent_plan(prompt_parts: list[types.Part], api_key: str | N
 
     logging.warning("All intent classification models failed")
     return None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  PUBLIC API
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 async def transcribe_voice(
@@ -496,7 +464,6 @@ async def _transcribe_pollinations(audio_bytes: bytes, api_key: str | None) -> t
 
     pollinations_provider = get_pollinations_provider()
 
-    # Try Pollinations Whisper first (no Gemini quota consumed)
     raw_text = await pollinations_provider.transcribe_audio(audio_bytes, model="whisper")
 
     if raw_text:
@@ -524,15 +491,11 @@ async def _classify_transcript_intent(raw_text: str, api_key: str | None) -> tup
 async def _transcribe_gemini(
     audio_bytes: bytes, api_key: str | None, *, mime_type: str, model: str
 ) -> tuple[str | None, str, str | None]:
-    # Whisper failed — fall back to full Gemini ASR (transcription + intent in one call)
     logging.info("Pollinations Whisper unavailable, falling back to Gemini ASR")
     audio_part = types.Part(
         inline_data=types.Blob(mime_type=mime_type, data=audio_bytes),
     )
 
-    # Try Gemini ASR through the model chain (lite → 3.5-flash).
-    # Opencode models cannot handle audio blobs so they are excluded here.
-    # Deduplicate in case `model` arg is already gemini-3.5-flash.
     _seen: set[str] = set()
     baseline_models = tuple(m for m in [model, "gemini-3.5-flash"] if not (m in _seen or _seen.add(m)))  # type: ignore[func-returns-value]
     policy = await resolve_process("asr", baseline_models)
@@ -575,26 +538,22 @@ def _parse_voice_intent(raw_text: str) -> tuple[str, str, str | None]:
     """
     lines = raw_text.rstrip().split("\n")
 
-    intent = "conversational"  # default
+    intent = "conversational"
     draw_prompt = None
 
-    # Check last line for INTENT: tag
     if lines and lines[-1].strip().upper().startswith("INTENT:"):
         tag = lines[-1].strip().split(":", 1)[1].strip().lower()
         if tag in ("conversational", "transcription", "search", "draw"):
             intent = tag
         lines.pop()
 
-    # Strip empty lines between intent and draw_prompt just in case
     while lines and not lines[-1].strip():
         lines.pop()
 
-    # If intent is draw, check for DRAW_PROMPT
     if intent == "draw" and lines and lines[-1].strip().upper().startswith("DRAW_PROMPT:"):
         draw_prompt = lines[-1].strip().split(":", 1)[1].strip()
         lines.pop()
 
-    # Strip trailing empty lines left after removing tags
     while lines and not lines[-1].strip():
         lines.pop()
 
@@ -605,8 +564,6 @@ async def _generate_controlled_media(process_id: str, **kwargs: Any) -> str | No
     from app.runtime_settings.result_execution import run_result_process
 
     async def execute(candidate: str, explicit: bool) -> str | None:
-        # A key selected for the legacy model cannot establish health/access for
-        # a different configured model. Resolve against the actual candidate.
         return await _generate_with_resilience(
             **{**kwargs, "model": candidate, "api_key": None if explicit else kwargs.get("api_key")}
         )
@@ -683,7 +640,6 @@ async def summarize_document_text(
 
     model = _normalize_media_model(model, TRANSCRIPTION_MODEL)
 
-    # Truncate to avoid exceeding model context
     truncated = text[:30_000]
 
     text_part = types.Part.from_text(text=truncated)
@@ -696,9 +652,6 @@ async def summarize_document_text(
         thinking_config=THINKING_CONFIG_MEDIUM,
         api_key=api_key,
     )
-
-
-# ── Convenience: full pipeline into long-term memory ─────────────────────────
 
 
 async def process_media_for_memory(
@@ -726,16 +679,12 @@ async def process_media_for_memory(
     Returns:
         Memory ID on success, None on failure.
     """
-    # Determine MIME type defaults
     mime_defaults = {
         "voice": "audio/ogg",
         "image": "image/jpeg",
     }
     effective_mime = mime_type or mime_defaults.get(media_type, "application/octet-stream")
 
-    # The renewable lease spans the raw-media provider call. Opt-out commits a
-    # new generation immediately, then waits until this block exits; a stale
-    # retry after delete/recreate cannot acquire it at all.
     from app.repos.memory_consent import private_data_lease
 
     async with private_data_lease(
@@ -762,10 +711,8 @@ async def process_media_for_memory(
         logging.warning("Media processing returned no text for %s", media_type)
         return None
 
-    # Parse modality/tone tags from LTM-enriched output (voice)
     ltm_metadata = _extract_ltm_tags(extracted) if media_type == "voice" else {}
 
-    # Store in long-term memory
     from app.repos.memory import store_memory
 
     metadata: dict[str, Any] = {"media_type": media_type}
@@ -787,7 +734,6 @@ async def process_media_for_memory(
         expected_epoch=expected_epoch,
     )
 
-    # ── Real-time graph extraction from media (background, non-blocking) ──
     if memory_id and extracted and len(extracted) >= 30:
         from app.repos.memory_autosave import submit_memory_task
 
@@ -833,7 +779,6 @@ async def _extract_graph_from_media(
             expected_epoch=expected_epoch,
         )
 
-        # Attach file_id to memory_nodes created from this media
         if edges > 0 and telegram_file_id and source_memory_id:
             from app.database import db_manager
             from app.repos.db_helpers import clear_user_context, set_user_context
@@ -945,7 +890,7 @@ async def _transcribe_voice_for_ltm(
         parts=[audio_part],
         model=model,
         system_prompt=get_prompt_text("media.voice_memory"),
-        thinking_config=THINKING_CONFIG_MEDIUM,  # LTM path doesn't need HIGH
+        thinking_config=THINKING_CONFIG_MEDIUM,
         api_key=api_key,
     )
 
@@ -969,5 +914,4 @@ def _extract_ltm_tags(text: str) -> dict[str, str]:
         if ":" in item:
             key, val = item.split(":", 1)
             tags[key.strip().lower()] = val.strip()
-        # Skip bare labels like "VOICE" (already captured by media_type)
     return tags

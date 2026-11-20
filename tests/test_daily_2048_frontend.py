@@ -102,7 +102,6 @@ const payload = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
             for (const animation of element.getAnimations()) {
               if (seen.has(animation)) continue;
               seen.add(animation);
-              // Control actual browser timelines, retaining their finish/cancel promises.
               animation.pause();
               animation.currentTime = 0;
               window.heldAnimations.push(animation);
@@ -181,7 +180,6 @@ def test_tiles_keep_identity_and_both_merge_sources_slide_before_value_changes()
         window.slideAnimations = window.originalTiles.flatMap(tile => tile.getAnimations());
         window.movingSourcesAnimate = window.originalTiles.slice(1).every(tile =>
           window.slideAnimations.some(animation => animation.effect.target === tile));
-        // Hold the real slide while Playwright inspects its source and midpoint.
         window.slideAnimations.forEach(animation => { animation.pause(); animation.currentTime = 0; });
       }, { once: true });
     });
@@ -657,7 +655,6 @@ def test_unanswered_move_recovers_connection_without_resending_it():
 def test_fast_confirmed_moves_have_bounded_visible_catchup_then_resume_normal_sliding():
     from app.games.daily_2048 import apply_move
 
-    # The real server move reducer supplies independent authoritative fixtures.
     current = [[2, 2, 4, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
     fixtures = []
     for index in range(24):
@@ -702,7 +699,6 @@ def test_fast_confirmed_moves_have_bounded_visible_catchup_then_resume_normal_sl
     assert.deepEqual(visibleBoard, fixtures.at(-1).board, 'visible tiles must catch up within a bounded animation window');
     await page.evaluate(() => {
       const originalTiles = [...document.querySelectorAll('#tiles .tile')];
-      // Observe in the input event: browser round trips can outlast a normal slide.
       document.addEventListener('keydown', () => {
         const animations = [...document.querySelectorAll('#tiles .tile')].flatMap(tile => tile.getAnimations());
         window.resumedMotion = {

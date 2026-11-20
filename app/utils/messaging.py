@@ -27,7 +27,6 @@ async def send_long_message(
     Использует safe HTML форматирование.
     """
     stop_heartbeat(message.message_id)
-    # Validation состояния deep dive (legacy logic preserved)
     if is_deep_dive:
         try:
             from app.repos.chats import get_user_chat
@@ -44,10 +43,8 @@ async def send_long_message(
             logging.error("Error validating deep dive state: %s", e, exc_info=True)
             is_deep_dive = False
 
-    # Format text в HTML
     formatted_text, parse_mode = format_text(text, parse_mode="HTML")
 
-    # Разбиваем уже отформатированный text, сохраняя теги
     parts = split_text_safe(formatted_text)
 
     is_first_part = True
@@ -57,7 +54,6 @@ async def send_long_message(
         if not part or not part.strip():
             continue
 
-        # Determine the keyboard
         is_last_part = i == len(parts) - 1
         current_reply_markup = None
 
@@ -68,10 +64,8 @@ async def send_long_message(
         else:
             current_reply_markup = ai_response_keyboard()
 
-        # Sending logic
         try:
             if is_first_part:
-                # Try to edit first
                 await _get_telegram_cb().call(
                     current_message.edit_text,
                     part,
@@ -80,7 +74,6 @@ async def send_long_message(
                     disable_web_page_preview=True,
                 )
             else:
-                # Reply for subsequent parts
                 current_message = await _get_telegram_cb().call(
                     current_message.reply_text,
                     part,
@@ -92,14 +85,12 @@ async def send_long_message(
         except BadRequest as e:
             logging.warning("Failed to send/edit message (parse_mode=%s): %s", parse_mode, e)
 
-            # Retry without formatting if HTML fails (should be rare with our validator)
             try:
                 plain_text = strip_formatting(part)
                 if is_first_part:
                     try:
                         await current_message.edit_text(plain_text, reply_markup=current_reply_markup)
                     except BadRequest:
-                        # If edit fails (e.g. content same), try sending new
                         current_message = await current_message.reply_text(
                             plain_text, reply_markup=current_reply_markup
                         )

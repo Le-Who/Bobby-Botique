@@ -7,7 +7,7 @@ class TestMemoryConstants:
     def test_embedding_dimension_matches_gemini(self):
         from app.repos.memory import EMBEDDING_DIMENSION
 
-        assert EMBEDDING_DIMENSION == 768  # gemini-embedding-2-preview default sweet spot dimension
+        assert EMBEDDING_DIMENSION == 768
 
     def test_max_memories_per_user_is_bounded(self):
         from app.repos.memory import MAX_MEMORIES_PER_USER

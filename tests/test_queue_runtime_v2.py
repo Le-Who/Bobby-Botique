@@ -176,9 +176,6 @@ async def test_ten_thousand_mixed_admissions_outage_and_drain_stay_bounded(monke
     from app.queue_store import RedisQueueStore
     from tests.test_redis_queue import WireRedis
 
-    # Capacity and recovery are the subject here. Logging integration tests can
-    # leave INFO handlers installed; retain warnings/errors without turning
-    # 10,000 admissions into a synchronous log-writer throughput benchmark.
     caplog.set_level(logging.WARNING, logger="app.observability")
     redis = WireRedis()
     redis.fail_after.add("admit")
@@ -247,7 +244,6 @@ async def test_idle_workers_back_off_without_scheduler_wake_storm():
     await queue.start()
     try:
         await asyncio.sleep(3.2)
-        # Seven workers get an initial probe and bounded early discovery probes.
         assert 7 <= store.claims <= 28
         assert store.sweeps <= 2
     finally:
@@ -391,8 +387,6 @@ async def test_max_idle_backoff_discovers_remote_delayed_and_expired_owner_work_
             await store.claim(lane, "dead-owner")
     await queue.start()
     try:
-        # The fifth empty probe follows 0.5, 1, 2, and 4 second waits. No local
-        # admission notification is sent to this queue for the new remote job.
         await asyncio.wait_for(idle_backoff.wait(), 9)
         await store.admit(
             JobEnvelope(

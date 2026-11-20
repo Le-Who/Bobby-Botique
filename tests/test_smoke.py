@@ -11,10 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# ============================================================================
-# 1. QUART HEALTH ENDPOINT
-# ============================================================================
-
 
 class TestHealthEndpoint:
     """Test the /health endpoint returns correct structure."""
@@ -33,7 +29,7 @@ class TestHealthEndpoint:
             resp = await client.get("/health")
             data = await resp.get_json()
 
-            assert resp.status_code in (200, 503)  # 503 if DB not connected
+            assert resp.status_code in (200, 503)
             assert "status" in data
             assert data["status"] in ("healthy", "unhealthy")
             assert "services" in data
@@ -55,11 +51,6 @@ class TestHealthEndpoint:
                 "not_configured",
                 "unknown",
             )
-
-
-# ============================================================================
-# 2. PROMETHEUS METRICS ENDPOINT
-# ============================================================================
 
 
 class TestMetricsEndpoint:
@@ -96,11 +87,6 @@ class TestMetricsEndpoint:
             assert "gembot_process_memory_bytes" in text
 
 
-# ============================================================================
-# 3. PROMETHEUS GENERATOR UNIT TEST
-# ============================================================================
-
-
 class TestPrometheusGenerator:
     """Test prometheus.py generates valid text exposition."""
 
@@ -112,22 +98,15 @@ class TestPrometheusGenerator:
 
         assert isinstance(text, str)
         assert text.endswith("\n")
-        # Check required metrics exist
         assert "gembot_uptime_seconds" in text
         assert "gembot_process_memory_bytes" in text
         assert "gembot_active_users" in text
 
-        # Check format: every non-empty, non-comment line has metric_name value
         for line in text.strip().split("\n"):
             if not line or line.startswith("#"):
                 continue
             parts = line.split()
             assert len(parts) >= 2, f"Invalid metric line: {line}"
-
-
-# ============================================================================
-# 4. BOT HANDLER REGISTRATION
-# ============================================================================
 
 
 class TestBotHandlerRegistration:
@@ -140,7 +119,6 @@ class TestBotHandlerRegistration:
         mock_app = MagicMock()
         mock_app.add_handler = MagicMock()
 
-        # Should not raise
         commands.register(mock_app)
         assert mock_app.add_handler.call_count > 0
 
@@ -180,11 +158,6 @@ class TestBotHandlerRegistration:
 
         messages.register(mock_app)
         assert mock_app.add_handler.call_count > 0
-
-
-# ============================================================================
-# 5. ADMIN ALERTS STARTUP FLOW
-# ============================================================================
 
 
 class TestAdminAlertsStartupFlow:
@@ -231,11 +204,6 @@ class TestAdminAlertsStartupFlow:
         _alert_timestamps.clear()
 
 
-# ============================================================================
-# 6. FULL PIPELINE SMOKE: error tag → detect → prometheus counter
-# ============================================================================
-
-
 class TestFullPipelineSmoke:
     """Smoke test: error flows through the entire pipeline."""
 
@@ -245,16 +213,10 @@ class TestFullPipelineSmoke:
         from app.errors import ErrorCode, is_error_message, tag_error
         from app.metrics import metrics_collector
 
-        # 1. Tag an error
         error_text = tag_error(ErrorCode.RATE_LIMIT, "Test rate limit")
 
-        # 2. Detect it
         assert is_error_message(error_text) is True
 
-        # 3. Process synchronously — record_error() only enqueues and
-        #    the background consumer loop is not running in unit tests.
-        #    _process_event() is the only way to test the pipeline without
-        #    starting the full async event processor.
         metrics_collector._process_event(
             {
                 "type": "error",
@@ -265,7 +227,6 @@ class TestFullPipelineSmoke:
             }
         )
 
-        # 4. Verify error was logged
         assert len(metrics_collector.error_log) > 0
         last_error = list(metrics_collector.error_log)[-1]
         assert "rate_limit" in str(last_error)

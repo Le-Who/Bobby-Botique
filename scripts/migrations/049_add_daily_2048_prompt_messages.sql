@@ -1,6 +1,3 @@
--- 049_add_daily_2048_prompt_messages.sql
--- Track Daily 2048 invitation messages so completion can edit the original
--- cover prompt into the result instead of sending a separate message.
 
 CREATE TABLE IF NOT EXISTS public.daily_2048_prompt_messages (
     id          BIGSERIAL PRIMARY KEY,

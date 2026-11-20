@@ -31,22 +31,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Message Effect IDs ────────────────────────────────────────────────────────
-# Telegram-defined static effect IDs (as of Bot API 7.2).
-# Source: https://core.telegram.org/bots/api#sendmessage  (message_effect_id)
-EFFECT_FIRE = "5104841245755180586"  # 🔥
-EFFECT_CONFETTI = "5046509860389126442"  # 🎉
-EFFECT_HEART = "5159385139981059251"  # ❤️
-EFFECT_THUMBSUP = "5107584321108051014"  # 👍
+EFFECT_FIRE = "5104841245755180586"
+EFFECT_CONFETTI = "5046509860389126442"
+EFFECT_HEART = "5159385139981059251"
+EFFECT_THUMBSUP = "5107584321108051014"
 
-# ── Reaction Emoji Constants ──────────────────────────────────────────────────
-REACTION_SEARCH = "🔍"  # searching / thinking
-REACTION_LIGHTNING = "⚡"  # done fast
-REACTION_WARNING = "⚠️"  # error / interruption
-REACTION_EYES = "👀"  # reading / processing
-
-
-# ── Reaction Helpers ──────────────────────────────────────────────────────────
+REACTION_SEARCH = "🔍"
+REACTION_LIGHTNING = "⚡"
+REACTION_WARNING = "⚠️"
+REACTION_EYES = "👀"
 
 
 async def set_message_reaction(
@@ -95,11 +88,6 @@ async def set_error_reaction(bot: Bot, chat_id: int, message_id: int) -> None:
     await set_message_reaction(bot, chat_id, message_id, REACTION_WARNING)
 
 
-# ── Expandable Blockquote Formatting ─────────────────────────────────────────
-
-# Telegram HTML expandable blockquote (Bot API 7.0+)
-# Syntax:  <blockquote expandable>...</blockquote>
-# The block is collapsed by default and expanded on tap.
 _EXPANDABLE_OPEN = "<blockquote expandable>"
 _EXPANDABLE_CLOSE = "</blockquote>"
 
@@ -122,9 +110,6 @@ def wrap_in_expandable_blockquote(content: str, *, label: str | None = None) -> 
         result += f"<b>{html.escape(label)}</b>\n"
     result += f"{_EXPANDABLE_OPEN}{body}{_EXPANDABLE_CLOSE}"
     return result
-
-
-# ── tg-time HTML tag ──────────────────────────────────────────────────────────
 
 
 def tg_time_tag(unix_timestamp: int, *, fmt: str = "wDT") -> str:
@@ -157,14 +142,6 @@ def tg_time_tag(unix_timestamp: int, *, fmt: str = "wDT") -> str:
     return f'<tg-time unix="{unix_timestamp}" format="{fmt}">{html.escape(fallback)}</tg-time>'
 
 
-# ── RLHF Feedback Buttons (Inline Keyboard) ──────────────────────────────────
-
-# Telegram Bot API limits non-premium bots to 1 reaction per message.
-# Pre-placing two reactions (👍+👎) via setMessageReaction is therefore BROKEN.
-# Instead, we use inline keyboard buttons — the industry-standard pattern.
-#
-# UX: To avoid cluttering every response (already 6-8 action buttons),
-# we show a single "Оценить" toggle. Tapping it reveals 👍/👎 choices.
 FEEDBACK_THUMBSUP = "👍"
 FEEDBACK_THUMBSDOWN = "👎"
 
@@ -185,9 +162,6 @@ def make_feedback_buttons() -> list:
     ]
 
 
-# ── CopyTextButton helper ─────────────────────────────────────────────────────
-
-
 def make_copy_text_button(text: str, button_label: str = "📋 Скопировать") -> InlineKeyboardButton | None:
     """Create a Telegram InlineKeyboardButton that copies *text* to clipboard.
 
@@ -206,7 +180,7 @@ def make_copy_text_button(text: str, button_label: str = "📋 Скопиров�
     try:
         from telegram import CopyTextButton, InlineKeyboardButton
 
-        copy_payload = text[:256]  # API limit
+        copy_payload = text[:256]
         return InlineKeyboardButton(
             text=button_label,
             copy_text=CopyTextButton(text=copy_payload),

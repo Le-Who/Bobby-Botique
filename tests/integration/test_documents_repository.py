@@ -85,8 +85,6 @@ async def test_new_save_survives_retention_inside_an_earlier_opened_transaction(
 ):
     conn = db_conn_with_user
     monkeypatch.setattr(repository.settings, "MAX_DOCUMENTS_PER_USER", 1)
-    # The fixture's outer transaction predates this row. CURRENT_TIMESTAMP for
-    # the later save would still be older than this row's wall-clock timestamp.
     await conn.execute(
         "INSERT INTO user_documents(user_id, filename, content, file_hash, created_at) "
         "VALUES($1, 'existing.pdf', 'existing', 'existing', clock_timestamp())",

@@ -85,13 +85,11 @@ class TestSystemHealthRecovery:
 
     def test_recovery_from_degraded_to_healthy(self):
         """Simulates a service recovering: health snapshot reflects new state."""
-        # During outage
         unhealthy = SystemHealth(database=ServiceStatus.UNAVAILABLE)
         assert unhealthy.overall == ServiceStatus.DEGRADED
         can, _ = can_process_message(unhealthy)
         assert can is False
 
-        # After recovery — new snapshot
         recovered = SystemHealth(database=ServiceStatus.HEALTHY)
         assert recovered.overall == ServiceStatus.HEALTHY
         can, _ = can_process_message(recovered)

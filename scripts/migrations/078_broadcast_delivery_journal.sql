@@ -1,4 +1,3 @@
--- Telegram receipts are observations, never proof of exactly-once delivery.
 CREATE TABLE IF NOT EXISTS public.broadcast_journal_coverage (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
     started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()

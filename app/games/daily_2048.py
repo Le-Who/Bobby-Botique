@@ -191,8 +191,6 @@ async def ensure_prepared_puzzles(
     async def prepare_date(puzzle_date: date) -> repo.Daily2048Puzzle | None:
         for attempt in range(2):
             try:
-                # ensure_puzzle reads first and inserts only at revision zero,
-                # so a retry also recovers an uncertain commit without replacing it.
                 return await repo.ensure_puzzle(puzzle_date)
             except (TimeoutError, ConnectionError, asyncpg.PostgresConnectionError) as exc:
                 if attempt == 0:
@@ -206,7 +204,6 @@ async def ensure_prepared_puzzles(
                 logger.warning("daily 2048 preparation deferred date=%s error_type=%s", puzzle_date, type(exc).__name__)
         return None
 
-    # Prepare dates concurrently, but a future-date outage must not block today's delivery.
     dates = [start_date + timedelta(days=offset) for offset in range(max(0, days_ahead) + 1)]
     tasks = [asyncio.create_task(prepare_date(puzzle_date)) for puzzle_date in dates]
     try:
@@ -332,8 +329,6 @@ async def process_move(
         client_board_before=client_board_before,
         client_board_after=client_board_after,
     )
-    # Valid client slides recover gameplay, but only the persisted source board
-    # establishes ranked provenance. Once lost, it cannot be recovered later.
     recordable = result.recordable and (
         client_outcome is None or repo.normalize_board(client_board_before) == result.board
     )

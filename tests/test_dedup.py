@@ -64,7 +64,6 @@ class TestIsDuplicateRequest:
     async def test_request_after_window_not_duplicate(self):
         assert await is_duplicate_request(1, "hello") is False
 
-        # Simulate time passing beyond the window
         user_hashes = _recent_requests[1]
         for h in user_hashes:
             user_hashes[h] = time.monotonic() - DEDUP_WINDOW_SECONDS - 1
@@ -80,12 +79,10 @@ class TestIsDuplicateRequest:
     @pytest.mark.asyncio
     async def test_eviction_when_over_limit(self):
         """Oldest hashes should be evicted when limit exceeded."""
-        # Fill to max + 1
         for i in range(25):
             await is_duplicate_request(1, f"msg-{i}")
 
-        # Should have been capped
-        assert len(_recent_requests[1]) <= 21  # 20 max + 1 before eviction
+        assert len(_recent_requests[1]) <= 21
 
 
 class TestClearUserDedup:
@@ -98,4 +95,4 @@ class TestClearUserDedup:
         assert 1 not in _recent_requests
 
     def test_clear_nonexistent_user_no_error(self):
-        clear_user_dedup(9999)  # Should not raise
+        clear_user_dedup(9999)

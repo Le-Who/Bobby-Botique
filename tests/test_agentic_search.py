@@ -24,7 +24,6 @@ def mock_status_callback():
 @pytest.mark.asyncio
 async def test_agentic_search_direct_answer(mock_agent, mock_status_callback):
     """Test when the model answers directly without using any tools."""
-    # Setup mock response without function calls
     mock_response = MagicMock()
     mock_response.candidates = [
         MagicMock(content=MagicMock(parts=[MagicMock(function_call=None, text="Direct answer")]))
@@ -41,7 +40,6 @@ async def test_agentic_search_direct_answer(mock_agent, mock_status_callback):
 @pytest.mark.asyncio
 async def test_agentic_search_conclude_tool(mock_agent, mock_status_callback):
     """Test when the model uses the conclude_research tool."""
-    # Setup mock response with conclude_research
     call_mock = MagicMock()
     call_mock.name = "conclude_research"
     call_mock.args = {"answer": "Concluded answer"}
@@ -65,7 +63,6 @@ async def test_agentic_search_conclude_tool(mock_agent, mock_status_callback):
 async def test_agentic_search_tool_loop(mock_agent, mock_status_callback):
     """Test a loop where the model searches, then concludes."""
 
-    # First response: call search_web
     search_call = MagicMock()
     search_call.name = "search_web"
     search_call.args = {"queries": ["test query"]}
@@ -76,7 +73,6 @@ async def test_agentic_search_tool_loop(mock_agent, mock_status_callback):
     resp1 = MagicMock()
     resp1.candidates = [MagicMock(content=MagicMock(parts=[search_part]))]
 
-    # Second response: call conclude_research
     conclude_call = MagicMock()
     conclude_call.name = "conclude_research"
     conclude_call.args = {"answer": "Final synthesized answer"}
@@ -105,7 +101,6 @@ async def test_agentic_search_max_pages_enforcement(mock_agent, mock_status_call
     mock_agent.max_pages = 1
     mock_agent.max_iterations = 3
 
-    # First response: read page 1 and page 2 in parallel
     read_call1 = MagicMock()
     read_call1.name = "read_page"
     read_call1.args = {"url": "http://page1.com"}
@@ -119,7 +114,6 @@ async def test_agentic_search_max_pages_enforcement(mock_agent, mock_status_call
     resp1 = MagicMock()
     resp1.candidates = [MagicMock(content=MagicMock(parts=[part1, part2]))]
 
-    # Second response: conclude
     conclude_call = MagicMock()
     conclude_call.name = "conclude_research"
     conclude_call.args = {"answer": "Done reading"}
@@ -136,7 +130,6 @@ async def test_agentic_search_max_pages_enforcement(mock_agent, mock_status_call
         result = await mock_agent.run("Read two pages", mock_status_callback)
 
         assert result.answer == "Done reading"
-        # read_url should only be called ONCE because the second call hits the limit
         mock_read.assert_called_once_with("http://page1.com", timeout=12.0)
 
 

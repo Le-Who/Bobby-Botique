@@ -35,8 +35,6 @@ class ScheduledDeliveryOwner(DeliveryOwner):
 
     async def _send(self, method, args, kwargs):
         response = await super()._send(method, args, kwargs)
-        # Message.edit_text/reply_text call the bound bot. Every replacement
-        # Message must retain this owner, including renderer split fallbacks.
         if isinstance(response, Message):
             response.set_bot(self)
         return response
@@ -51,8 +49,6 @@ class ScheduledDeliveryOwner(DeliveryOwner):
         return await self._send("send_document", args, kwargs)
 
     async def edit_message_reply_markup(self, *args, **kwargs):
-        # Keyboard-only edits have no content receipt but still require the
-        # current source/epoch. They cannot create a second reminder response.
         await self.checkpoint()
         return await self.bot.edit_message_reply_markup(*args, **kwargs)
 
@@ -118,8 +114,6 @@ async def _deliver_owned(owner, helper):
             try:
                 return await task
             except asyncio.CancelledError:
-                # Cancellation before the child starts cannot have a transport
-                # effect; the journal still decides whether release is safe.
                 return owner.result or DeliveryResult("failed", "worker_interrupted", True)
 
         result, interrupted = await _complete_cleanup(drain())
@@ -152,8 +146,6 @@ async def run_scheduled_delivery(claim, bot, helper, *, ai_response=False):
                 result, interrupted = await _deliver_owned(owner, helper)
                 cancelled |= interrupted
             elif await journal.is_current(claim):
-                # Lease acquisition also fails closed on temporary database
-                # errors. A still-current, untouched claim can safely retry.
                 result = DeliveryResult("failed", "private_data_lease_unavailable", True)
             worker = asyncio.current_task()
             cancelled |= worker is not None and bool(worker.cancelling())

@@ -85,8 +85,6 @@ class DeliveryOwner:
                 raise DeliveryQuarantined("recipient_ownership_lost")
             attempt_id = attempt["attempt_id"]
             try:
-                # Subscription, account epoch and queue owner are rechecked for
-                # EACH call, including chunks and a bounded RetryAfter retry.
                 await self.checkpoint()
             except JobCancelRequested, JobOwnershipLost:
                 self.result = DeliveryResult("skipped", "cancel_requested")

@@ -44,11 +44,6 @@ def mock_deps():
         yield {"query": m_query, "exec": m_exec, "mgr": m_mgr, "conn": mock_conn}
 
 
-# ---------------------------------------------------------------------------
-# get_model_daily_limit
-# ---------------------------------------------------------------------------
-
-
 class TestGetModelDailyLimit:
     @pytest.mark.asyncio
     async def test_returns_cached_limit(self, mock_deps):
@@ -79,11 +74,6 @@ class TestGetModelDailyLimit:
         assert result is None
 
 
-# ---------------------------------------------------------------------------
-# invalidate_key_cache
-# ---------------------------------------------------------------------------
-
-
 class TestInvalidateKeyCache:
     @pytest.mark.asyncio
     async def test_clears_specific_model(self, mock_deps):
@@ -101,11 +91,6 @@ class TestInvalidateKeyCache:
         mock_deps["mgr"]._active_keys_cache = {"m1": {}, "m2": {}}
         await invalidate_key_cache(None)
         assert len(mock_deps["mgr"]._active_keys_cache) == 0
-
-
-# ---------------------------------------------------------------------------
-# get_available_gemini_key
-# ---------------------------------------------------------------------------
 
 
 class TestGetAvailableGeminiKey:
@@ -151,18 +136,12 @@ class TestGetAvailableGeminiKey:
             assert result is None
 
 
-# ---------------------------------------------------------------------------
-# increment_gemini_key_usage
-# ---------------------------------------------------------------------------
-
-
 class TestIncrementGeminiKeyUsage:
     @pytest.mark.asyncio
     async def test_calls_upsert(self, mock_deps):
         from app.repos import keys as keys_mod
         from app.repos.keys import increment_gemini_key_usage
 
-        # Mock the internal functions directly instead of chaining db_query
         with (
             patch.object(keys_mod, "_gemini_km") as mock_km,
             patch.object(
@@ -175,11 +154,6 @@ class TestIncrementGeminiKeyUsage:
             mock_km.increment_usage = AsyncMock(return_value=[{"request_count": 5}])
             await increment_gemini_key_usage("hash123", "test-model")
             mock_km.increment_usage.assert_called_once_with("hash123", "test-model")
-
-
-# ---------------------------------------------------------------------------
-# DailyKeyManager
-# ---------------------------------------------------------------------------
 
 
 class TestDailyKeyManager:
@@ -201,11 +175,6 @@ class TestDailyKeyManager:
         assert "INSERT INTO key_usage" in query
 
 
-# ---------------------------------------------------------------------------
-# MonthlyKeyManager
-# ---------------------------------------------------------------------------
-
-
 class TestMonthlyKeyManager:
     def test_init(self):
         from app.repos.keys import MonthlyKeyManager
@@ -223,11 +192,6 @@ class TestMonthlyKeyManager:
         mock_deps["query"].assert_called_once()
         query = mock_deps["query"].call_args[0][0]
         assert "tavily_key_usage" in query
-
-
-# ---------------------------------------------------------------------------
-# get_available_openrouter_key
-# ---------------------------------------------------------------------------
 
 
 class TestGetAvailableOpenrouterKey:

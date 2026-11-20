@@ -78,8 +78,6 @@ async def test_stale_stop_does_not_cancel_current_work_or_edit_a_final_response(
 async def test_old_final_control_cannot_cancel_a_new_preplaceholder_admission(pending):
     owner = pending()
     await asyncio.sleep(0)
-    # The previous reply is final; a newer handler owns admission while its
-    # replacement placeholder is still being sent, so last_message has not moved.
     heartbeat.stop_heartbeat(1100)
     query = _query()
     await callbacks._cancel_generation_callback(

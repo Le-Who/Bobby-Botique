@@ -98,7 +98,7 @@ async def test_manual_reading_uses_subscription_without_changing_delivery(monkey
         "app.intent_router._handle_horoscope", AsyncMock(return_value=SimpleNamespace(text="Прогноз готов"))
     )
     update, context = request(f"horo_settings:now:{kind}")
-    context.user_data["horo_sign"] = "aries"  # An unrelated unfinished setup draft.
+    context.user_data["horo_sign"] = "aries"
     await horoscope.horoscope_settings_callback(update, context)
     await asyncio.gather(*background_jobs)
     sent = context.bot.send_message.await_args

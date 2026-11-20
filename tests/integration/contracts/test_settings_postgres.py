@@ -13,7 +13,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 @pytest.mark.parametrize("existing", [False, True], ids=["absent-row", "existing-row"])
 async def test_independent_store_cas_has_one_atomic_winner(contract_pool, db_conn, monkeypatch, existing):
-    # Removing either INSERT conflict protection or UPDATE raw-value CAS loses this race.
     initial = store.RuntimeSettingsStore()
     if existing:
         await initial.set_value("process:seed", "preserved", expected_revision=0, actor="seed")
@@ -81,7 +80,6 @@ async def test_independent_store_cas_has_one_atomic_winner(contract_pool, db_con
 
 
 async def test_canceled_settings_write_rolls_back_document_and_admin_context(contract_pool, db_conn, monkeypatch):
-    # Cancellation after real INSERT but before transaction exit must undo the whole document.
     class CancelAfterWrite:
         def __init__(self, connection):
             self.connection = connection

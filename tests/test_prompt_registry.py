@@ -21,8 +21,6 @@ from app.prompt_registry import (
     reset_registry,
 )
 
-# ── Token estimation ─────────────────────────────────────────────────────────
-
 
 class TestEstimateTokensCyrillic:
     def test_empty_string(self):
@@ -31,14 +29,11 @@ class TestEstimateTokensCyrillic:
     def test_ascii_text(self):
         tokens = estimate_tokens_cyrillic("Hello world")
         assert tokens > 0
-        # ASCII: ~11 bytes UTF-8 // 3 ≈ 3
         assert tokens == len(b"Hello world") // 3
 
     def test_cyrillic_text(self):
         text = "Привет мир"
         tokens = estimate_tokens_cyrillic(text)
-        # Cyrillic: 2 bytes per char in UTF-8, so ~20 bytes // 3 ≈ 6
-        # Old method: len("Привет мир") // 4 = 10 // 4 = 2 (underestimates!)
         old_estimate = len(text) // 4
         assert tokens > old_estimate, "Cyrillic estimation should be higher than naive len//4"
 
@@ -49,9 +44,6 @@ class TestEstimateTokensCyrillic:
 
     def test_minimum_one_token(self):
         assert estimate_tokens_cyrillic("a") >= 1
-
-
-# ── PromptTemplate ────────────────────────────────────────────────────────────
 
 
 class TestPromptTemplate:
@@ -87,9 +79,6 @@ class TestPromptTemplate:
             assert tmpl.version, f"{tmpl.name} has no version"
             assert tmpl.name, "Template has no name"
             assert tmpl.purpose, f"{tmpl.name} has no purpose"
-
-
-# ── PromptRegistry ────────────────────────────────────────────────────────────
 
 
 class TestPromptRegistry:
@@ -133,16 +122,13 @@ class TestPromptRegistry:
     def test_list_templates(self):
         registry = PromptRegistry()
         templates = registry.list_templates()
-        assert len(templates) == 10  # 7 original + 2 summarization + 1 research agent
+        assert len(templates) == 10
 
     def test_version_info(self):
         registry = PromptRegistry()
         versions = registry.get_version_info()
         assert "system_prompt_full" in versions
         assert versions["system_prompt_full"] == SYSTEM_PROMPT_FULL.version
-
-
-# ── compose_system_prompt ─────────────────────────────────────────────────────
 
 
 class TestComposeSystemPrompt:
@@ -154,16 +140,13 @@ class TestComposeSystemPrompt:
         result = registry.compose_system_prompt(role_prompt=None)
         assert "РОЛЬ И ЗАДАЧА" in result
         assert "ИИ-ассистент" in result
-        # Should contain formatting rules (embedded)
         assert "РАЗРЕШЕНО" in result
 
     def test_with_role_uses_compact_by_default(self):
         registry = PromptRegistry()
         result = registry.compose_system_prompt(role_prompt="Ты — преподаватель математики.")
-        # Should have compact system prompt
         assert "ДОПОЛНИТЕЛЬНАЯ РОЛЬ" in result
         assert "Ты — преподаватель математики." in result
-        # Should NOT have full system prompt sections
         assert "FEW-SHOT ПРИМЕРЫ" not in result
 
     def test_with_role_full_mode(self):
@@ -171,23 +154,19 @@ class TestComposeSystemPrompt:
         result = registry.compose_system_prompt(role_prompt="Ты — учитель.", use_compact=False)
         assert "ДОПОЛНИТЕЛЬНАЯ РОЛЬ" in result
         assert "Ты — учитель." in result
-        # Should have full system prompt sections
         assert "РОЛЬ И ЗАДАЧА" in result
 
     def test_caching_works(self):
         registry = PromptRegistry()
         result1 = registry.compose_system_prompt(role_prompt="Test role")
         result2 = registry.compose_system_prompt(role_prompt="Test role")
-        assert result1 is result2  # Same object from cache
+        assert result1 is result2
 
     def test_different_roles_different_results(self):
         registry = PromptRegistry()
         result1 = registry.compose_system_prompt(role_prompt="Role A")
         result2 = registry.compose_system_prompt(role_prompt="Role B")
         assert result1 != result2
-
-
-# ── get_task_prompt ───────────────────────────────────────────────────────────
 
 
 class TestGetTaskPrompt:
@@ -200,7 +179,6 @@ class TestGetTaskPrompt:
         )
         assert "Что такое Python?" in result
         assert "Python is a programming language" in result
-        # Should contain formatting rules
         assert "РАЗРЕШЕНО" in result
 
     def test_url_selection(self):
@@ -218,9 +196,6 @@ class TestGetTaskPrompt:
             registry.get_task_prompt("nonexistent")
 
 
-# ── Shared formatting rules ──────────────────────────────────────────────────
-
-
 class TestFormattingRules:
     def test_formatting_rules_content(self):
         assert "РАЗРЕШЕНО" in FORMATTING_RULES
@@ -232,12 +207,8 @@ class TestFormattingRules:
 
     def test_no_duplicate_rules_in_system_prompts(self):
         """Formatting rules should be referenced via placeholder, not hardcoded."""
-        # The templates should use {formatting_rules} placeholder
         assert "{formatting_rules}" in SYSTEM_PROMPT_FULL.text
         assert "{formatting_rules_compact}" in SYSTEM_PROMPT_COMPACT.text
-
-
-# ── Thread safety ─────────────────────────────────────────────────────────────
 
 
 def test_late_domain_registration_reads_baseline_inside_pinned_revision(monkeypatch):
@@ -274,11 +245,7 @@ class TestThreadSafety:
             t.join()
 
         assert not errors
-        # All threads should get the same instance
         assert len(set(results)) == 1
-
-
-# ── No jailbreak markers ─────────────────────────────────────────────────────
 
 
 class TestNoJailbreakMarkers:

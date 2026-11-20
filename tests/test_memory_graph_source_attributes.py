@@ -95,8 +95,6 @@ def _assert_aggregate(conn, result, sources):
 @pytest.mark.parametrize("alias", [False, True], ids=["exact", "semantic-alias"])
 @pytest.mark.parametrize("reverse", [False, True], ids=["weak-first", "strong-first"])
 async def test_duplicate_edge_keeps_each_sources_own_attributes(alias, reverse):
-    # A max/OR merge before provenance serialization would strengthen source 77
-    # using source 88's evidence, even after 88 is deleted.
     edges = [
         _edge(),
         _edge(source="Alias" if alias else "Alice", sources=(88,), weight=0.9, core=True, embedding=(0.8, 0.9)),

@@ -41,17 +41,11 @@ def _suppress_persist():
         yield
 
 
-# Use unique user IDs per test to avoid cross-test state pollution
 _UID = iter(range(900_000, 999_999))
 
 
 def uid():
     return next(_UID)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# UserState init
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestUserStateInit:
@@ -69,11 +63,6 @@ class TestUserStateInit:
 
         s = UserState(user_id=2)
         assert isinstance(s.lock, asyncio.Lock)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Document mode lifecycle
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestDocumentMode:
@@ -96,11 +85,6 @@ class TestDocumentMode:
         clear_document_state(u)
         assert is_in_document_mode(u) is False
         assert get_selected_document_id(u) is None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Custom role creation lifecycle
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestCustomRoleLifecycle:
@@ -132,11 +116,6 @@ class TestCustomRoleLifecycle:
         assert get_user_state(u).generating_custom_role is True
         set_generating_custom_role(u, False)
         assert get_user_state(u).generating_custom_role is False
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Manual role creation lifecycle
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestManualRoleLifecycle:
@@ -180,11 +159,6 @@ class TestManualRoleLifecycle:
         assert is_awaiting_manual_role_title(u) is False
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Last message (retry)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
 class TestLastMessage:
     def test_default_is_none(self):
         u = uid()
@@ -194,11 +168,6 @@ class TestLastMessage:
         u = uid()
         set_last_sent_message(u, "Hello world")
         assert get_last_sent_message(u) == "Hello world"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Public API helpers
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestPublicAPI:

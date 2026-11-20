@@ -66,7 +66,6 @@ async def probe(api_key: str, *, compare_legacy: bool) -> list[dict]:
     results = []
     provider = OpenAIProvider(api_key)
     try:
-        # Interleave identical cases; there is no concurrency or hidden retry.
         for case, prompt in CASES:
             for model, effort in candidates:
                 model_id = f"openai-direct/{model}"
@@ -110,7 +109,6 @@ async def probe(api_key: str, *, compare_legacy: bool) -> list[dict]:
                             elif isinstance(event, StreamFailed):
                                 row.update(completed=False, error=event.code.value, phase=event.phase.value)
                 except Exception as exc:
-                    # Exception text may contain transport data; record only the type.
                     row.update(completed=False, error=type(exc).__name__)
                 answer = "".join(chunks)
                 row.update(

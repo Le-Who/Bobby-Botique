@@ -73,9 +73,6 @@ def make_placeholder(user_id=123):
     return msg
 
 
-# ── QnA search — happy path (Google Search Grounding) ────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_qna_search_happy_path():
     """QnA search uses typed delivery with provider-search grounding."""
@@ -315,9 +312,6 @@ async def test_qna_search_typed_failure_does_not_duplicate_delivery(partial):
     assert consume_operation_failure() is True
 
 
-# ── Research agent — search fails ─────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_research_agent_search_exception():
     """Research agent handles search service exception."""
@@ -343,9 +337,6 @@ async def test_research_agent_search_exception():
     placeholder.edit_text.assert_awaited()
     text = placeholder.edit_text.call_args[0][0]
     assert "error" in text.lower() or "ошибка" in text.lower()
-
-
-# ── Research agent — no results ───────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -377,9 +368,6 @@ async def test_research_agent_no_results():
     placeholder.edit_text.assert_awaited()
     text = placeholder.edit_text.call_args[0][0]
     assert "к сожалению" in text.lower()
-
-
-# ── Research agent — Tavily returns error dict ────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -588,10 +576,10 @@ async def test_complex_photo_search_leases_initial_vision_and_route_for_human_us
         finally:
             active = False
 
-    placeholder = make_placeholder(user_id=999)  # Telegram bot sender
+    placeholder = make_placeholder(user_id=999)
     placeholder.message_id = 77
     original = MagicMock()
-    original.from_user.id = 123  # authoritative human sender
+    original.from_user.id = 123
     original.caption = "Найди это"
     original.get_bot.return_value = MagicMock()
     photo = MagicMock()

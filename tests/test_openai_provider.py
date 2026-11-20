@@ -61,7 +61,7 @@ def completed(**kwargs):
 def sdk_wire_chunks(chunks):
     """Complete synthetic Responses lifecycles for the real SDK stream accumulator."""
     if chunks and chunks[0].startswith(b"{"):
-        return chunks  # HTTP error JSON is not an SSE stream.
+        return chunks
     output = []
     text = ""
     result = [
@@ -583,7 +583,7 @@ async def test_paid_direct_route_rotates_sequentially_without_key_race(transport
     install([frame("response.output_text.delta", delta="answer"), completed()])
     monkeypatch.setattr(agent_use_cases, "settings", SimpleNamespace(OPENAI_API_KEYS=["synthetic-a", "synthetic-b"]))
     req = GenerationRequest(models=(MODEL,), turns=request().turns, allow_deferred=False)
-    assert req.allow_key_race  # Existing chat factory default must not double paid calls.
+    assert req.allow_key_race
     events = [event async for event in ProviderRouter().stream(req)]
     assert isinstance(events[-1], StreamCompleted)
     assert len(calls) == 1

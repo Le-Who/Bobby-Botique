@@ -14,8 +14,6 @@ def _get_redis():
 
 
 def __getattr__(name):
-    # Wire-format helpers and Lua v1 constants remain available to controlled
-    # migration tools and compatibility tests, not to the v2 worker loop.
     from app import queue_legacy
 
     if name.startswith("_") and hasattr(queue_legacy, name):

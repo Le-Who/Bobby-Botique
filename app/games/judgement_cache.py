@@ -1,4 +1,3 @@
-# /app/games/judgement_cache.py
 """Bounded Crocodile caches for judgements, hints, and generated words.
 
 Caches LLM judgement results for (target_word, guess_word) pairs so that
@@ -35,20 +34,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Config ────────────────────────────────────────────────────────────────────
 
-# Directory for persistent game data alongside the module itself
 _DATA_DIR = Path(__file__).parent / "data"
 _CACHE_PATH = _DATA_DIR / "judgement_cache.json"
 _HINTS_CACHE_PATH = _DATA_DIR / "hints_cache.json"
 _CAT_CACHE_PATH = _DATA_DIR / "category_cache.json"
 _GEN_WORDS_CACHE_PATH = _DATA_DIR / "generated_words_cache.json"
 
-# ── Per-file threading locks ──────────────────────────────────────────────────
-# asyncio.to_thread() dispatches blocking I/O to a real OS thread-pool.
-# Without these locks, concurrent flushes from parallel coroutines race:
-# two threads open the same .tmp file, last writer wins (or both corrupt it).
-# One threading.Lock per file serializes writes without blocking the event loop.
 _PERSIST_LOCK = threading.Lock()
 _PERSIST_HINTS_LOCK = threading.Lock()
 _PERSIST_CAT_LOCK = threading.Lock()
@@ -75,7 +67,6 @@ if excess > 0 then
     if #fields > 0 then redis.call('HDEL', KEYS[1], unpack(fields)) end
 end
 if action == 'set' then
-    -- Do not grow a legacy oversized hash while its bounded pruning catches up.
     if redis.call('HLEN', KEYS[1]) < capacity or redis.call('HEXISTS', KEYS[1], field) == 1 then
         redis.call('HSET', KEYS[1], field, ARGV[3])
     end
@@ -83,9 +74,6 @@ end
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[5]), 'NX')
 return value
 """
-
-
-# ── In-process LRU store ──────────────────────────────────────────────────────
 
 
 def _make_key(target: str, guess: str) -> str:
@@ -119,7 +107,6 @@ def _make_key_v2(
     )
 
 
-# OrderedDict used as LRU: most recently accessed at end, oldest at front.
 _store: OrderedDict[str, str] = OrderedDict()
 
 
@@ -179,9 +166,6 @@ async def _redis_hash_operation(namespace: str, action: str, key: str, value: st
     )
 
 
-# ── Persistence helpers ───────────────────────────────────────────────────────
-
-
 def _load_from_disk() -> None:
     """Load the JSON cache file into _store. Called once at import time."""
     if not _CACHE_PATH.exists():
@@ -189,7 +173,6 @@ def _load_from_disk() -> None:
     try:
         raw: dict[str, str] = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
         _store.update(raw)
-        # Enforce cap in case file grew beyond limit before a code update
         while len(_store) > _MAX_ENTRIES:
             _store.popitem(last=False)
         logger.debug("Judgement cache loaded: %d entries from %s", len(_store), _CACHE_PATH)
@@ -214,11 +197,7 @@ async def _persist() -> None:
     await asyncio.to_thread(_persist_sync)
 
 
-# Load on module import (synchronous — JSON parse is fast, <10ms even at 50k entries)
 _load_from_disk()
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 
 async def get_cached_judgement(
@@ -241,7 +220,6 @@ async def get_cached_judgement(
     )
     value = _store.get(key_v2)
 
-    # Migration fallback for legacy key shape where topic context was absent.
     key_legacy = _make_key(target, guess)
     key_used = key_v2
     if value is None and not (category or topic_id or sense_context):
@@ -256,7 +234,6 @@ async def get_cached_judgement(
     if value is None:
         return None
 
-    # Move to end (LRU: mark as recently used)
     _store[key_used] = value
     _store.move_to_end(key_used)
     while len(_store) > _MAX_ENTRIES:
@@ -289,7 +266,6 @@ async def cache_judgement(
         sense_context=sense_context,
     )
 
-    # Evict oldest entry if at capacity
     if key not in _store and len(_store) >= _MAX_ENTRIES:
         _store.popitem(last=False)
 
@@ -302,10 +278,6 @@ async def cache_judgement(
     else:
         await _persist()
 
-
-# ── Hints cache ──────────────────────────────────────────────────────────────
-# Caches LLM-generated progressive hints (list[str]) keyed by word+category.
-# Stored separately from judgements — different shape, different eviction rate.
 
 _hints_store: OrderedDict[str, str] = OrderedDict()
 
@@ -388,11 +360,6 @@ async def cache_hints(word: str, category: str, hints: list[str], *, topic_id: s
         await _persist_hints()
 
 
-# ── Word-category resolution cache ────────────────────────────────────────────
-# Avoids repeated LLM calls to classify the same custom word into a category.
-# E.g. if a game has been played with "самолёт" many times, we remember it is
-# classified as "Транспорт" without hitting the LLM again.
-
 _cat_store: OrderedDict[str, str] = OrderedDict()
 
 
@@ -459,10 +426,6 @@ async def cache_word_category(word: str, category: str) -> None:
     else:
         await _persist_cat()
 
-
-# ── Generated category word-bank cache ────────────────────────────────────────
-# Persists AI-generated word lists for custom categories so the game can reuse
-# them across restarts instead of re-generating the same category every time.
 
 _generated_words_store: OrderedDict[str, str] = OrderedDict()
 

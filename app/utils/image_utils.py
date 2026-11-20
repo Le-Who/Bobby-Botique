@@ -33,11 +33,9 @@ class TaggedImage:
     data: bytes
     cache_key: str | None = None
     task_type: str = "default"
-    pre_compressed: bool = False  # True → provider skips recompression
+    pre_compressed: bool = False
 
 
-# Global process pool for image processing outside the GIL.
-# Lazily initialized to keep module imports safe in restricted environments.
 _image_process_pool: concurrent.futures.ProcessPoolExecutor | None = None
 _image_process_pool_failed = False
 _image_pool_lock = threading.RLock()
@@ -45,21 +43,15 @@ _image_pool_jobs = 0
 _image_pool_idle_timer: threading.Timer | None = None
 _IMAGE_POOL_IDLE_SECONDS = 60.0
 
-# TTL cache for compressed images — avoids reprocessing on retries/follow-ups.
-# Keyed by cache_key (e.g. Telegram file_unique_id). Max 50 entries, 3 min TTL.
 _compressed_cache: TTLCache[str, bytes] = TTLCache(maxsize=50, ttl=180)
 
-# ── Task-aware dimension caps ────────────────────────────────────────────────
-# Maps task_type → max dimension (longest side).
-# These values balance token cost vs. visual detail for each use case.
 TASK_DIMS: dict[str, int] = {
-    "describe": 1280,  # General description — good detail at moderate cost
-    "search": 768,  # Search query extraction — content matters, not pixels
-    "ocr": 2048,  # Text recognition — needs higher resolution
-    "default": 1280,  # Fallback
+    "describe": 1280,
+    "search": 768,
+    "ocr": 2048,
+    "default": 1280,
 }
 
-# Fallback JPEG quality levels when the result exceeds max_size_mb
 _FALLBACK_QUALITIES = (75, 65)
 
 
@@ -126,16 +118,12 @@ def _image_job_finished(
             return
         _image_pool_jobs -= 1
         if broken:
-            # CPython delivers BrokenProcessPool while holding the executor's
-            # shutdown lock. Its manager owns termination/queue cleanup/join;
-            # calling shutdown here would deadlock that same manager thread.
             _detach_image_pool_locked(pool)
         elif _image_pool_jobs == 0:
             _cancel_image_idle_timer_locked()
 
             def expire() -> None:
                 with _image_pool_lock:
-                    # cancel() may race a callback already entering the lock.
                     if _image_pool_idle_timer is not timer or _image_pool_jobs:
                         return
                     expired = _detach_image_pool_locked(pool)
@@ -148,8 +136,6 @@ def _image_job_finished(
             try:
                 timer.start()
             except RuntimeError:
-                # A restricted runtime may reject new threads. Release the idle
-                # pool immediately rather than leaking it or failing delivery.
                 retire = _detach_image_pool_locked(pool)
     if retire:
         _close_image_executor(pool)
@@ -178,22 +164,18 @@ def _image_worker(
 
         img_to_process = Image.open(io.BytesIO(image_data)) if isinstance(image_data, bytes) else image_data
 
-        # Stage 1: Entropy-based adaptive max_dim
         base_max_dim = TASK_DIMS.get(task_type, TASK_DIMS["default"])
         max_dim = _entropy_adaptive_dim(img_to_process, base_max_dim)
 
-        # Stage 2: Resolution cap (token savings)
         if max(img_to_process.size) > max_dim:
             img_to_process.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
 
-        # Legacy size-based resize for very large estimated sizes
         img_bytes_approx = estimate_image_size_in_bytes(img_to_process)
         if img_bytes_approx > max_size_mb * 1024 * 1024:
             ratio = math.sqrt((max_size_mb * 1024 * 1024) / img_bytes_approx)
             new_dims = [int(dim * ratio) for dim in img_to_process.size]
             img_to_process = img_to_process.resize((new_dims[0], new_dims[1]), Image.Resampling.LANCZOS)
 
-        # Stage 3: Format normalisation + JPEG compression
         if img_to_process.mode in ("RGBA", "P"):
             img_to_process = img_to_process.convert("RGB")
 
@@ -201,7 +183,6 @@ def _image_worker(
         img_to_process.save(buf, format="JPEG", quality=85, optimize=True)
         result = buf.getvalue()
 
-        # Stage 4: Fallback quality reduction if still too large
         max_bytes = max_size_mb * 1024 * 1024
         if len(result) > max_bytes:
             for q in _FALLBACK_QUALITIES:
@@ -227,7 +208,6 @@ def _entropy_adaptive_dim(img: Image.Image, base_dim: int) -> int:
     Computes entropy on a 256×256 thumbnail for speed (< 1ms).
     """
     try:
-        # Downsample for fast entropy calculation (doesn't modify original)
         thumb = img.copy()
         thumb.thumbnail((256, 256), Image.Resampling.NEAREST)
         if thumb.mode != "L":
@@ -236,15 +216,12 @@ def _entropy_adaptive_dim(img: Image.Image, base_dim: int) -> int:
         entropy = thumb.entropy()
 
         if entropy > 6.5:
-            # High complexity: text, code, screenshots → boost resolution
             return int(base_dim * 1.5)
         elif entropy < 4.0:
-            # Low complexity: simple photos, solid backgrounds → reduce resolution
             return int(base_dim * 0.75)
         else:
             return base_dim
     except Exception:
-        # Fallback: if entropy calculation fails, use base dimension
         return base_dim
 
 
@@ -274,8 +251,6 @@ async def save_image_as_bytes(
             if executor is not None:
                 _cancel_image_idle_timer_locked()
                 _image_pool_jobs += 1
-        # Never hold the lifecycle lock across executor methods: broken-pool
-        # callbacks run under its internal shutdown lock (opposite lock order).
         if executor is None:
             pending = loop.run_in_executor(None, _image_worker, image_data, max_size_mb, task_type)
         else:

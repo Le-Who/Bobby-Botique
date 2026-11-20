@@ -67,8 +67,6 @@ def test_generation_request_is_immutable_and_normalizes_models():
 def test_latency_policy_separates_first_visible_text_from_completion(
     workload, thinking, grounding, first_text, completion
 ):
-    # Interactive work stays owned until completion/cancellation. Telegram's
-    # expiring inline workflow and background retries retain bounded deadlines.
     request = GenerationRequest(
         models=("gemini-3.8-flash",),
         turns=(PromptTurn(PromptRole.USER, (TextPart("question"),)),),

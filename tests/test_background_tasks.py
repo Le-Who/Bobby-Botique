@@ -35,9 +35,6 @@ def job_events():
         logger.setLevel(previous_level)
 
 
-# ── start_background_task ─────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_start_background_task_creates_new_when_none():
     """Creates a new task when task_ref is None."""
@@ -60,7 +57,7 @@ async def test_start_background_task_creates_new_when_done():
         pass
 
     old = asyncio.create_task(noop())
-    await old  # finish it
+    await old
 
     flag = []
 
@@ -93,9 +90,6 @@ async def test_start_background_task_returns_existing_when_running():
     await existing
 
 
-# ── cancel_background_task ────────────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_cancel_background_task_cancels_running():
     """Cancels a running task and sets attr to None."""
@@ -115,9 +109,8 @@ async def test_cancel_background_task_cancels_running():
 @pytest.mark.asyncio
 async def test_cancel_background_task_noop_when_no_task():
     """No error when attribute doesn't exist."""
-    owner = MagicMock(spec=[])  # no attributes
+    owner = MagicMock(spec=[])
     await cancel_background_task(owner, "_task")
-    # Should not raise
 
 
 @pytest.mark.asyncio
@@ -127,15 +120,11 @@ async def test_cancel_background_task_noop_when_none():
     owner._task = None
 
     await cancel_background_task(owner, "_task")
-    # Should not raise
-
-
-# ── TaskManager (instance-based) ─────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_taskmanager_submit_retryable():
-    tm = TaskManager()  # fresh instance for test isolation
+    tm = TaskManager()
 
     attempts = 0
     success = False
@@ -210,7 +199,7 @@ async def test_taskmanager_capacity_rejection_uses_catalog_event():
 
 @pytest.mark.asyncio
 async def test_taskmanager_submit_fire_and_forget():
-    tm = TaskManager()  # fresh instance for test isolation
+    tm = TaskManager()
 
     done = False
 
@@ -380,7 +369,6 @@ async def test_taskmanager_drain_owns_async_error_callback_until_it_finishes():
     tm.register_error_callback(on_error)
     tm.submit(work())
     await work_started.wait()
-    # Start draining before the failing task has spawned its error notification.
     drain = asyncio.create_task(tm.drain(timeout=1.0))
     try:
         await asyncio.sleep(0)
@@ -541,4 +529,4 @@ async def test_taskmanager_rejects_bare_coro_with_retry():
         with pytest.raises(ValueError, match="Retryable tasks require coro_factory"):
             tm._schedule(coro, coro_factory=None, retry=2)
     finally:
-        coro.close()  # Prevent RuntimeWarning: coroutine was never awaited
+        coro.close()

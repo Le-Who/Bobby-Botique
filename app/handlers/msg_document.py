@@ -1,4 +1,3 @@
-# /app/handlers/msg_document.py
 """Document upload and Q&A handlers extracted from messages.py.
 
 Manages: document uploads (PDF/DOCX), duplicate detection, document
@@ -116,7 +115,7 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
             user_message or "",
             chat_state,
             document_id=document_id,
-        )  # type: ignore[arg-type]  # message exists in this path
+        )  # type: ignore[arg-type]
 
     except Exception as e:
         logging.error("Error handling document question: %s", e, exc_info=True)
@@ -140,18 +139,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     skip_duplicate_check = bool(
         pending and pending["confirmed"] and pending["file_unique_id"] == document.file_unique_id
     )
-    # A confirmation is consumed by one upload attempt, including rejection or
-    # a different file. A later retry must return through duplicate confirmation.
     clear_pending_document_upload(context)
 
-    # The parser's limit applies in both Telegram modes. Reject before fetching
-    # or downloading files which the processor will necessarily refuse.
     _max_file_size = document_processor.max_file_size
     if document.file_size and document.file_size > _max_file_size:
         await update.message.reply_text(t("doc.file_too_large", max_mb=str(_max_file_size // (1024 * 1024))))
         return
 
-    # Check file type
     supported_formats = [".pdf", ".docx", ".doc"]
     file_ext = document.file_name.lower().split(".")[-1] if document.file_name and "." in document.file_name else ""
 
@@ -167,7 +161,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         file = await document.get_file()
 
-        # Local mode: process directly from shared volume (zero copy)
         if getattr(context.bot, "local_mode", False) and file.file_path:
             result = await process_uploaded_document(
                 file.file_path,
@@ -177,7 +170,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 skip_duplicate_check=skip_duplicate_check,
             )
         else:
-            # Cloud mode: download to tempfile
             tmp_fd, tmp_path = tempfile.mkstemp(suffix=f".{file_ext}")
             os.close(tmp_fd)
 
@@ -288,7 +280,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         set_document_mode(user_id, True)
 
-        # ── Store document summary in long-term memory (background) ──
         doc_content = result.get("content", "")
         chat_state = await get_user_chat(user_id)
         from app.repos.memory_consent import capture_epoch

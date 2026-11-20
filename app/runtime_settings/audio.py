@@ -70,8 +70,6 @@ def baseline_config(provider: str) -> dict[str, Any]:
             "max_output_tokens": 16384,
         }
     voices = [{"id": identity, "name": name} for identity, name in _ELEVENLABS_VOICES]
-    # Optional deployment secrets are forwarded as empty strings when unset.
-    # Keep the baseline valid so one unused provider cannot break all controls.
     default_voice = settings.ELEVENLABS_VOICE_ID.strip() or _ELEVENLABS_VOICES[0][0]
     if default_voice not in {voice["id"] for voice in voices}:
         voices.insert(0, {"id": default_voice, "name": default_voice})

@@ -36,18 +36,16 @@ async def test_e2e_happy_path_conversation(db_conn_with_key, force_test_db_conn)
     separately tested background memory/transient UI persistence excluded.
     """
     conn, key_hash = db_conn_with_key
-    user_id = 999999  # Standard test user ID
+    user_id = 999999
 
     update = make_update(user_id=user_id, message_text="What is the capital of France?")
     context = make_context()
 
-    # Create a proper message mock for the placeholder
     placeholder_msg = make_context().bot.send_message.return_value
     placeholder_msg.edit_text = AsyncMock()
     placeholder_msg.get_bot = MagicMock(return_value=context.bot)
     update.message.reply_text.return_value = placeholder_msg
 
-    # We create a fake async generator for the provider stream so the network isn't hit
     async def fake_stream(request):
         yield TextDelta("The ")
         yield TextDelta("capital ")
@@ -76,12 +74,9 @@ async def test_e2e_happy_path_conversation(db_conn_with_key, force_test_db_conn)
         )
     )
 
-    # Use a real local semaphore to perfectly mimic the target without Redis requirements
     local_sem = asyncio.Semaphore(1)
     task_manager = TaskManager()
 
-    # Bound every request-owned task to this test's lifetime and keep specialized
-    # SDK calls offline without bypassing the real quota reservation.
     with (
         patch("app.providers.get_provider_router", return_value=fake_router),
         patch("app.repos.memory.get_cached_genai_client", return_value=memory_client),
@@ -101,8 +96,6 @@ async def test_e2e_happy_path_conversation(db_conn_with_key, force_test_db_conn)
             assert await task_manager.drain(timeout=0, cancel_timeout=1)
             assert not task_manager._tasks
 
-    # If the process_long_request loop crashed internally, it will swallow the exception
-    # and call edit_text to tell the user an error occurred. Let's catch that explicitly.
     edit_calls = placeholder_msg.edit_text.call_args_list
     if edit_calls:
         last_edit_text = edit_calls[-1][1].get("text") or edit_calls[-1][0][0]
@@ -110,8 +103,6 @@ async def test_e2e_happy_path_conversation(db_conn_with_key, force_test_db_conn)
             f"Test failed internally with swallowed error: {last_edit_text}"
         )
 
-    # Verify the final state in the Database
-    # We expect 2 messages in the history
     rows = await db_query(
         "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC",
         (user_id,),
@@ -119,19 +110,14 @@ async def test_e2e_happy_path_conversation(db_conn_with_key, force_test_db_conn)
     )
     assert len(rows) == 2, f"Expected 2 rows, got {len(rows)}. DB writes failed."
 
-    # User message
     assert rows[0]["role"] == "user"
     assert "France" in rows[0]["content"]
 
-    # Model message
     assert rows[-1]["role"] == "model"
     assert "Paris" in rows[-1]["content"]
 
-    # Ensure UI was updated
     assert placeholder_msg.edit_text.call_count >= 1
 
-    # The specialized memory SDK paths stay offline while their real DB quota
-    # reservation remains part of this end-to-end check.
     memory_client.aio.models.generate_content.assert_awaited_once()
     memory_client.aio.models.embed_content.assert_awaited()
     from app.repos.memory import QUERY_EXPANSION_MODEL

@@ -437,7 +437,6 @@ async def test_callback_cancel_awaits_transcript_preparation_and_blocks_continua
         try:
             await release.wait()
         except asyncio.CancelledError:
-            # Even a dependency which returns after cancellation must not resume the operation.
             pass
         finally:
             cleaned.set()
@@ -705,7 +704,6 @@ async def test_cancel_callback_interruption_still_awaits_owned_cleanup(voice_cas
         await asyncio.wait_for(cleanup_started.wait(), 1)
         reason = f"cancel callback interrupted: {completion_order}"
         if completion_order == "owner_first":
-            # Queue owner completion before caller cancellation, without yielding between them.
             release_cleanup.set()
             cancel_callback.cancel(reason)
         else:

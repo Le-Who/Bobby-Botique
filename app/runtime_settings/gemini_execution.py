@@ -118,15 +118,12 @@ async def _run_gemini_override[T](
                 break
             try:
                 attempt_timeout = remaining * 2 / 3 if key_attempt + 1 < max_key_attempts else remaining * 0.95
-                # Only this owned attempt deadline becomes a recoverable error.
-                # Caller cancellation and the whole-chain deadline propagate.
                 async with asyncio.timeout(attempt_timeout):
                     result = await execute(model, key)
                 if result is None:
                     raise ValueError("Configured Gemini attempt returned an empty result")
             except Exception as error:
                 last_error = error
-                # Validation/JSON parsing belongs to the callback, not key health.
                 if isinstance(error, ValueError):
                     break
                 category = classify_key_error(error)

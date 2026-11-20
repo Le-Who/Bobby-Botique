@@ -1,4 +1,3 @@
-# /app/handlers/msg_reactions.py
 """Native Telegram reaction handler — ambient feedback via organic reactions.
 
 Architecture:
@@ -36,7 +35,6 @@ from telegram.ext import Application, ContextTypes, MessageReactionHandler
 
 from app.repos.users import save_feedback
 
-# Emoji sets for sentiment classification
 _POSITIVE_EMOJI = frozenset({"👍", "❤️", "🔥", "🥰", "👏", "🎉", "🤩", "💯", "⚡", "🏆", "🫡", "✅"})
 _NEGATIVE_EMOJI = frozenset({"👎", "💩", "🤮", "🤬", "😤", "😡", "🖕"})
 
@@ -65,17 +63,12 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
     if not reaction_update:
         return
 
-    # Only care about reactions where the actor is known
     actor = reaction_update.actor_chat or reaction_update.user
     if not actor:
         return
 
     user_id: int = actor.id
 
-    # ── Filter out bot's own reactions ─────────────────────────────────────
-    # The bot may set single reactions (e.g. ❤️ on upvote via cb_feedback).
-    # Telegram delivers those as message_reaction updates with actor=bot.
-    # We must not count those as user feedback.
     bot_id = context.bot.id
     if user_id == bot_id:
         return
@@ -86,7 +79,6 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
     new_reactions = list(reaction_update.new_reaction or [])
     old_reactions = list(reaction_update.old_reaction or [])
 
-    # Collect emojis that were *added* in this update
     new_emojis = {r.emoji for r in new_reactions if hasattr(r, "emoji")}
     old_emojis = {r.emoji for r in old_reactions if hasattr(r, "emoji")}
     added_emojis = new_emojis - old_emojis
@@ -94,7 +86,6 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
     if not added_emojis:
         return
 
-    # Pick the first classifiable emoji
     rating: str | None = None
     for emoji in added_emojis:
         rating = _classify_reaction(emoji)
@@ -112,16 +103,13 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
         added_emojis,
     )
 
-    # ── Save feedback to DB ───────────────────────────────────────────────
     try:
         await save_feedback(user_id, message_id, rating)
     except Exception as e:
         logging.warning("Reaction feedback save failed for user %s: %s", user_id, e)
 
-    # ── Post-feedback actions (fire-and-forget) ───────────────────────────
     try:
         if rating == "up":
-            # Respond with ❤️ on the user's reaction as acknowledgement
             from app.utils.ux_improvements import set_message_reaction
 
             await set_message_reaction(context.bot, chat_id, message_id, "❤️")
@@ -129,7 +117,6 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
         elif rating == "down":
             from app.utils.background_tasks import submit_task
 
-            # ── RLHF: penalize graph edges used for this response ─────────
             async def _penalize_edges():
                 try:
                     from app.repos.memory import (

@@ -45,7 +45,6 @@ def mock_external_network():
         patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as mock_resolve,
         patch("app.response_delivery.delivery.get_telegram_response_delivery") as get_delivery,
     ):
-        # Default mock successful resolutions
         mock_resolve.return_value = (
             {"api_key": "mock_key", "key_hash": "h"},
             "gemini-2.5-flash",
@@ -80,15 +79,12 @@ async def test_integration_full_message_flow(db_conn, mock_db_manager, mock_exte
     Level: Integration.
     Tests the process_long_request flow using real DB queries but mocked external AI networks.
     """
-    # ── Arrange ──
     user_id = 9100100
     chat_id = 9100100
     user_text = "Привет, бот!"
 
-    # Seed Database state
     await db_conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING", user_id)
 
-    # Build mocked Telegram Update wrapper
     mock_update = MagicMock(spec=telegram.Update)
     mock_message = MagicMock(spec=telegram.Message)
     mock_user = MagicMock(spec=telegram.User)
@@ -103,13 +99,11 @@ async def test_integration_full_message_flow(db_conn, mock_db_manager, mock_exte
     mock_message.from_user = mock_user
     mock_message.text = user_text
 
-    # Provide explicitly empty message attributes to prevent router fallbacks
     mock_message.photo = ()
     mock_message.document = None
     mock_message.voice = None
     mock_message.video = None
 
-    # Bot thinking message
     mock_thinking_msg = MagicMock()
     mock_thinking_msg.edit_text = AsyncMock()
     mock_thinking_msg.id = 123
@@ -124,7 +118,6 @@ async def test_integration_full_message_flow(db_conn, mock_db_manager, mock_exte
     mock_context.bot = MagicMock()
     mock_context.bot.send_message = AsyncMock(return_value=mock_thinking_msg)
 
-    # ── Act ──
     from app.state import ensure_state_loaded
 
     await ensure_state_loaded(user_id)
@@ -135,8 +128,6 @@ async def test_integration_full_message_flow(db_conn, mock_db_manager, mock_exte
     ):
         await process_long_request(mock_thinking_msg, mock_update, mock_context)
 
-    # ── Assert ──
-    # DB Integrity Check: Verify active_chat_messages syncs
     rows = await db_conn.fetch(
         "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC",
         user_id,
@@ -145,9 +136,5 @@ async def test_integration_full_message_flow(db_conn, mock_db_manager, mock_exte
 
     contents = [row["content"] for row in rows]
 
-    # We expect both the user prompt and the mocked AI response to be persisted
     assert any("Привет, бот!" in c for c in contents), f"User msg not persisted: {contents}"
     assert any("Integration answer from bot" in c for c in contents), f"AI msg not persisted: {contents}"
-
-    # Telegram Output Check
-    # (send_long_message is no longer called when a stream successfully edits the placeholder mock)

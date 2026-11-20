@@ -105,7 +105,6 @@ class _Collector(ast.NodeVisitor):
         target = self.processes if kind == "process" else self.prompts
         for value in values:
             target[prefix + value].append(location)
-        # A mixed conditional can still contain an unresolved branch.
         if not values or (
             isinstance(argument, ast.IfExp) and (not _strings(argument.body) or not _strings(argument.orelse))
         ):
@@ -121,7 +120,6 @@ class _Collector(ast.NodeVisitor):
         )
         name = self.aliases.get(name, name)
         if name == "register_controlled_text":
-            # Definitions belong at import time, not inside a request handler.
             argument = _argument(node, "name")
             if not self.scope:
                 self.has_definitions = True

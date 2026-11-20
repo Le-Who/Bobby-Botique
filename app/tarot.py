@@ -9,8 +9,6 @@ from pathlib import Path
 
 from app.utils.json_compat import json
 
-# ── Dataset ───────────────────────────────────────────────────────────────────
-
 _TAROT_DATA_PATH = Path(__file__).parent / "assets" / "tarot.json"
 _TAROT_DECK: list[dict] = []
 
@@ -23,8 +21,6 @@ def _load_deck() -> None:
         return
     try:
         with open(_TAROT_DATA_PATH, encoding="utf-8") as f:
-            # ⚡ Perf: json_compat (orjson) has no load(f), use loads(f.read()) instead.
-            # orjson is 2-6× faster than stdlib json for both decode and encode.
             data = json.loads(f.read())
         _TAROT_DECK = data.get("tarot_interpretations", [])
     except Exception as e:
@@ -33,16 +29,13 @@ def _load_deck() -> None:
         logging.error("Failed to load tarot deck: %s", e)
 
 
-# ── Spread types ──────────────────────────────────────────────────────────────
-
-
 class SpreadType(Enum):
-    CLASSIC = "tarot"  # 3 карты: Прошлое / Настоящее / Будущее (legacy)
-    DAILY = "tarot_daily"  # 1 карта дня
-    YES_NO = "tarot_yesno"  # 1 карта Да / Нет
-    LOVE = "tarot_love"  # 5 карт: расклад на отношения
-    CELTIC = "tarot_celtic"  # 6 карт: кельтский крест (адаптированный)
-    FORTUNE = "tarot_fortune"  # мгновенное предсказание без LLM
+    CLASSIC = "tarot"
+    DAILY = "tarot_daily"
+    YES_NO = "tarot_yesno"
+    LOVE = "tarot_love"
+    CELTIC = "tarot_celtic"
+    FORTUNE = "tarot_fortune"
 
 
 SPREAD_POSITIONS: dict[SpreadType, list[str]] = {
@@ -64,14 +57,10 @@ SPREAD_POSITIONS: dict[SpreadType, list[str]] = {
         "Ближайшее будущее",
         "Итог",
     ],
-    SpreadType.FORTUNE: [],  # Not used — fortune_cookie draws differently
+    SpreadType.FORTUNE: [],
 }
 
-# Lookup: result_id string → SpreadType
 SPREAD_BY_ID: dict[str, SpreadType] = {s.value: s for s in SpreadType}
-
-
-# ── Card drawing ──────────────────────────────────────────────────────────────
 
 
 def draw_cards(num_cards: int) -> list[dict]:
@@ -95,9 +84,6 @@ def draw_cards(num_cards: int) -> list[dict]:
             }
         )
     return results
-
-
-# ── Context builders ──────────────────────────────────────────────────────────
 
 
 def build_card_context(card: dict, orientation: str, position: str = "Карта дня") -> tuple[str, str]:
@@ -147,7 +133,6 @@ def get_tarot_context(
     When called with an int, falls back to CLASSIC positions for 3, otherwise
     uses generic «Карта N» labels.
     """
-    # Backward-compat: old callers may pass get_tarot_context(3)
     if isinstance(spread, int):
         num_cards = spread
         positions = (
@@ -191,7 +176,6 @@ def get_fortune_cookie() -> tuple[str, str] | None:
         return None
 
     card = random.choice(_TAROT_DECK)
-    # Prefer Russian, fall back to English
     fortunes: list[str] = card.get("fortune_telling_ru") or card.get("fortune_telling", [])
     if not fortunes:
         return None

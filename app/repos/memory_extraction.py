@@ -1,4 +1,3 @@
-# /app/repos/memory_extraction.py
 """Real-time graph knowledge extraction from user messages.
 
 Replaces the batch-only consolidation graph extraction with a streaming
@@ -46,8 +45,6 @@ from app.repos.memory_graph_writer import (
 from app.runtime_settings.gemini_execution import run_gemini_override
 from app.runtime_settings.lifecycle import runtime_settings_scope
 
-# ── Pydantic schemas for Structured Output ────────────────────────────────────
-
 
 class ExtractedEntity(BaseModel):
     """A named entity extracted from user text."""
@@ -89,8 +86,6 @@ class GraphExtractionResult(BaseModel):
     entities: list[ExtractedEntity] = Field(default_factory=list, description="Named entities found in the text")
     relations: list[ExtractedRelation] = Field(default_factory=list, description="Relations between entities")
 
-
-# ── Extraction prompt ─────────────────────────────────────────────────────────
 
 _EXTRACTION_PROMPT = """Analyze this user message and extract a knowledge graph.
 
@@ -194,7 +189,6 @@ async def extract_graph_structured(
         return empty
 
     for attempt in range(3):
-        # Allow initial explicitly passed key to be used on attempt 0
         current_api_key = api_key if attempt == 0 else None
         current_key_hash = hashlib.sha256(api_key.encode()).hexdigest() if attempt == 0 else None
 
@@ -209,8 +203,6 @@ async def extract_graph_structured(
             current_key_hash = key_data["key_hash"]
 
         assert current_key_hash is not None
-        # Quota storage failures are not provider failures and must not suspend
-        # a healthy key or enter the SDK retry handler.
         try:
             if not await reserve_gemini_key_usage(current_key_hash, GRAPH_EXTRACTION_MODEL):
                 failed_keys.add(current_key_hash)
@@ -266,7 +258,6 @@ async def extract_graph_structured(
 
             result = GraphExtractionResult.model_validate_json(response_text)
 
-            # Success: update health
             try:
                 await status_mgr.record_success(current_key_hash, GRAPH_EXTRACTION_MODEL)
             except Exception:
@@ -290,8 +281,6 @@ async def extract_graph_structured(
             error_str = str(e).lower()
             error_category = classify_key_error(e)
 
-            # JSON truncation: Gemini cut the response mid-object due to max_output_tokens.
-            # Treat as transient and retry with doubled token limit (no server-side wait needed).
             is_validation = isinstance(e, ValueError)
             is_truncation = any(p in error_str for p in ("eof while parsing", "json_invalid", "unexpected end of"))
             is_transient = (
@@ -300,7 +289,7 @@ async def extract_graph_structured(
                 or any(p in error_str for p in ("503", "unavailable", "overloaded", "rate limit", "timeout"))
             )
 
-            if not is_validation:  # Output/schema failures do not indicate unhealthy credentials.
+            if not is_validation:
                 try:
                     if error_category != "permanent" or "api_key" in error_str or "400" in error_str:
                         await status_mgr.suspend_key(
@@ -315,7 +304,6 @@ async def extract_graph_structured(
 
             if is_transient and attempt < 2:
                 if is_validation:
-                    # Token budget expands on next attempt logic explicitly (config max_tokens)
                     wait = 0.0
                     emit(
                         "memory.extraction_retry_scheduled",
@@ -350,7 +338,7 @@ async def extract_graph_structured(
                 reason_code="permanent_provider_error",
                 key_fingerprint=current_key_hash,
             )
-            continue  # Try next key for permanent failures as well
+            continue
 
     return empty
 
@@ -626,8 +614,6 @@ async def _upsert_graph(
                 entity_name,
             )
 
-        # Phase 1: read only.  It may produce external verdict inputs, but none
-        # of its IDs are trusted for the mutation phase.
         phase_one_conflicts: dict[int, list[Any]] = {}
         async with db_manager.pool.acquire() as read_conn, read_conn.transaction():
             await set_user_context(user_id, False, conn=read_conn)
@@ -667,10 +653,6 @@ async def _upsert_graph(
                     relation_spec["predicate"],
                 )
 
-        # The read snapshot is no longer authoritative once its transaction is
-        # released. Recheck durable consent immediately before constructing any
-        # resolver coroutine so revoked private predicates/entities never reach
-        # the external judge.
         if any(phase_one_conflicts.values()) and not await _preflight_graph_source(
             user_id,
             source_memory_id,
@@ -928,4 +910,4 @@ async def _resolve_ambiguous_conflict(
         return "parallel"
     except Exception as exc:
         request_attempt.fail(exc, reason_code="provider_error")
-        return "parallel"  # safe default: keep both edges
+        return "parallel"

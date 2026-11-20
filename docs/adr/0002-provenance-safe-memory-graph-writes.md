@@ -91,3 +91,36 @@
 `docs/superpowers/specs/2026-08-27-codebase-hardening-and-ltm-deepening-design.md`
 и
 `docs/superpowers/plans/2026-08-27-codebase-hardening-and-ltm-deepening.md`.
+
+## Legacy schema and provenance cutover
+
+Migration 067 upgrades installations that created UUID graph IDs before
+migration 024b established BIGINT IDs. It locks the graph during the rewrite so
+an older replica cannot change the mapping under it. The runner commits the
+mapping and all dependent foreign keys together. Composite tenant keys require
+provenance to agree with both the graph row and its source memory. Foreign keys
+are added as `NOT VALID` to protect writes immediately. The migration clears
+invalid historical references before validation.
+
+Earlier rows can tell us which memories were referenced. They cannot prove
+which source supplied a mutable value. Backfill marks their provenance
+incomplete, ignores cross-tenant and dangling IDs, and preserves every
+verifiable source during deduplication. When exact source snapshots exist,
+deletion rebuilds edge and node projections from surviving sources. When
+support is incomplete, deletion clears unverifiable values or removes the
+relation. Derived facts lose their support when a cited raw memory disappears.
+Old nodes that extraction never linked get a grace period for in-flight
+extractions before removal. Historical graph versions can share a triple,
+while only the current version participates in the uniqueness constraint.
+
+The account-erasure migration ties private legacy rows to their owner while
+retaining shared data through explicit attribution transfer or anonymization.
+Migration 069 allocates a new, globally unique generation on consent
+revocation. PostgreSQL sequences never reuse a value consumed by a rolled-back
+transaction, and the migration keeps the live sequence from moving backwards.
+Queued work that holds a previous generation stays invalid across processes
+and after account recreation.
+
+Sources [graph and provenance migration](../../scripts/migrations/067_harden_long_term_memory.sql),
+[account erasure migration](../../scripts/migrations/068_harden_account_erasure.sql)
+and [private data leases](../../scripts/migrations/069_durable_private_data_leases.sql).

@@ -250,9 +250,6 @@ async def prepare_daily_readings(
                 await progress(generated=0, skipped=0, failed=0, remaining=len(variants))
             router = get_provider_router()
 
-            # Keep a bounded per-card retry budget. Tarot prep is background
-            # work; it must not be able to burn through the whole Gemini pool
-            # and suspend every key used by interactive inline/chat requests.
             pool_size = await count_gemini_keys()
             max_key_retries = (
                 min(pool_size, TAROT_DAILY_MAX_KEY_RETRIES) if pool_size > 0 else TAROT_DAILY_MAX_KEY_RETRIES
@@ -337,9 +334,6 @@ async def prepare_daily_readings(
                                 remaining=len(variants) - generated - skipped - failed,
                             )
                         break
-                    # Adaptive backoff: if the API is in a sustained overload storm,
-                    # pause long enough for 15s-suspended keys to recover before
-                    # the next card tries to acquire a key from the pool again.
                     if _consecutive_failures >= _CONSECUTIVE_FAILURE_THRESHOLD:
                         logger.warning(
                             "Tarot prep: %d consecutive failures — pausing %.0fs for API recovery",
@@ -451,9 +445,6 @@ async def _generate_card_with_recovery(
         elif last_transient is not None and (
             temporarily_unavailable or (not policy.explicit and result_code == ErrorCode.KEYS_EXHAUSTED)
         ):
-            # A transient failure can briefly suspend the whole model pool.
-            # Opt-in routing preserves actual quota/configuration failures,
-            # leaving KEYS_EXHAUSTED for selection without a provider request.
             result = last_transient
         else:
             return result

@@ -41,10 +41,6 @@ _HOOKS_INSTALLED = False
 _PREVIOUS_SYS_EXCEPTHOOK = sys.excepthook
 _PREVIOUS_THREAD_EXCEPTHOOK = threading.excepthook
 
-# =============================================================================
-# STRUCTLOG PIPELINE
-# =============================================================================
-
 
 def configure_structlog_pipeline(
     enable_structured: bool,
@@ -84,15 +80,6 @@ def configure_structlog_pipeline(
         processors=[remove_processor_meta, renderer],
         foreign_pre_chain=shared_processors,
     )
-
-
-# =============================================================================
-# =============================================================================
-
-
-# =============================================================================
-# SETUP FUNCTIONS
-# =============================================================================
 
 
 def _setup_logger(logger_name: str, level: int) -> None:
@@ -294,8 +281,6 @@ def setup_detailed_logging(
 
     global _ACTIVE_HANDLER, _ACTIVE_WRITER, _ATEXIT_REGISTERED, _OWNED_STREAMS
 
-    # Register bootstrap credentials before any application event can echo them.
-    # The exact value is retained only in the in-process scrubber set.
     from app.observability.redaction import register_sensitive_credential
 
     register_sensitive_credential("bot_token", os.environ.get("TELEGRAM_BOT_TOKEN"))
@@ -303,8 +288,6 @@ def setup_detailed_logging(
     resolved = LoggingSettings.from_environ()
     log_level = log_level or resolved.level_name
 
-    # Explicit function options remain useful for tests and embedders. Runtime
-    # startup calls without overrides and therefore uses the canonical resolver.
     if enable_structured_logging is None:
         enable_structured_logging = resolved.format == "json"
 
@@ -390,7 +373,6 @@ def setup_detailed_logging(
         _OWNED_STREAMS = owned_streams
         _install_exception_hooks()
 
-        # Suppress loud HTTP client internals while retaining one shared sink.
         for logger_name in ["api_logger", "telegram", "asyncpg", "httpx", "httpcore"]:
             _setup_logger(
                 logger_name,
@@ -443,11 +425,6 @@ def setup_detailed_logging(
                 "queue_max_bytes": max_bytes,
             },
         )
-
-
-# =============================================================================
-# LOGGER HELPERS
-# =============================================================================
 
 
 def get_logger(name: str):

@@ -49,94 +49,70 @@ from app.errors import (
     user_friendly_error,
 )
 
-# ─── tag_error / extract_error_code round-trip ───────────────────────────────
-
 
 def test_tag_error_embeds_invisible_prefix_in_message():
     """tag_error must produce a string that starts with the invisible tag."""
-    # Arrange
     code = ErrorCode.TIMEOUT
     message = "Timeout occurred"
 
-    # Act
     tagged = tag_error(code, message)
 
-    # Assert
     assert message in tagged
-    assert tagged != message  # The tag must be prepended
+    assert tagged != message
 
 
 def test_extract_error_code_recovers_code_from_tagged_string():
     """extract_error_code must recover the exact ErrorCode from a tagged message."""
-    # Arrange
     code = ErrorCode.QUOTA_EXCEEDED
     tagged = tag_error(code, "Some limit message")
 
-    # Act
     recovered = extract_error_code(tagged)
 
-    # Assert
     assert recovered == code
 
 
 def test_extract_error_code_returns_none_for_untagged_string():
     """Untagged strings must return None from extract_error_code."""
-    # Arrange
     plain = "This is a regular message"
 
-    # Act
     result = extract_error_code(plain)
 
-    # Assert
     assert result is None
 
 
 def test_extract_error_code_returns_none_for_empty_string():
-    # Arrange / Act / Assert
     assert extract_error_code("") is None
 
 
 def test_strip_error_tag_removes_tag_leaving_clean_text():
     """strip_error_tag must return the original user-facing text without the invisible prefix."""
-    # Arrange
     code = ErrorCode.GENERIC
     user_message = "❌ Произошла ошибка."
     tagged = tag_error(code, user_message)
 
-    # Act
     cleaned = strip_error_tag(tagged)
 
-    # Assert
     assert cleaned == user_message
 
 
 def test_strip_error_tag_untagged_string_returns_unchanged():
     """Untagged string must pass through strip_error_tag unchanged."""
-    # Arrange
     plain = "Hello world"
 
-    # Act
     result = strip_error_tag(plain)
 
-    # Assert
     assert result == plain
 
 
 @pytest.mark.parametrize("code", list(ErrorCode))
 def test_all_error_codes_can_be_tagged_and_extracted(code):
     """Every ErrorCode must survive a tag/extract roundtrip without corruption."""
-    # Arrange
     message = f"Test message for {code.value}"
 
-    # Act
     tagged = tag_error(code, message)
     extracted = extract_error_code(tagged)
 
-    # Assert
     assert extracted == code
-
-
-# ─── classify_error_from_exception — typed path ──────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -162,29 +138,23 @@ def test_all_error_codes_can_be_tagged_and_extracted(code):
 )
 def test_classify_error_from_exception_typed_path(exc_class, expected_code):
     """Type-based exception classification must resolve O(1) without string scanning."""
-    # Arrange
     exc = exc_class("test error")
 
-    # Act
     code = classify_error_from_exception(exc)
 
-    # Assert
     assert code == expected_code, f"{exc_class.__name__} should map to {expected_code}"
 
 
 def test_classify_error_subclass_uses_mro_walk():
     """Subclass of a registered exception type must be classified via MRO walk."""
 
-    # Arrange
     class MySpecialQuotaError(APIQuotaExceededError):
         pass
 
     exc = MySpecialQuotaError("quota hit")
 
-    # Act
     code = classify_error_from_exception(exc)
 
-    # Assert
     assert code == ErrorCode.QUOTA_EXCEEDED
 
 
@@ -250,9 +220,6 @@ def test_rate_limit_user_message_retains_retryable_rate_limit_code():
     assert is_retryable_error(message) is True
 
 
-# ─── classify_error_from_exception — status code path ────────────────────────
-
-
 @pytest.mark.parametrize(
     "http_status, expected_code",
     [
@@ -268,17 +235,14 @@ def test_rate_limit_user_message_retains_retryable_rate_limit_code():
 )
 def test_classify_error_from_status_code(http_status, expected_code):
     """HTTP status codes must map to the correct ErrorCode."""
-    # Arrange / Act
     code = classify_error_from_status_code(http_status)
 
-    # Assert
     assert code == expected_code
 
 
 def test_classify_error_from_exception_reads_status_code_attribute():
     """Exception with status_code attribute must use HTTP-path classification."""
 
-    # Arrange
     class FakeAPIError(Exception):
         def __init__(self, msg, status_code):
             super().__init__(msg)
@@ -286,14 +250,9 @@ def test_classify_error_from_exception_reads_status_code_attribute():
 
     exc = FakeAPIError("service unavailable", 503)
 
-    # Act
     code = classify_error_from_exception(exc)
 
-    # Assert
     assert code == ErrorCode.OVERLOADED
-
-
-# ─── classify_error_from_exception — string fallback path ────────────────────
 
 
 @pytest.mark.parametrize(
@@ -312,17 +271,11 @@ def test_classify_error_from_exception_reads_status_code_attribute():
 )
 def test_classify_error_string_fallback(message, expected_code):
     """Unregistered exception types must fall back to text-pattern classification."""
-    # Arrange
     exc = ValueError(message)
 
-    # Act
     code = classify_error_from_exception(exc)
 
-    # Assert
     assert code == expected_code, f"'{message}' should map to {expected_code}"
-
-
-# ─── convert_to_typed_exception ──────────────────────────────────────────────
 
 
 def test_convert_asyncpg_connection_loss_becomes_database_connection_error():
@@ -330,7 +283,6 @@ def test_convert_asyncpg_connection_loss_becomes_database_connection_error():
 
     exc = asyncpg.ConnectionDoesNotExistError("connection was closed in the middle of operation")
 
-    # Act
     typed = convert_to_typed_exception(exc, context="test_query")
 
     assert type(typed) is DatabaseConnectionError
@@ -339,23 +291,16 @@ def test_convert_asyncpg_connection_loss_becomes_database_connection_error():
 
 def test_convert_network_timeout_becomes_connection_timeout_error():
     """An httpx timeout error should map to a connection-related typed exception."""
-    # Arrange
     exc = httpx.ConnectTimeout("connection timeout", request=httpx.Request("GET", "https://example.test"))
 
-    # Act
     typed = convert_to_typed_exception(exc, context="external_api")
 
-    # Assert
     assert type(typed) is ConnectionTimeoutError
     assert typed.details == {"original_error": "ConnectTimeout", "context": "external_api"}
 
 
-# ─── Error inheritance hierarchy ─────────────────────────────────────────────
-
-
 def test_domain_errors_inherit_from_base():
     """All domain error classes must inherit from GemaibotBaseException."""
-    # Arrange
     domain_classes = [
         DatabaseConnectionError,
         APIQuotaExceededError,
@@ -364,41 +309,32 @@ def test_domain_errors_inherit_from_base():
         DocumentProcessingError,
     ]
 
-    # Act / Assert
     for cls in domain_classes:
         assert issubclass(cls, GemaibotBaseException), f"{cls.__name__} must inherit from GemaibotBaseException"
 
 
 def test_gemaibot_base_exception_includes_details():
     """GemaibotBaseException must capture message and details dict."""
-    # Arrange / Act
     exc = GemaibotBaseException("Something failed", {"key": "value"})
 
-    # Assert
     assert exc.message == "Something failed"
     assert exc.details == {"key": "value"}
 
 
 def test_gemaibot_base_exception_str_includes_details_when_present():
     """__str__ must include details when they are provided."""
-    # Arrange
     exc = GemaibotBaseException("Error", {"reason": "timeout"})
 
-    # Act
     result = str(exc)
 
-    # Assert
     assert "timeout" in result
     assert "Error" in result
 
 
 def test_gemaibot_base_exception_str_plain_when_no_details():
     """__str__ without details must return just the message."""
-    # Arrange
     exc = GemaibotBaseException("Simple error")
 
-    # Act
     result = str(exc)
 
-    # Assert
     assert result == "Simple error"

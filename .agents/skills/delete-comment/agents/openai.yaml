@@ -1,0 +1,4 @@
+interface:
+  display_name: "Delete Comments"
+  short_description: "Remove redundant source comments safely"
+  default_prompt: "Use $delete-comment to remove redundant source comments in this repository."

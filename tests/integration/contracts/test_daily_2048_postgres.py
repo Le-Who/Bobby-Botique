@@ -24,7 +24,6 @@ NOW = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
 
 
 async def test_authenticated_websocket_recovery_persists_unranked_completion(db_conn, monkeypatch):
-    # Auth, move persistence, completion ranking and reconnect all use real SQL.
     day = repo.today_puzzle_date()
     puzzle = await repo.upsert_puzzle(
         day,
@@ -113,7 +112,6 @@ async def test_fabricated_higher_win_is_persisted_but_excluded_from_actual_ranki
     assert attack["board"] == [[2048, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 2]]
     assert attack["status"] == "won"
 
-    # Before the fix this higher fabricated score takes rank 1.
     assert await repo.get_rank(8111777, DAY) is None
     assert await repo.get_rank(8111778, DAY) == 1
     leaderboard = await repo.get_leaderboard(DAY)
@@ -236,8 +234,6 @@ async def racing_database(contract_pool):
 
 
 async def _wait_until_blocked(observer, contender_pid, blocker_pid):
-    # A scheduling delay does not prove a race: require PostgreSQL itself to
-    # report that the contender is waiting on the winner's transaction lock.
     async with asyncio.timeout(5):
         while True:
             blockers = await observer.fetchval("SELECT pg_blocking_pids($1)", contender_pid)
@@ -374,8 +370,6 @@ async def test_independent_players_progress_while_admin_waits_on_shared_puzzle_l
                 )
 
             async def independent_player():
-                # All three player operations must complete while A retains
-                # its puzzle lock and uncommitted write on a different result.
                 _, started = await repo.start_puzzle(other_user, env.puzzle, conn=player_b)
                 assert started.board == env.puzzle.board
                 moved = await write_move(player_b, other_user, board_b)
@@ -404,8 +398,6 @@ async def test_independent_players_progress_while_admin_waits_on_shared_puzzle_l
                 await write_move(player_a, env.user_id, board_a)
                 other_result = await asyncio.wait_for(independent_player(), timeout=3)
                 assert other_result.board == board_b and other_result.elapsed_ms == 2000
-                # Require actual independent progress before queueing the
-                # writer, since PostgreSQL fairly queues conflicting waiters.
                 pending_admin = asyncio.create_task(mutate_puzzle())
                 await admin_started.wait()
                 await _wait_until_blocked(observer, admin.get_server_pid(), player_a.get_server_pid())
@@ -438,8 +430,6 @@ async def test_ensure_loses_insert_race_without_overwriting_manual_puzzle(racing
             async with admin.transaction():
                 await _save(admin, manual, 0)
                 pending = asyncio.create_task(repo.ensure_puzzle(manual.puzzle_date))
-                # The third pool connection executes ensure. Its conditional
-                # insert must wait for the admin's still-uncommitted unique key.
                 async with asyncio.timeout(5):
                     while not await observer.fetchval(
                         "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
@@ -488,8 +478,6 @@ async def test_revision_migration_is_idempotent_and_does_not_rewrite_results(db_
     puzzle = repo.Daily2048Puzzle(DAY, [[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], "tile", 256)
     saved = await _save(db_conn, puzzle, 0)
     await repo.start_puzzle(8111777, saved, conn=db_conn)
-    # The fixture owns a generated clone. Reconstruct the legacy column shape
-    # only there, without changing the source test database/template.
     await db_conn.execute("ALTER TABLE public.daily_2048_puzzles DROP COLUMN revision")
     await db_conn.execute(
         "UPDATE public.daily_2048_results SET status='won', final_score=1234, won_at=NOW() WHERE puzzle_date=$1", DAY

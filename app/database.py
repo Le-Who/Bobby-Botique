@@ -31,26 +31,25 @@ class ChatState:
     system_prompt: str | None
     is_deep_dive: bool = False
     deep_dive_thread_id: str | None = None
-    context_summary: str | None = None  # LLM-generated conversation summary
-    thinking_level: str | None = None  # User-configurable: off, low, medium, high
-    ltm_enabled: bool = True  # Long-term memory recall toggle
-    memory_epoch: int = 0  # Invalidates queued LTM writes after disable/erase
-    private_data_blocked: bool = False  # Durable barrier during privacy-sensitive deletion
-    branch_id: int | None = None  # Active branch snapshot ID (branching mode)
-    temperature: float | None = None  # LLM creativity 0.0–1.0, None = model default
-    voice_id: str | None = None  # ElevenLabs voice override, None = global default
-    tts_temperature: float | None = None  # TTS creativity, None = model default
-    live_voice_name: str | None = None  # Gemini Live voice override, None = live default
-    live_thinking_level: str | None = None  # Used only by Live models with configurable thinking
-    live_connection_mode: str | None = None  # Live transport preset: standard, vertex_internet
+    context_summary: str | None = None
+    thinking_level: str | None = None
+    ltm_enabled: bool = True
+    memory_epoch: int = 0
+    private_data_blocked: bool = False
+    branch_id: int | None = None
+    temperature: float | None = None
+    voice_id: str | None = None
+    tts_temperature: float | None = None
+    live_voice_name: str | None = None
+    live_thinking_level: str | None = None
+    live_connection_mode: str | None = None
     _original_length: int = 0
-    _has_persisted_chat: bool = True  # Whether the durable chats row already exists
+    _has_persisted_chat: bool = True
 
 
 class DatabaseManager:
     _instance = None
 
-    # Type declarations for attributes set in __init__
     pool: Any
     _active_keys_cache: Any
     _user_auth_cache: Any
@@ -70,7 +69,6 @@ class DatabaseManager:
         self._initialized = True
         self.pool = None
 
-        # TTL Caches to avoid manual background cleanup
         self._active_keys_cache = TTLCache(maxsize=100, ttl=300)
         self._user_auth_cache = TTLCache(maxsize=1000, ttl=300)
         self._model_config_cache = TTLCache(maxsize=50, ttl=3600)
@@ -106,8 +104,6 @@ class DatabaseManager:
                     "SET idle_in_transaction_session_timeout = '30s'; "
                     "SET lock_timeout = '30s';"
                 )
-                # Register JSONB codec: auto-convert JSONB ↔ Python dict
-                # Uses orjson-backed json_compat for 2-6× faster round-trips
                 await conn.set_type_codec(
                     "jsonb",
                     encoder=_json.dumps,
@@ -119,10 +115,10 @@ class DatabaseManager:
                 dsn=settings.DATABASE_URL,
                 min_size=pool_min,
                 max_size=pool_max,
-                max_inactive_connection_lifetime=300,  # evict idle conns after 5 min
+                max_inactive_connection_lifetime=300,
                 command_timeout=30,
                 init=_init_connection,
-                statement_cache_size=0,  # Required for PgBouncer transaction mode
+                statement_cache_size=0,
                 server_settings={
                     "application_name": "gemaibotv2",
                     "tcp_keepalives_idle": "30",
@@ -157,7 +153,6 @@ class DatabaseManager:
                 raise DatabasePoolError(f"Database initialization failed: {e}") from e
 
     async def close(self):
-        # Cancel background tasks
         await self._cancel_background_task("_monitor_task")
 
         if self.pool:
@@ -167,7 +162,6 @@ class DatabaseManager:
 
     async def reconnect(self):
         logging.info("Attempting to reconnect to database...")
-        # Close existing pool and task
         await self.close()
 
         await self.create_pool()
@@ -401,10 +395,7 @@ class DatabaseManager:
         await self._execute_with_retry("executemany", _do_executemany, query_str, retries)
 
 
-# Global instances
 db_manager = DatabaseManager()
-
-# Module-level functions delegating to db_manager
 
 
 async def reconnect_database():
@@ -453,9 +444,6 @@ async def ensure_database_connection():
     return True
 
 
-# --- Business Logic (Refactored to use db_manager) ---
-
-
 async def init_db():
     if not settings.DATABASE_URL:
         raise ConfigurationError("DATABASE_URL not set")
@@ -464,11 +452,6 @@ async def init_db():
     if not db_manager.pool:
         raise DatabasePoolError("Critical: Failed to create database connection pool")
 
-    # NOTE: Session-level settings (statement_timeout, lock_timeout, etc.)
-    # are applied via _init_connection() callback on every pool connection.
-    # No need to apply them again here.
-
-    # Initialize Schema
     await _init_schema()
 
 
@@ -487,18 +470,13 @@ async def _init_schema():
 
     await validate_schema(db_query)
 
-    # Migrations may create new tenant tables, so runtime idempotent RLS setup
-    # must run afterwards rather than silently skipping tables absent at boot.
-    await setup_row_level_security()  # uses the wrapper defined below
+    await setup_row_level_security()
     await insert_initial_data(db_query, db_execute_many, settings)
 
-    # Emit startup telemetry for migration drift — deferred so admin bot is ready.
-    # This fires in background; startup never blocks on it.
     if migration_result.pending_at_start > 0:
 
         async def _send_migration_alert():
 
-            # Wait for the bot to fully initialize before sending the alert
             await asyncio.sleep(15)
             try:
                 from app.admin_alerts import AlertSeverity, alert_admin_raw
@@ -518,8 +496,6 @@ async def _init_schema():
         _task.add_done_callback(_background_tasks.discard)
 
 
-# --- RLS re-exports (backward compatibility) ---
-# Import RLS config/helpers so existing `from app.database import X` keeps working.
 from app.db.rls import (  # noqa: F401, E402
     RLS_CONFIG,
     VALID_TABLES,
@@ -555,7 +531,7 @@ async def set_user_context(user_id: int, is_admin: bool = False, conn=None):
         )
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.error("Failed to set user context for user %s: %s", user_id, e, exc_info=True)
-        raise  # Propagate — callers must not run queries with stale RLS context
+        raise
 
 
 async def clear_user_context(conn=None):
@@ -570,16 +546,3 @@ async def clear_user_context(conn=None):
         )
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to clear user context: %s", e)
-
-
-# =============================================================================
-# All business logic is in the repos/ layer:
-#   app.repos.users         - auth, user state, feedback
-#   app.repos.chats         - chat state management
-#   app.repos.keys          - API key management
-#   app.repos.conversations - saved conversations
-#   app.repos.roles         - custom user roles CRUD
-#   app.repos.user_stats    - per-user metrics queries
-#   app.repos.metrics_repo  - metrics queries
-#   app.repos.analytics     - user analytics
-# =============================================================================

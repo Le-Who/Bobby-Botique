@@ -99,7 +99,6 @@ class SaveDriver:
             return [{"id": 41}]
         if "CALL save_chat_to_conversation" in sql:
             user_id, conversation_id = params
-            # An error after partial driver effects must still roll back the header.
             self.messages[user_id, conversation_id] = list(self.source)
             await self.checkpoint("procedure")
             return []
@@ -224,8 +223,6 @@ async def test_save_command_reports_real_repository_outcome(save_driver, monkeyp
         if failure != "commit_ack":
             assert (101, 41) not in driver.headers and (101, 41) not in driver.messages
         else:
-            # A lost COMMIT acknowledgement is ambiguous. Do not blindly repeat
-            # the save or claim that already committed rows were rolled back.
             assert (101, 41) in driver.headers and (101, 41) in driver.messages
             assert driver.commits == 1 and driver.rollbacks == 0
     else:

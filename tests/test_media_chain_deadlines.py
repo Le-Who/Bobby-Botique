@@ -76,7 +76,6 @@ async def test_explicit_chain_does_not_restart_budget_for_reserves(monkeypatch, 
         await asyncio.wait_for(reserve_started.wait(), 1)
         assert len(timeouts) == 1
         assert observed_deadlines[0] == observed_deadlines[1]
-        # Expire the real timeout after entry into the reserve, without a sleep.
         timeouts[0].reschedule(asyncio.get_running_loop().time())
         result = await asyncio.wait_for(task, 1)
     finally:

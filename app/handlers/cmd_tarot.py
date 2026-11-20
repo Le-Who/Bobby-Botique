@@ -30,7 +30,6 @@ async def tarot_command(
 
     from app.handlers.compatibility import clear_compatibility_input
 
-    # Prepare the session without changing the hydrated state.
     spread = SpreadType.CLASSIC
 
     from typing import Any
@@ -45,13 +44,11 @@ async def tarot_command(
     if question_context:
         session_data["question_context"] = question_context
 
-    # Prepare UI (Reply Keyboard)
     keyboard = [[TAROT_END_SESSION_TEXT]]
     if question_context:
         keyboard.insert(0, [t("compat.draw_button", detect_language(question_context))])
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-    # Format welcome message
     text = (
         "🔮 **Сеанс Таро начат**\n\n"
         "Пожалуйста, сосредоточьтесь на вашей ситуации и **задайте свой вопрос**.\n"
@@ -75,8 +72,6 @@ async def tarot_command(
         from app.handlers.interaction_work import retire_context_text_input
 
         retire_context_text_input(context.user_data)
-        # Publish only after delivery. A later command/cancel can fence this
-        # welcome while preserving the previously saved session on failure.
         clear_compatibility_input(context.user_data)
         owner.state.tarot_mode = True
         owner.state.tarot_session = session_data

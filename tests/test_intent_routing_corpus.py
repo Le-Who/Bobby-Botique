@@ -252,7 +252,6 @@ async def test_synthetic_corpus_has_no_unsafe_actions_and_preserves_explicit_set
 
 def test_cli_does_not_read_environment_or_prompt_files(tmp_path):
     output = tmp_path / "evaluation.json"
-    # A child must ignore inherited credentials, .env and local prompt overrides.
     (tmp_path / ".env").write_text("THIS_IS_NOT_A_REAL_SECRET=synthetic-sentinel\n", encoding="utf-8")
     (tmp_path / "prompts.json").write_text("malformed synthetic prompt override", encoding="utf-8")
     result = subprocess.run(

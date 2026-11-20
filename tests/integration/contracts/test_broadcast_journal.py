@@ -99,8 +99,6 @@ async def test_restart_after_send_before_commit_is_unknown_and_late_reply_cannot
     batch = await make_batch(contract_pool)
     batch_id, token = await claim(batch)
     attempt = await repo.start_attempt(batch_id, 2097102801, token, 1)
-    # Telegram could have delivered here; simulate process death before its
-    # response/commit. Recovery has no receipt and cannot infer no transmission.
     await repo.interrupt_batch(batch_id)
     assert not await repo.finish_attempt(
         attempt["attempt_id"], token, DeliveryResult("sent", "telegram_confirmed", message_id=501)
@@ -193,7 +191,6 @@ async def test_personal_retention_30_days_does_not_remove_anonymous_aggregate(co
 @pytest.mark.asyncio
 async def test_retention_uses_index_bound_when_only_recent_recipients_exist(contract_pool, monkeypatch):
     async with contract_pool.acquire() as conn, conn.transaction():
-        # Copy the real indexes without copying foreign keys or personal rows.
         await conn.execute(
             "CREATE TEMP TABLE retention_candidates "
             "(LIKE public.broadcast_recipients INCLUDING DEFAULTS INCLUDING INDEXES) ON COMMIT DROP"

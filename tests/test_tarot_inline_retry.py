@@ -102,7 +102,6 @@ async def test_generate_tarot_inline_shows_error_on_error_message():
     bot = _make_bot()
 
     mock_router = AsyncMock()
-    # is_error_message checks for certain strings, like "Внутренняя ошибка"
     mock_router.get_response.return_value = ("❌ Ошибка при обращении к API", 0)
 
     with (

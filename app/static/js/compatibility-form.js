@@ -180,7 +180,6 @@
       }
     });
     input.addEventListener('blur', () => {
-      // Let a result's click select it before closing the dropdown.
       setTimeout(() => {
         if (document.activeElement !== input && !results.contains(document.activeElement)) close();
       }, 150);

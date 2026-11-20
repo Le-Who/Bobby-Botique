@@ -1,7 +1,3 @@
--- 065_daily_trivia_question_bank.sql
--- Additive Daily Trivia authoring/question-bank model.
--- Existing puzzle and result rows are preserved; legacy JSON remains as a
--- compatibility projection while callers move to revisions and occurrences.
 
 CREATE TABLE IF NOT EXISTS public.daily_trivia_facts (
     fact_id BIGSERIAL PRIMARY KEY,
@@ -141,13 +137,6 @@ CREATE INDEX IF NOT EXISTS daily_trivia_facts_embedding_idx
     ON public.daily_trivia_facts USING hnsw (embedding halfvec_cosine_ops)
     WHERE embedding IS NOT NULL;
 
--- Idempotent legacy backfill. Historical result rows are deliberately not
--- updated; NULL puzzle_revision_id means "resolve the immutable legacy day".
---
--- Older asyncpg write paths double-encoded these JSONB arrays, leaving a JSON
--- string that contains the serialized array.  Unwrap that representation
--- before expanding it, then guard every expansion so NULL/object/scalar rows
--- are skipped instead of aborting the whole transactional migration.
 UPDATE public.daily_trivia_puzzles
 SET questions = (questions #>> '{}')::jsonb
 WHERE jsonb_typeof(questions) = 'string';

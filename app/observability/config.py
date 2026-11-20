@@ -162,8 +162,6 @@ class LoggingSettings:
 
         current = (now or datetime.now(UTC)).astimezone(UTC)
         complete_diagnostic = all((diagnostic_subsystem, diagnostic_incident_id, diagnostic_until))
-        # A key suffix is emitted for every selected provider key by contract; it
-        # is not a target selector and must never enable broad content previews.
         has_selector = bool(diagnostic_request_id or diagnostic_user_id)
         bounded_until = bool(diagnostic_until and current < diagnostic_until <= current + timedelta(minutes=15))
         diagnostic_active = complete_diagnostic and has_selector and bounded_until

@@ -16,10 +16,6 @@ from app.utils.text_format import (
     split_text_safe,
 )
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-# Tags that Telegram supports (and our pipeline emits)
 _TELEGRAM_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "blockquote"}
 
 
@@ -46,9 +42,6 @@ def _full_pipeline(md: str) -> str:
     return sanitize_html_tags(html_text)
 
 
-# ── Test: Combined formatting ────────────────────────────────────────────────
-
-
 class TestCombinedFormatting:
     """Complex text with multiple formatting types mixed together."""
 
@@ -56,7 +49,7 @@ class TestCombinedFormatting:
         md = "# Heading\n\n**bold** and *italic* and `code`"
         result = _full_pipeline(md)
         _validate_balanced_html(result)
-        assert "<b>" in result  # heading or bold
+        assert "<b>" in result
         assert "<i>" in result
         assert "<code>" in result
 
@@ -94,7 +87,6 @@ class TestCombinedFormatting:
         )
         result = _full_pipeline(md)
         _validate_balanced_html(result)
-        # Must contain all format types
         assert "<b>" in result
         assert "<blockquote>" in result
         assert "<code>" in result
@@ -105,9 +97,6 @@ class TestCombinedFormatting:
         result = _full_pipeline(md)
         _validate_balanced_html(result)
         assert "https://google.com" in result
-
-
-# ── Test: Sanitization round-trip ────────────────────────────────────────────
 
 
 class TestSanitizationRoundTrip:
@@ -166,14 +155,10 @@ class TestSanitizationRoundTrip:
         assert "<i></i>" not in result
 
 
-# ── Test: Split + rebalance ──────────────────────────────────────────────────
-
-
 class TestSplitAndRebalance:
     """Long text is split correctly, each chunk is valid HTML."""
 
     def test_long_formatted_text_splits_with_valid_chunks(self):
-        # Generate text > 4096 chars using repeated formatted blocks
         block = "**Bold** *italic* `code` ~~strike~~ plain text. " * 20
         chunks = split_text_safe(block, max_length=200)
         assert len(chunks) > 1
@@ -182,7 +167,7 @@ class TestSplitAndRebalance:
 
     def test_split_preserves_content(self):
         """Content is not lost during splitting."""
-        md = "Word " * 1000  # ~5000 chars
+        md = "Word " * 1000
         html_text = markdown_to_html(md)
         chunks = split_text_safe(html_text, max_length=500)
         reconstructed = "".join(re.sub(r"<[^>]+>", "", c) for c in chunks)
@@ -196,9 +181,6 @@ class TestSplitAndRebalance:
         chunks = split_text_safe(html_text, max_length=200)
         for chunk in chunks:
             _validate_balanced_html(chunk)
-
-
-# ── Test: Snake_case safety ──────────────────────────────────────────────────
 
 
 class TestSnakeCaseSafety:
@@ -251,9 +233,6 @@ class TestSnakeCaseSafety:
         assert result == expected
 
 
-# ── Test: Special characters ─────────────────────────────────────────────────
-
-
 class TestSpecialCharacters:
     """HTML-sensitive characters are escaped properly."""
 
@@ -281,18 +260,11 @@ class TestSpecialCharacters:
     def test_special_chars_safe(self, text):
         result = _full_pipeline(text)
         _validate_balanced_html(result)
-        # These inputs are plain text, including the literal script-tag example.
         assert result == html.escape(text)
 
     def test_ampersand_escaped(self):
         result = _full_pipeline("Tom & Jerry")
         assert "&amp;" in result
-
-
-# ── Test: Streaming context preservation ─────────────────────────────────────
-
-
-# ── Test: Edge cases / stress ────────────────────────────────────────────────
 
 
 class TestEdgeCases:
@@ -310,7 +282,7 @@ class TestEdgeCases:
         word = "a" * 5000
         result = _full_pipeline(word)
         _validate_balanced_html(result)
-        assert "a" * 100 in result  # content preserved
+        assert "a" * 100 in result
 
     def test_many_nested_formatting_markers(self):
         md = "**bold *italic ~~strike `code` strike~~ italic* bold**"

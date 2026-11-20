@@ -360,10 +360,6 @@ async def _upsert_edges(
         edge_id = int(row["id"])
         edge_ids[edge.source_id, edge.target_id, edge.predicate] = edge_id
 
-    # Aggregate attributes belong to the edge projection. Each provenance row
-    # retains only attributes supported by that memory, including after aliases
-    # resolve to the same edge. Otherwise deleting a stronger source cannot
-    # restore the surviving source's original weight/core status.
     source_snapshots: dict[tuple[int, int], GraphEdgeCandidate] = {}
     for candidate in candidates:
         edge_id = edge_ids[node_ids[candidate.source_name], node_ids[candidate.target_name], candidate.predicate]

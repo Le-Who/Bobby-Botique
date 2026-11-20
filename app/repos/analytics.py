@@ -17,8 +17,6 @@ import asyncpg
 
 from app import database as db
 
-# ─── Streak Tracking ────────────────────────────────────────────────────────
-
 
 async def record_daily_activity(user_id: int) -> dict[str, int]:
     """Increment the user's streak if they haven't been active today yet.
@@ -34,7 +32,6 @@ async def record_daily_activity(user_id: int) -> dict[str, int]:
         today = date.today()
         yesterday = today - timedelta(days=1)
 
-        # Check if user was active yesterday
         prev = await db.db_query(
             "SELECT current_streak FROM user_metrics WHERE user_id = $1 AND metric_date = $2",
             (user_id, yesterday),
@@ -43,7 +40,6 @@ async def record_daily_activity(user_id: int) -> dict[str, int]:
 
         new_streak = prev_streak + 1 if prev_streak > 0 else 1
 
-        # Upsert today's row with streak
         result = await db.db_query(
             """
             INSERT INTO user_metrics (user_id, metric_date, request_count, current_streak, longest_streak)
@@ -89,9 +85,6 @@ async def get_user_streak(user_id: int) -> dict[str, int]:
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to get streak for user %s: %s", user_id, e)
         return {"current_streak": 0, "longest_streak": 0}
-
-
-# ─── DAU / Retention ────────────────────────────────────────────────────────
 
 
 async def get_dau_count(target_date: date | None = None) -> int:
@@ -172,9 +165,6 @@ async def get_retention_stats() -> dict[str, Any]:
         return {"dau": 0, "d1": 0.0, "d7": 0.0, "d30": 0.0}
 
 
-# ─── Engagement Stats ────────────────────────────────────────────────────────
-
-
 async def get_engagement_summary(user_id: int) -> dict[str, Any]:
     """Get engagement summary for a user over the last 7 days."""
     try:
@@ -219,9 +209,6 @@ async def get_engagement_summary(user_id: int) -> dict[str, Any]:
         }
 
 
-# ─── Conversation Auto-Title ────────────────────────────────────────────────
-
-
 def generate_auto_title(messages: list[dict[str, Any]], max_len: int = 60) -> str:
     """Generate a concise conversation title from the first few messages.
 
@@ -238,7 +225,6 @@ def generate_auto_title(messages: list[dict[str, Any]], max_len: int = 60) -> st
             if not parts:
                 content = msg.get("content", "")
             else:
-                # Flatten parts to text (skip images/bytes)
                 text_parts = []
                 for part in parts:
                     if isinstance(part, str):
@@ -252,7 +238,6 @@ def generate_auto_title(messages: list[dict[str, Any]], max_len: int = 60) -> st
 
             content = content.strip()
 
-            # Truncate at first sentence boundary
             for sep in [".", "?", "!", "\n"]:
                 idx = content.find(sep)
                 if 5 < idx < max_len:
@@ -264,7 +249,6 @@ def generate_auto_title(messages: list[dict[str, Any]], max_len: int = 60) -> st
 
             return content.strip()
 
-    # Fallback
     from datetime import datetime
 
     return f"Беседа от {datetime.now().strftime('%d.%m.%Y %H:%M')}"

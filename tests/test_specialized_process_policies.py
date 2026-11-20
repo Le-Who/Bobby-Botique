@@ -12,7 +12,7 @@ from app.process_policies import ResolvedPolicy
 def test_domain_prompts_use_live_catalog_text_without_expanding_chart_content():
     from app import prompt_registry
     from app import tarot_daily as tarot
-    from app.games import daily_trivia, daily_trivia_authoring  # noqa: F401 — registers domain prompt templates
+    from app.games import daily_trivia, daily_trivia_authoring
     from app.natal import llm
     from app.natal.models import ChartData, InputQuality, TimePrecision
 

@@ -7,10 +7,6 @@ and ensure consistent UI patterns across the bot.
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-# =============================================================================
-# BASIC BUTTON BUILDERS
-# =============================================================================
-
 
 def back_button(callback: str = "start_menu", text: str = "⬅️ Назад") -> list[InlineKeyboardButton]:
     """Creates a back button row."""
@@ -25,11 +21,6 @@ def cancel_button(callback: str = "cancel", text: str = "❌ Отмена") -> l
 def confirm_button(callback: str, text: str = "✅ Подтвердить") -> list[InlineKeyboardButton]:
     """Creates a confirm button row."""
     return [InlineKeyboardButton(text, callback_data=callback)]
-
-
-# =============================================================================
-# COMPOUND BUTTON ROWS
-# =============================================================================
 
 
 def confirm_cancel_row(
@@ -53,11 +44,6 @@ def new_topic_retry_row() -> list[InlineKeyboardButton]:
     ]
 
 
-# =============================================================================
-# PAGINATION
-# =============================================================================
-
-
 def pagination_row(
     current_page: int,
     total_pages: int,
@@ -78,28 +64,20 @@ def pagination_row(
     """
     buttons = []
 
-    # Previous button
     if current_page > 0:
         buttons.append(InlineKeyboardButton("⬅️", callback_data=f"{callback_prefix}:{current_page - 1}"))
     else:
         buttons.append(InlineKeyboardButton("⏺️", callback_data="noop"))
 
-    # Page counter
     if show_page_number:
         buttons.append(InlineKeyboardButton(f"{current_page + 1}/{total_pages}", callback_data="noop"))
 
-    # Next button
     if current_page < total_pages - 1:
         buttons.append(InlineKeyboardButton("➡️", callback_data=f"{callback_prefix}:{current_page + 1}"))
     else:
         buttons.append(InlineKeyboardButton("⏺️", callback_data="noop"))
 
     return buttons
-
-
-# =============================================================================
-# KEYBOARD BUILDERS
-# =============================================================================
 
 
 def build_keyboard(
@@ -186,37 +164,26 @@ def build_paginated_keyboard(
     total_items = len(items)
     total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
 
-    # Clamp page
     page = max(0, min(page, total_pages - 1))
 
-    # Get current page items
     start_idx = page * items_per_page
     end_idx = start_idx + items_per_page
     current_items = items[start_idx:end_idx]
 
     keyboard = []
 
-    # Item buttons
     for text, callback in current_items:
         keyboard.append([InlineKeyboardButton(text, callback_data=callback)])
 
-    # Pagination row (if needed)
     if total_pages > 1:
         keyboard.append(pagination_row(page, total_pages, callback_prefix))
 
-    # Extra rows
     if extra_rows:
         keyboard.extend(extra_rows)
 
-    # Back button
     keyboard.append(back_button(back_callback))
 
     return InlineKeyboardMarkup(keyboard), total_pages
-
-
-# =============================================================================
-# COMMON KEYBOARD PATTERNS
-# =============================================================================
 
 
 def feedback_row() -> list[InlineKeyboardButton]:
@@ -251,7 +218,7 @@ def after_response_keyboard(
     if custom_buttons:
         keyboard.append(list(custom_buttons))
 
-    return InlineKeyboardMarkup(keyboard) if keyboard else None  # type: ignore[return-value]  # callers handle None
+    return InlineKeyboardMarkup(keyboard) if keyboard else None  # type: ignore[return-value]
 
 
 def ai_response_keyboard() -> InlineKeyboardMarkup:

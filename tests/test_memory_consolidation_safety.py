@@ -472,8 +472,6 @@ async def test_consolidation_writes_source_level_graph_attributes(monkeypatch):
     )
     assert "attributes_complete" in node_source_sql
     assert "9001" in repr(node_source_args)
-    # Entity descriptions have no entity-level support indexes in the model
-    # schema, so consolidation must not attribute them to relation facts.
     assert "user" not in repr(node_source_args)
     assert "language" not in repr(node_source_args)
     embedded_inputs = [call.args[0] for call in embeddings.await_args_list]
@@ -552,7 +550,7 @@ async def test_consolidation_persists_only_entities_used_by_relations(monkeypatc
     )
 
     assert result == 1
-    assert embeddings.await_count == 4  # fact + two relation endpoints + predicate
+    assert embeddings.await_count == 4
     node_insert_args = next(args for _, sql, args in conn.calls if "INSERT INTO memory_nodes" in " ".join(sql.split()))
     assert set(node_insert_args[1]) == {"Alice", "Python"}
     assert "Private note" not in repr(node_insert_args)
@@ -588,7 +586,7 @@ async def test_consolidation_ignores_relations_with_missing_endpoint_entities(mo
     )
 
     assert result == 1
-    assert embeddings.await_count == 1  # the consolidated fact only
+    assert embeddings.await_count == 1
     statements = [" ".join(sql.split()) for _, sql, _ in conn.calls if sql]
     assert not any("INSERT INTO memory_nodes" in sql for sql in statements)
     assert not any("INSERT INTO memory_edges" in sql for sql in statements)

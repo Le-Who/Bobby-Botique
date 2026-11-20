@@ -310,7 +310,6 @@ async def test_handler_cancellation_after_persisted_claim_finishes_one_handoff(
         }
         assert origins.consume(42) is None
 
-        # A duplicate ACK is safe only after the actual queue handoff above.
         replay = dict(payload, update_id=43) if command else payload
         response = await client.post(path, json=replay, headers=headers)
         assert response.status_code == 200
@@ -540,8 +539,6 @@ async def test_dependency_self_cancellation_does_not_enqueue_or_leave_admission_
         assert application.update_queue.empty()
         assert origins.consume(42) is None
         assert redis.claims == {"telegram:webhook:update:42"}
-        # Self-cancellation still has an unknown-ACK limitation; ownership does
-        # not undo a remote claim or fabricate delivery. A fresh identity works.
         response = await client.post(path, json=_payload(43), headers=headers)
         assert response.status_code == 200
         assert application.update_queue.get_nowait().update_id == 43
@@ -851,7 +848,6 @@ async def test_route_is_registered_only_after_ptb_start_completes(webhook_lifecy
     assert control.application.update_queue.empty()
     control.release_start.set()
     await control.registered.wait()
-    # Registration can be pending after PTB has started; that route is safe.
     accepted = await control.client.post(control.path, json=_payload(42), headers=headers)
     assert accepted.status_code == 200
     assert control.application.update_queue.get_nowait().update_id == 42

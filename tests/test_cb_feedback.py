@@ -16,18 +16,15 @@ def _update_with_feedback():
     query.from_user.id = 42
     query.answer = AsyncMock()
 
-    # spec=Message so that isinstance(msg, Message) is True inside _handle_vote
     msg = MagicMock(spec=Message)
     msg.message_id = 999
     query.message = msg
 
-    # Default: existing keyboard with a feedback row
     feedback_btn = MagicMock()
     feedback_btn.callback_data = "feedback:up"
     other_btn = MagicMock()
     other_btn.callback_data = "open_roles"
 
-    # spec=InlineKeyboardMarkup so isinstance guard in _handle_reveal passes
     msg.reply_markup = MagicMock(spec=InlineKeyboardMarkup)
     msg.reply_markup.inline_keyboard = [
         [feedback_btn],
@@ -102,7 +99,6 @@ class TestFeedbackCallback:
         with patch("app.handlers.cb_feedback.save_feedback", new_callable=AsyncMock):
             await feedback_callback(update, MagicMock())
 
-        # The feedback row should be replaced, edit_reply_markup called
         query.message.edit_reply_markup.assert_awaited_once()
         result = query.message.edit_reply_markup.await_args.kwargs["reply_markup"]
         assert result.inline_keyboard == (
@@ -125,7 +121,6 @@ class TestFeedbackCallback:
             new_callable=AsyncMock,
             side_effect=Exception("DB down"),
         ):
-            # Should not raise
             await feedback_callback(update, MagicMock())
 
         query.answer.assert_awaited_once()

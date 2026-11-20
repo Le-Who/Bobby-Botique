@@ -1,7 +1,4 @@
--- Migration 022: Add conversation_branches and user_reminders tables
--- Supports Feature 2 (Conversation Branching) and Feature 5 (Proactive Follow-ups)
 
--- ── Conversation branching ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS conversation_branches (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -13,7 +10,6 @@ CREATE TABLE IF NOT EXISTS conversation_branches (
 CREATE INDEX IF NOT EXISTS idx_conv_branches_user
     ON conversation_branches (user_id, created_at DESC);
 
--- ── User reminders ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS user_reminders (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -31,7 +27,6 @@ CREATE INDEX IF NOT EXISTS idx_user_reminders_pending
 CREATE INDEX IF NOT EXISTS idx_user_reminders_user
     ON user_reminders (user_id, created_at DESC);
 
--- RLS policies
 ALTER TABLE conversation_branches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_reminders ENABLE ROW LEVEL SECURITY;
 

@@ -7,7 +7,6 @@ from database persistence and orchestration.
 
 import hashlib
 
-# Maximum characters to extract from a document to prevent OOM
 MAX_DOCUMENT_TEXT_LENGTH = 100000
 
 

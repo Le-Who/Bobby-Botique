@@ -645,10 +645,6 @@ class TelegramRenderSession:
         self._state = "finalized"
         if not displayed_text.strip():
             raise TelegramDeliveryError("Cannot finalize an empty Telegram response")
-        # Completed responses supply canonical model content explicitly. Streamed
-        # responses retain their normalized draft; status/error-only writes do not
-        # qualify. The renderer marks the first successful write, before later
-        # split parts or publication bookkeeping can fail or be cancelled.
         content = strip_hallucinated_tool_trace(self._draft_text if model_content is None else model_content)
         return await self._renderer._finalize(
             displayed_text=displayed_text,

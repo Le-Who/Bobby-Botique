@@ -172,8 +172,6 @@ async def generate_daily_text(
         for attempt in range(max_attempts):
             client = get_cached_genai_client(key_data["api_key"])
             remaining = max(0.0, deadline - asyncio.get_running_loop().time())
-            # Leave time for one admitted replacement, including its backoff.
-            # The judge already owns its retry loop and requests a single attempt.
             attempt_timeout = remaining * 2 / 3 if attempt + 1 < max_attempts else remaining * 0.95
             try:
                 response = await observe_workload_call(
@@ -198,8 +196,6 @@ async def generate_daily_text(
                     input_chars=len(prompt),
                 )
             except Exception as exc:
-                # An owned SDK timeout is now an exception here; caller cancellation
-                # still propagates without penalizing a key or starting another call.
                 try:
                     await get_key_status_manager().suspend_key(
                         key_data["key_hash"],

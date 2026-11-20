@@ -46,14 +46,11 @@ from app.games.crocodile import (
 )
 from app.games.judge import GuessJudgement
 
-# ── Shared stubs ──────────────────────────────────────────────────────────────
-
-
 _EXACT = GuessJudgement(status="hot", score=1.0, hint="Точно!")
 _HOT = GuessJudgement(status="hot", score=0.88, hint="Горячо 🔥")
 _WARM = GuessJudgement(status="warm", score=0.54, hint="Теплее 🌡️")
 _COLD = GuessJudgement(status="cold", score=0.12, hint="Холодно ❄️")
-_UNAVAILABLE = None  # returned by _race_generate when LLM is down
+_UNAVAILABLE = None
 
 
 def _patch_judge(judgement: GuessJudgement | None, status_str: str | None = None):
@@ -75,7 +72,7 @@ def _patch_save():
 
     async def _mem_save(self):
         _croc._mem_put(self)
-        return False  # signals in-memory path
+        return False
 
     return patch.object(CrocodileGame, "save", _mem_save)
 
@@ -86,9 +83,6 @@ def _patch_prefetch_noop():
         "app.games.crocodile._prefetch_hints",
         new=AsyncMock(return_value=None),
     )
-
-
-# ── CG-01: Game creation ──────────────────────────────────────────────────────
 
 
 class TestGameCreation:
@@ -139,9 +133,6 @@ class TestGameCreation:
             )
 
         assert g1.game_id != g2.game_id
-
-
-# ── CG-02: Exact match ────────────────────────────────────────────────────────
 
 
 class TestExactMatch:
@@ -197,9 +188,6 @@ class TestExactMatch:
         mock_race.assert_not_called()
 
 
-# ── CG-03: Warm / cold guesses ────────────────────────────────────────────────
-
-
 class TestWarmColdGuesses:
     @pytest.mark.asyncio
     async def test_cold_guess_recorded_in_history(self):
@@ -249,9 +237,6 @@ class TestWarmColdGuesses:
         assert len(get_game_history("game-attempts")) == 3
 
 
-# ── CG-04: Homoglyph / Cyrillic typo tolerance ───────────────────────────────
-
-
 class TestHomoglyphTolerance:
     @pytest.mark.asyncio
     async def test_single_cyrillic_typo_is_exact_match(self):
@@ -296,14 +281,9 @@ class TestHomoglyphTolerance:
             _patch_judge(_HOT),
             _patch_save(),
         ):
-            event = await game.process_guess("монгост")  # 2 changes
+            event = await game.process_guess("монгост")
 
-        # 2 changes in 7-char word: DL=2, ratio=2/7≈0.28 > threshold
-        # Should be NOT exact_match (goes through LLM which we forced to HOT)
         assert event["status"] in ("hot", "warm", "cold")
-
-
-# ── CG-05: Judge unavailable ──────────────────────────────────────────────────
 
 
 class TestJudgeUnavailable:
@@ -331,10 +311,7 @@ class TestJudgeUnavailable:
             event = await game.process_guess("лев")
 
         assert event["event"] == "judge_unavailable"
-        assert len(game.attempts) == 0  # attempt NOT counted
-
-
-# ── CG-06: Max attempts → lost ────────────────────────────────────────────────
+        assert len(game.attempts) == 0
 
 
 class TestMaxAttempts:
@@ -349,7 +326,7 @@ class TestMaxAttempts:
             inline_message_id="msg50",
             creator_id=1001,
             guesser_id=2001,
-            max_attempts=3,  # short game for speed
+            max_attempts=3,
         )
         _croc._mem_put(game)
 
@@ -362,9 +339,6 @@ class TestMaxAttempts:
         assert last_event["event"] == "game_over"
         assert last_event["reason"] == "max_attempts"
         assert last_event["word"] == "бегемот"
-
-
-# ── CG-07: Surrender ──────────────────────────────────────────────────────────
 
 
 class TestSurrender:
@@ -382,7 +356,7 @@ class TestSurrender:
         )
         _croc._mem_put(game)
 
-        mock_bot = object()  # finalize() patches bot.edit_message_text anyway
+        mock_bot = object()
         with (
             patch.object(CrocodileGame, "finalize", new=AsyncMock()),
         ):
@@ -391,9 +365,6 @@ class TestSurrender:
         assert game.status == "lost"
         assert event["event"] == "surrendered"
         assert event["word"] == "верблюд"
-
-
-# ── CG-08: PubSub fan-out ─────────────────────────────────────────────────────
 
 
 class TestPubSub:
@@ -426,14 +397,11 @@ class TestPubSub:
         try:
             await broadcast_game_event(gid, {"event": "result"}, exclude=sender_q)
 
-            assert sender_q.empty()  # sender skipped
-            assert not observer_q.empty()  # observer received
+            assert sender_q.empty()
+            assert not observer_q.empty()
         finally:
             unsubscribe_game(gid, sender_q)
             unsubscribe_game(gid, observer_q)
-
-
-# ── CG-09: load_game ─────────────────────────────────────────────────────────
 
 
 class TestLoadGame:
@@ -465,9 +433,6 @@ class TestLoadGame:
         assert loaded.game_id == "game-loadtest"
 
 
-# ── CG-10: Best score tracking ───────────────────────────────────────────────
-
-
 class TestBestScoreTracking:
     @pytest.mark.asyncio
     async def test_best_score_updates_on_higher_score(self):
@@ -485,13 +450,13 @@ class TestBestScoreTracking:
         _croc._mem_put(game)
 
         with _patch_judge(_COLD), _patch_save():
-            await game.process_guess("кот")  # score=0.12
+            await game.process_guess("кот")
 
         with _patch_judge(_HOT), _patch_save():
-            ev2 = await game.process_guess("прыгун")  # score=0.88
+            ev2 = await game.process_guess("прыгун")
 
         with _patch_judge(_COLD), _patch_save():
-            ev3 = await game.process_guess("мышь")  # score=0.12
+            ev3 = await game.process_guess("мышь")
 
         assert round(game.best_score, 2) == 0.88
         assert ev2["best_score_updated"] is True

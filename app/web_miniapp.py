@@ -1,4 +1,3 @@
-# /app/web_miniapp.py
 """Telegram Mini App backend — LTM Explorer, Settings Editor & Crocodile Game.
 
 Endpoints are authenticated via Telegram WebApp initData (HMAC-SHA256).
@@ -44,7 +43,7 @@ from app.prompt_registry import get_prompt_text
 from app.repos import crocodile_daily as daily_delivery_repo
 from app.repos import daily_2048 as daily_2048_repo
 from app.request_context import set_user_context
-from app.runtime_settings import media_prompts as _media_prompts  # noqa: F401 — registers Live prompts
+from app.runtime_settings import media_prompts as _media_prompts  # noqa: F401
 from app.runtime_settings.audio import user_voice_catalog, valid_user_voice
 from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.utils.background_tasks import submit_task
@@ -107,11 +106,9 @@ _INIT_DATA_MAX_FUTURE_SKEW_SECONDS = 30
 
 from app.security import SyncRateLimiter, rate_limit  # noqa: E402
 
-# Rate limiter for public-facing Reader pages (30 req/min)
 _reader_limiter = SyncRateLimiter(max_requests=30, window_seconds=60)
 rate_limit_reader = rate_limit(_reader_limiter)
 
-# State tracking for Live Audio sessions
 ACTIVE_LIVE_SESSIONS: set[int] = set()
 _LIVE_SESSION_MAX_SECONDS = 1800
 _LIVE_SESSION_LEASE_SECONDS = _LIVE_SESSION_MAX_SECONDS + 60
@@ -127,8 +124,6 @@ _LIVE_THINKING_CONFIG_MAP: dict[str, str] = {
 }
 from app.i18n import t
 
-# The 30 studio voices supported by native Live audio. Keep the requested voice
-# first; TTS has a separate administrator-managed catalog.
 _LIVE_VOICES = (
     ("Rasalgethi", "Информативный", "Informative"),
     ("Aoede", "Лёгкий, естественный", "Breezy"),
@@ -216,7 +211,6 @@ def _get_live_connection_modes(lang: str) -> list[dict[str, str]]:
     return modes
 
 
-# Backward-compatible test hooks for the classic game lock fallback registry.
 _game_locks = _croc_runtime._game_locks
 
 
@@ -443,9 +437,6 @@ def _build_vertex_live_connect_config(
     )
 
 
-# ── Telegram initData Validation ─────────────────────────────────────────────
-
-
 def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any] | None:
     """Validate Telegram WebApp initData and return parsed data.
 
@@ -460,10 +451,8 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any] | None
         if not received_hash:
             return None
 
-        # Build data-check-string: key=value pairs sorted alphabetically
         data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
 
-        # HMAC-SHA256(HMAC-SHA256("WebAppData", bot_token), data_check_string)
         secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
         computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
@@ -482,7 +471,6 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any] | None
             logger.warning("initData auth_date outside allowed window")
             return None
 
-        # Parse the user field
         if "user" in parsed:
             parsed["user"] = json.loads(parsed["user"])
 
@@ -506,12 +494,11 @@ def require_webapp_auth(f: typing.Callable) -> typing.Callable:
 
     @wraps(f)
     async def decorated(*args, **kwargs):
-        # initData comes in the Authorization header: "tma <initData>"
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("tma "):
             return jsonify({"error": "Missing authorization"}), 401
 
-        init_data = auth_header[4:]  # strip "tma " prefix
+        init_data = auth_header[4:]
         bot_token = settings.TELEGRAM_BOT_TOKEN
         if not bot_token:
             return jsonify({"error": "Server misconfiguration"}), 500
@@ -524,7 +511,6 @@ def require_webapp_auth(f: typing.Callable) -> typing.Callable:
         if not user_id:
             return jsonify({"error": "No user in initData"}), 401
 
-        # Inject user_id into the handler
         kwargs["user_id"] = user_id
         return await f(*args, **kwargs)
 
@@ -617,17 +603,12 @@ async def _resolve_authorized_legacy_miniapp_user(
     return user_id, None
 
 
-# ── Static page ──────────────────────────────────────────────────────────────
-
-
 @miniapp_blueprint.route("/")
 async def miniapp_page():
     """Serve the Mini App HTML shell."""
 
     return await render_template("miniapp.html")
 
-
-# ── Natal Form Mini App ─────────────────────────────────────────────────────
 
 _NATAL_FORM_COUNTRIES: tuple[tuple[str, str], ...] = (
     ("UA", "Украина"),
@@ -728,8 +709,6 @@ async def _build_and_send_natal_report(
     epoch = expected_epoch if expected_epoch is not None else await capture_natal_epoch(user_id)
     if epoch is None:
         return
-    # Account erasure waits for generation-bound generation, publication and
-    # delivery together. A queued ingress token is never refreshed on dequeue.
     async with private_data_lease(user_id, epoch, purpose="natal:delivery", require_ltm=False) as current:
         if not current:
             return
@@ -1023,9 +1002,6 @@ async def _send_natal_report_to_private_chat(
     )
 
 
-# ── Memory API ───────────────────────────────────────────────────────────────
-
-
 @miniapp_blueprint.route("/api/memories")
 @require_webapp_auth
 @require_authorized_webapp_user
@@ -1039,7 +1015,6 @@ async def api_list_memories(user_id: int):
 
         memories = await list_memories(user_id, offset=offset, limit=limit)
 
-        # Serialize datetimes
         for m in memories:
             if m.get("created_at"):
                 m["created_at"] = m["created_at"].isoformat()
@@ -1059,7 +1034,6 @@ async def api_memory_stats(user_id: int):
         from app.repos.memory import get_memory_stats
 
         stats = await get_memory_stats(user_id)
-        # Serialize datetimes
         for key in ("oldest", "newest"):
             if stats.get(key):
                 stats[key] = stats[key].isoformat()
@@ -1084,9 +1058,6 @@ async def api_delete_memory(memory_id: int, user_id: int):
     except Exception as e:
         logger.error("Mini App delete memory error: %s", e, exc_info=True)
         return jsonify({"error": "internal_error"}), 500
-
-
-# ── Settings API ─────────────────────────────────────────────────────────────
 
 
 def _miniapp_chat_model_editable() -> bool:
@@ -1119,7 +1090,6 @@ async def api_get_settings(user_id: int):
         effective_model = menus.effective_chat_model(chat_state)
         effort = menus.get_admin_reasoning_effort() if not thinking_editable else None
 
-        # Build available models list grouped by provider
         gemini_models = list(settings.AVAILABLE_MODELS or [])
         openrouter_models = list(settings.OPENROUTER_AVAILABLE_MODELS or [])
         opencode_models = list(settings.OPENCODE_AVAILABLE_MODELS or [])
@@ -1127,7 +1097,6 @@ async def api_get_settings(user_id: int):
         openai_models = list(getattr(settings, "OPENAI_AVAILABLE_MODELS", []) or [])
         all_models = gemini_models + openrouter_models + opencode_models + freetheai_models + openai_models
 
-        # Build grouped structure for the frontend picker
         grouped_models = []
         if gemini_models:
             grouped_models.append({"provider": "Google Gemini", "icon": "🤖", "models": gemini_models})
@@ -1219,14 +1188,12 @@ async def api_update_settings(user_id: int):
         changed_fields: set[str] = set()
         requested_ltm_enabled: bool | None = None
 
-        # System prompt
         if "system_prompt" in body:
             prompt = body["system_prompt"]
             if isinstance(prompt, str) and len(prompt) <= 4000:
                 chat_state.system_prompt = prompt.strip() or None
                 changed_fields.add("system_prompt")
 
-        # Model — validate against all providers (single source of truth)
         if "model" in body:
             model = body["model"]
             from app.config import get_all_available_models
@@ -1236,26 +1203,22 @@ async def api_update_settings(user_id: int):
                 chat_state.model = model
                 changed_fields.add("model")
 
-        # Thinking level
         if "thinking_level" in body:
             level = body["thinking_level"]
             if level in ("off", "low", "medium", "high"):
                 chat_state.thinking_level = level if level != "off" else None
                 changed_fields.add("thinking_level")
 
-        # LTM
         if "ltm_enabled" in body:
             requested_ltm_enabled = body["ltm_enabled"]
             if not isinstance(requested_ltm_enabled, bool):
                 return jsonify({"error": "invalid_ltm_enabled"}), 400
             chat_state.ltm_enabled = requested_ltm_enabled
 
-        # Search
         if "search_enabled" in body:
             chat_state.search_enabled = bool(body["search_enabled"])
             changed_fields.add("search_enabled")
 
-        # Temperature
         if "temperature" in body:
             temp = body["temperature"]
             if temp is None:
@@ -1267,7 +1230,6 @@ async def api_update_settings(user_id: int):
                     chat_state.temperature = temp
                     changed_fields.add("temperature")
 
-        # TTS Temperature
         if "tts_temperature" in body:
             temp = body["tts_temperature"]
             if temp is None:
@@ -1279,14 +1241,11 @@ async def api_update_settings(user_id: int):
                     chat_state.tts_temperature = temp
                     changed_fields.add("tts_temperature")
 
-        # Voice ID
         if "voice_id" in body:
             chat_state.voice_id = body["voice_id"]
             changed_fields.add("voice_id")
 
         if requested_ltm_enabled is not None:
-            # Consent is its own atomic write.  A stale full ChatState save
-            # must never re-enable memory after an opt-out.
             from app.repos.chats import set_ltm_enabled
 
             chat_state.memory_epoch = await set_ltm_enabled(
@@ -1333,9 +1292,6 @@ async def api_update_settings(user_id: int):
     except Exception as e:
         logger.error("Mini App update settings error: %s", e, exc_info=True)
         return jsonify({"error": "internal_error"}), 500
-
-
-# ── Additional Setting Controls: Roles, Context, Voices ────────────────────
 
 
 @miniapp_blueprint.route("/api/context/reset", methods=["POST"])
@@ -1475,9 +1431,6 @@ async def api_update_live_settings(user_id: int):
         return jsonify({"error": "internal_error"}), 500
 
 
-# ── Long Read Reader ──────────────────────────────────────────────────────────
-
-
 @miniapp_blueprint.route("/reader")
 @rate_limit_reader
 async def reader_page():
@@ -1503,9 +1456,8 @@ async def reader_page():
 
     uid = _req.args.get("id", "")
 
-    # ── 1. Validate UID
     if uid and not _re.match(r"^[0-9a-f-]{36}$", uid, _re.IGNORECASE):
-        uid = ""  # treat as missing rather than raising
+        uid = ""
 
     body_html = ""
     toc: list[dict[str, str]] = []
@@ -1520,12 +1472,10 @@ async def reader_page():
             markdown = await get_long_message(uid)
 
             if markdown:
-                # ── 2. Redis hit — SSR
                 toc = extract_toc(markdown)
                 body_html = markdown_to_reader_html(markdown, toc)
                 source_label = "redis"
             else:
-                # ── 3. Redis miss — try Telegraph cold-storage
                 tg_url = await get_telegraph_url(uid)
                 if tg_url:
                     pulled = await _fetch_telegraph_content(tg_url)
@@ -1534,7 +1484,6 @@ async def reader_page():
                         body_html = markdown_to_reader_html(pulled, toc)
                         source_label = "telegraph"
                     else:
-                        # Could fetch URL but could not parse content → redirect
                         telegraph_fallback_url = tg_url
 
         except Exception as _e:
@@ -1578,7 +1527,6 @@ async def _fetch_telegraph_content(tg_url: str) -> str | None:
             resp.raise_for_status()
             page_html = resp.text
 
-        # Extract the <article> body from the Telegraph page HTML
         import re as _re
 
         article_match = _re.search(r"<article[^>]*>(.*?)</article>", page_html, _re.DOTALL)
@@ -1609,7 +1557,6 @@ async def api_reader_content(uid: str):
     """
     import re
 
-    # Basic UUID validation to prevent Redis key injection
     if not re.match(r"^[0-9a-f-]{36}$", uid, re.IGNORECASE):
         return jsonify({"error": "invalid_id"}), 400
 
@@ -1620,7 +1567,6 @@ async def api_reader_content(uid: str):
         if markdown:
             return jsonify({"markdown": markdown})
 
-        # Primary key expired — check for Telegraph fallback
         tg_url = await get_telegraph_url(uid)
         if tg_url:
             return jsonify({"telegraph_url": tg_url})
@@ -1630,9 +1576,6 @@ async def api_reader_content(uid: str):
     except Exception as e:
         logger.error("Long read API error uid=%s: %s", uid, e, exc_info=True)
         return jsonify({"error": "internal_error"}), 500
-
-
-# ── Knowledge Graph Visualization API ────────────────────────────────────────
 
 
 @miniapp_blueprint.route("/api/graph")
@@ -1693,7 +1636,6 @@ async def _api_graph_data_leased(user_id: int, expected_epoch: int):
             if not consent_rows or consent_rows[0]["ltm_enabled"] is not True:
                 return jsonify({"nodes": [], "edges": []})
 
-            # Fetch nodes and their connecting edges from one tenant-scoped snapshot.
             if query_filter:
                 nodes_rows = await database.db_query(
                     """
@@ -2017,7 +1959,6 @@ async def _submit_trivia_answer(*, is_super: bool):
     except TriviaSubmissionError as exc:
         return jsonify({"success": False, "error": exc.code}), exc.status
     if not user_id:
-        # Public practice remains playable, without saving a ranked result.
         return jsonify({"success": True})
 
     today = today_puzzle_date()
@@ -2329,17 +2270,12 @@ async def daily2048_ws():
 
             try:
                 async with game_mutation_lock(f"daily2048:{puzzle.puzzle_date}:{user_id}"):
-                    # Concurrent reconnects can both miss the optimistic lookup.
-                    # Claim the move and its replayable response under one lock.
                     if pending_id:
                         cached_event = await get_cached_pending_action_result(runtime_id, pending_id)
                         if cached_event is not None:
                             await websocket.send_json(cached_event)
                             continue
 
-                    # Once admitted, a socket disconnect must not release the
-                    # mutex between the committed move and its cached reply.
-                    # Retain and drain the child even under repeated cancellation.
                     event = await await_owned_game_action(
                         apply_and_cache_move(direction, msg, client_elapsed_ms, pending_id, result)
                     )
@@ -2445,7 +2381,6 @@ async def daily_game_ws():
         except Exception as exc:
             logger.debug("daily_game_ws: timezone update failed user=%s: %s", user_id, exc)
 
-    # Persist display_name from Telegram initData so the leaderboard can show real names.
     try:
         from app.repos.crocodile_daily import update_user_display_name
 
@@ -2732,9 +2667,6 @@ async def game_ws():
 
     raw_init_data = websocket.args.get("initData", "")
     if not raw_init_data:
-        # Require Telegram initData — reject unauthenticated connections.
-        # External browser links should embed initData (Telegram passes it
-        # automatically when the WebApp is opened from the bot).
         await websocket.close(4003, "initData required")
         return
 
@@ -2751,7 +2683,6 @@ async def game_ws():
     if not await _require_authorized_websocket_user(user_id):
         return
 
-    # ── Resolve game ───────────────────────────────────────────────────────
     game_id = websocket.args.get("game_id", "")
     if not game_id:
         await websocket.close(4400, "Missing game_id")
@@ -2768,13 +2699,9 @@ async def game_ws():
         return
 
     if game.status != "active":
-        # The creator (word-giver) may reopen the miniapp after the game ends and
-        # still needs to see the result / chat history. Everyone else gets a clean
-        # 4009 close so they cannot interact with a dead game.
         if user_id != game.creator_id:
             await websocket.close(4009, "Game already finished")
             return
-        # Creator reconnect: send final state + history then close gracefully.
         await websocket.send_json(
             await stamp_runtime_payload(
                 game_id,
@@ -2804,7 +2731,6 @@ async def game_ws():
         await websocket.close(1000, "Game over")
         return
 
-    # Register guesser on first connect (not the creator)
     if game.guesser_id is None and user_id != game.creator_id:
         try:
             async with game_mutation_lock(game_id):
@@ -2826,7 +2752,6 @@ async def game_ws():
         except Exception as exc:
             logger.debug("game_ws: activity record failed user=%s: %s", user_id, exc)
 
-    # Send initial game state
     is_creator = user_id == game.creator_id
     await websocket.send_json(
         await stamp_runtime_payload(
@@ -2843,7 +2768,6 @@ async def game_ws():
         )
     )
 
-    # Restore chat history so reconnecting players keep their progress visible
     history = await get_runtime_history(game_id)
     if not history:
         history = get_game_history(game_id)
@@ -2862,7 +2786,6 @@ async def game_ws():
                 )
             )
 
-    # Subscribe this socket to the game's PubSub broadcast queue
     subscriber_id = uuid.uuid4().hex
     subscription = await open_game_event_subscription(game_id, subscriber_id)
 
@@ -2876,8 +2799,6 @@ async def game_ws():
 
         send_cancellation = None
         try:
-            # Preserve the immediate player result while a slow/closed socket
-            # cannot indefinitely postpone the accepted game completion.
             async with asyncio.timeout(5.0):
                 await websocket.send_json(accepted)
         except asyncio.CancelledError as exc:
@@ -2911,24 +2832,17 @@ async def game_ws():
 
                 bot = get_bot()
                 if bot:
-                    # Keep an accepted win/loss owned after the socket closes,
-                    # while bounding its Telegram finalization and cleanup.
                     async with asyncio.timeout(30.0):
                         await game.finalize(bot)
             except Exception as exc:
                 logger.warning("game_ws: finalize failed game=%s: %s", game_id, exc)
             finally:
-                # finalize/delete clears runtime state, including pending replies.
-                # Restore this terminal replay before releasing mutation ownership.
                 if pending_id:
                     await cache_pending_action_result(game_id, pending_id, accepted)
         if send_cancellation is not None:
             raise send_cancellation
         return accepted
 
-    # ── Drain task: forward broadcast events to this WebSocket connection ──
-    # Runs concurrently with the receive loop so broadcasts are never blocked
-    # by waiting for the next incoming message.
     drain_task: asyncio.Task | None = None
 
     async def _drain_broadcasts() -> None:
@@ -2938,19 +2852,17 @@ async def game_ws():
                 try:
                     await websocket.send_json(payload)
                 except Exception:
-                    break  # Socket closed — exit silently
+                    break
         except asyncio.CancelledError:
             pass
 
     drain_task = asyncio.create_task(_drain_broadcasts())
 
-    # ── Main message loop ──────────────────────────────────────────────────
     try:
         while True:
             try:
                 raw = await asyncio.wait_for(websocket.receive(), timeout=300.0)
             except TimeoutError:
-                # Connection idle for 5 minutes — close gracefully
                 await websocket.close(1000, "Idle timeout")
                 break
 
@@ -2965,7 +2877,6 @@ async def game_ws():
             msg_type = msg.get("type")
             pending_id = str(msg.get("pending_id", ""))
 
-            # ── Hint request ──────────────────────────────────────────────
             if msg_type == "hint":
                 hint_idx = int(msg.get("hint_index", 0))
                 hints = await get_runtime_hints(game_id)
@@ -2996,8 +2907,6 @@ async def game_ws():
                     )
                 continue
 
-            # ── Creator-only: reaction —————————————————————————————————————
-            # Creators can send emoji reactions which are broadcast to the guesser.
             if msg_type == "reaction" and is_creator:
                 emoji = str(msg.get("emoji", "")).strip()
                 if emoji:
@@ -3011,8 +2920,6 @@ async def game_ws():
                     )
                 continue
 
-            # ── Creator-only: typing indicator from creator side ──────────
-            # (Guesser typing is handled in the guess flow below)
             if msg_type == "typing_status" and is_creator:
                 await publish_runtime_event(
                     game_id,
@@ -3024,7 +2931,6 @@ async def game_ws():
                 )
                 continue
 
-            # ── Guesser typing indicator (ephemeral, not recorded) ─────────
             if msg_type == "typing":
                 if not is_creator:
                     await publish_runtime_event(
@@ -3071,13 +2977,11 @@ async def game_ws():
 
             try:
                 async with game_mutation_lock(game_id):
-                    # Another tab may have accepted this action while we waited.
                     if pending_id:
                         cached_event = await get_cached_pending_action_result(game_id, pending_id)
                         if cached_event is not None:
                             await websocket.send_json(cached_event)
                             continue
-                    # Reload game state from Redis (another tab may have mutated it)
                     current_game = await load_game(game_id)
                     if current_game is None or current_game.status != "active":
                         break
@@ -3117,9 +3021,6 @@ async def game_ws():
         if drain_task and not drain_task.done():
             drain_task.cancel()
         await subscription.close()
-
-
-# ── Live Audio (Gemini Live API WebSocket proxy) ─────────────────────────────
 
 
 @miniapp_blueprint.route("/live")
@@ -3187,7 +3088,6 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
     lease_token = secrets.token_hex(16)
     has_active_session = False
     if redis_client:
-        # The lease outlasts the full setup/session deadline and bounded cleanup.
         has_active_session = not await redis_client.set(
             lease_key,
             lease_token,
@@ -3195,7 +3095,6 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
             ex=_LIVE_SESSION_LEASE_SECONDS,
         )
     else:
-        # No await or expiry can transfer this local slot before its owner exits.
         has_active_session = user_id in ACTIVE_LIVE_SESSIONS
         if not has_active_session:
             ACTIVE_LIVE_SESSIONS.add(user_id)
@@ -3355,13 +3254,10 @@ async def _handle_live_session(
     manual_activity: bool = False,
 ):
 
-    # Extract display metadata from the already-validated initData user object.
-    # These fields are populated from Telegram's initData, no extra DB call needed.
     _tg_user: dict = validated.get("user") or {}
     user_first_name: str = _tg_user.get("first_name", "").strip()
     user_language: str = _tg_user.get("language_code", "").strip()
 
-    # ── Connect to Gemini Live API ────────────────────────────────────────
     from google.genai import types
 
     from app.games.crocodile_flags import is_live_audio_enabled
@@ -3508,14 +3404,12 @@ async def _handle_live_session(
                     **live_attempt.fields(),
                 )
 
-            # ── Producer: browser → Gemini ────────────────────────────────
             async def _wait_for_provider_input() -> None:
                 if provider_ready_for_input.is_set():
                     return
                 async with asyncio.timeout(60.0):
                     while not provider_ready_for_input.is_set():
                         if not manual_activity:
-                            # Flush automatic VAD before pausing the upstream stream.
                             await session.send_realtime_input(audio_stream_end=True)
                         await provider_ready_for_input.wait()
 
@@ -3547,10 +3441,6 @@ async def _handle_live_session(
 
                         msg_type = msg.get("type")
                         if msg_type in {"realtime_input", "activity_start", "activity_end", "audio_stream_end", "text"}:
-                            # NO_INTERRUPTION protects the spoken answer, but the
-                            # provider need not retain a simultaneous user turn.
-                            # Keep socket input ordered until the response is idle.
-                            # Do not leave one dispatch blocked indefinitely.
                             await _wait_for_provider_input()
 
                         if msg_type == "realtime_input":
@@ -3560,7 +3450,6 @@ async def _handle_live_session(
                                 audio_bytes = base64.b64decode(audio_b64)
                                 rate = re.search(r"(?:^|;)rate=(\d+)", mime_type)
                                 sample_rate = int(rate.group(1)) if rate else 16000
-                                # The model can start speaking while pacing yields.
                                 await input_pacer.pace(
                                     len(audio_bytes),
                                     sample_rate=sample_rate or 16000,
@@ -3608,15 +3497,12 @@ async def _handle_live_session(
                 finally:
                     producer_alive = False
 
-            # ── Consumer: Gemini → browser ────────────────────────────────
             async def _consumer() -> None:
                 nonlocal session_failure, session_resumption_token
                 nonlocal close_reason, completed_turns, turn_started_ns
                 nonlocal session_output_audio_bytes, session_output_transcript_chars
                 nonlocal turn_output_audio_bytes, turn_output_transcript_chars
                 try:
-                    # Input transcription is independent of model-turn boundaries:
-                    # with NO_INTERRUPTION the next user can speak during a reply.
                     input_transcript = ""
                     while True:
                         if not producer_alive:
@@ -3667,8 +3553,6 @@ async def _handle_live_session(
                                 status_value = str(getattr(status, "value", status)) if status else None
                                 if status_value:
                                     await websocket.send_json({"type": "interaction_status", "status": status_value})
-                                # Transcription may arrive after IDLE, independently
-                                # of model audio. It must not close the input gate.
                                 if status_value == "IN_PROGRESS" or content.model_turn:
                                     provider_ready_for_input.clear()
                                 if (
@@ -3698,9 +3582,6 @@ async def _handle_live_session(
 
                                 if content.input_transcription is not None:
                                     input_transcript += content.input_transcription.text or ""
-                                    # Native Live can send a completed input
-                                    # transcription without the optional marker;
-                                    # explicit False is the partial-update case.
                                     finished = getattr(content.input_transcription, "finished", None) is not False
                                     await websocket.send_json(
                                         {

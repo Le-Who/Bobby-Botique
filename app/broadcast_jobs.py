@@ -137,7 +137,6 @@ class BroadcastService:
         original_subscriptions=None,
     ):
         operation_id = _uuid(operation_id)
-        # The persistent identity wins over a later changed body or settings.
         batch = await self.journal.read_by_operation(operation_id)
         if batch is not None:
             return {
@@ -238,7 +237,6 @@ class BroadcastService:
         if row is None:
             return None
         result = _batch(row, await self.journal.coverage_start())
-        # Reading never enqueues, claims, finishes or reconciles a mutation.
         snapshot = (
             await self.queue.read_job(row["task_id"])
             if row.get("task_id")
@@ -357,7 +355,6 @@ class BroadcastService:
             batch_id, guard.snapshot.task_id, token, settings_revision=settings_snapshot.revision
         )
         if batch is None:
-            # A late duplicate queue reply cannot claim an old recipient again.
             return JobResult(JobOutcome.SUCCEEDED, "batch_already_owned")
         slots = asyncio.Semaphore(5)
         progress_lock = asyncio.Lock()
@@ -466,8 +463,6 @@ class BroadcastService:
             return JobResult(JobOutcome.UNKNOWN_DELIVERY, "broadcast_journal_finish_unconfirmed")
         final = await self.journal.read_batch(batch_id)
         summary = {key: final[key] for key in ("total", "sent", "failed", "skipped", "unknown_delivery")}
-        # Queue summaries use existing safe fields; detailed observed outcomes
-        # remain in the journal (never leak a per-recipient queue payload).
         summary = {
             "total": summary["total"],
             "completed": summary["sent"] + summary["failed"] + summary["skipped"] + summary["unknown_delivery"],
@@ -482,8 +477,6 @@ class BroadcastService:
         return JobResult(JobOutcome.SUCCEEDED, "broadcast_complete", summary)
 
     async def _acknowledge(self, batch, user_id, recipient):
-        # Receipt is already durable. A failed legacy convenience marker cannot
-        # turn that confirmed send into a retryable recipient.
         try:
             if batch["channel"] == "horoscope":
                 from app.repos.horoscope_subscriptions import mark_horoscope_discovery_sent
@@ -500,7 +493,7 @@ class BroadcastService:
                 else:
                     await self.journal.acknowledge_tarot(user_id, recipient)
         except Exception:
-            pass  # Journal/reservation remains the authoritative no-replay record.
+            pass
 
     async def _retire_unreachable(self, batch, user_id):
         try:
@@ -524,8 +517,6 @@ class BroadcastService:
     async def enqueue_scheduled(self, *, channel, user_ids, effective_date, variant="", mode="delivery"):
         if not user_ids:
             return []
-        # Reconciliation never enqueues a crashed/unknown admission. Only queue
-        # proof can confirm it; absent proof is quarantined, never replayed.
         await self.recover()
         users = sorted(set(user_ids))
         results = []
@@ -640,8 +631,6 @@ async def recover_broadcast_jobs(limit=100):
             level="warning",
             fields={"reason_code": "database_unavailable"},
         )
-        # Earlier batches may already have been reconciled. Do not report an
-        # invented recovered count, or replay deliveries to recover storage.
         return {"deferred": True, "reason_code": "database_unavailable"}
 
 

@@ -356,8 +356,6 @@ async def test_transaction_exit_error_reconciles_durable_outcome_without_retry(
 ):
     settings = store.RuntimeSettingsStore()
     confirmed = await settings.set_value("prompt:chat", "old", expected_revision=0, actor="admin")
-    # Record acceptance timing as a supplementary oracle. Reconciliation below
-    # uses the ordinary public read and proves invalidation with a warm cache.
     accept = Mock(wraps=settings._accept)
     monkeypatch.setattr(settings, "_accept", accept)
     fault = ConnectionError("synthetic commit acknowledgement failure")
@@ -377,7 +375,7 @@ async def test_transaction_exit_error_reconciles_durable_outcome_without_retry(
     assert snapshot.values["prompt:chat"] == value
     assert not snapshot.degraded
     assert [row["revision"] for row in actual_history] == history
-    assert transaction_backend.reads == reads + 2  # mutation SELECT + normal reconciliation SELECT
+    assert transaction_backend.reads == reads + 2
     assert transaction_backend.writes == 2
 
 
@@ -395,7 +393,6 @@ async def test_cancellation_at_transaction_exit_preserves_acceptance_and_release
     operation = asyncio.create_task(settings.set_value("prompt:chat", "new", expected_revision=1, actor="admin"))
     try:
         await asyncio.wait_for(transaction_backend.exit_entered.wait(), timeout=1)
-        # RETURNING has completed, but the write has no confirmed commit yet.
         assert transaction_backend.writes == 2
         during = await settings.get_snapshot()
         assert during.revision == 1 and during.values["prompt:chat"] == "old"
@@ -414,7 +411,6 @@ async def test_cancellation_at_transaction_exit_preserves_acceptance_and_release
     assert not snapshot.degraded
     assert transaction_backend.reads == reads + 1
     assert transaction_backend.writes == 2
-    # A subsequent mutation can also acquire the released write lock.
     transaction_backend.block_exit = False
     transaction_backend.persist_before_fault = False
     saved = await asyncio.wait_for(

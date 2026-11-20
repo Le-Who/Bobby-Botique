@@ -4,10 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# ============================================================================
-# 2. ERROR PIPELINE TESTS
-# ============================================================================
-
 
 class TestErrorPipeline:
     """Test tag_error → is_error_message → handle_ai_response_error chain."""
@@ -68,11 +64,6 @@ class TestErrorPipeline:
         mock_msg.edit_text.assert_not_called()
 
 
-# ============================================================================
-# 3. ADMIN ALERTS TESTS
-# ============================================================================
-
-
 class TestAdminAlerts:
     """Test admin alert system with rate limiting."""
 
@@ -110,15 +101,13 @@ class TestAdminAlerts:
         mock_app.bot = AsyncMock()
 
         with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
-            # Send _MAX_ALERTS messages — all should go through
             for i in range(_MAX_ALERTS):
                 await alert_admin(mock_app, f"Alert {i}", AlertSeverity.WARNING)
 
             assert mock_app.bot.send_message.call_count == _MAX_ALERTS
 
-            # The next one should be rate-limited
             await alert_admin(mock_app, "This should be dropped", AlertSeverity.CRITICAL)
-            assert mock_app.bot.send_message.call_count == _MAX_ALERTS  # No increase
+            assert mock_app.bot.send_message.call_count == _MAX_ALERTS
 
         _alert_timestamps.clear()
 
@@ -147,11 +136,6 @@ class TestAdminAlerts:
         _alert_timestamps.clear()
 
 
-# ============================================================================
-# 4. PROVIDER ROUTER FALLBACK TESTS
-# ============================================================================
-
-
 class TestProviderRouterFallback:
     """Test ProviderRouter key rotation and fallback logic."""
 
@@ -160,7 +144,6 @@ class TestProviderRouterFallback:
         """When all keys are exhausted, the router should return a tagged error."""
         from app.errors import is_error_message
 
-        # Mock resolve to always return no keys
         with patch("app.agent_use_cases.AgentRequestUseCase") as MockUseCase:
             mock_use_case = MockUseCase.return_value
             mock_use_case.resolve_ai_request = AsyncMock(return_value=(None, None, "all_exhausted"))
@@ -190,7 +173,6 @@ class TestProviderRouterFallback:
 
         use_case = AgentRequestUseCase()
 
-        # First call — no exclusions
         key1, model1, err1 = await use_case._resolve_key_generic(
             "gemini-3.1-flash-lite",
             mock_get_key,
@@ -200,7 +182,6 @@ class TestProviderRouterFallback:
         assert key1["key_hash"] == "h1"
         assert err1 is None
 
-        # Second call — exclude first key
         key2, model2, err2 = await use_case._resolve_key_generic(
             "gemini-3.1-flash-lite",
             mock_get_key,
@@ -209,6 +190,5 @@ class TestProviderRouterFallback:
         )
         assert key2["key_hash"] == "h2"
 
-        # Verify exclusion was passed through
         assert len(resolve_calls) == 2
         assert "h1" in resolve_calls[1]["excluded"]

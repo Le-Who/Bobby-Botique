@@ -23,8 +23,6 @@ def scheduled_boundary(monkeypatch):
 class TestParseReminderArgs:
     """Test the bilingual time parser."""
 
-    # -- English units --
-
     def test_minutes_m(self):
         delta, prompt = _parse_reminder_args("30m Проверить результаты")
         assert delta == timedelta(minutes=30)
@@ -64,8 +62,6 @@ class TestParseReminderArgs:
         delta, prompt = _parse_reminder_args("2day followup")
         assert delta == timedelta(days=2)
         assert prompt == "followup"
-
-    # -- Russian units --
 
     def test_russian_мин(self):
         delta, prompt = _parse_reminder_args("45мин проверить почту")
@@ -107,8 +103,6 @@ class TestParseReminderArgs:
         assert delta == timedelta(days=7)
         assert prompt == "отчёт"
 
-    # -- Edge cases --
-
     def test_whitespace_between_number_and_unit(self):
         delta, prompt = _parse_reminder_args("30 m reminder text")
         assert delta == timedelta(minutes=30)
@@ -142,13 +136,8 @@ class TestParseReminderArgs:
         assert prompt == "multi word prompt with  spaces"
 
 
-# ── Intent classifier ────────────────────────────────────────────────────────
-
-
 class TestClassifyReminderIntent:
     """Test the heuristic intent classifier."""
-
-    # -- Plain text (no AI) --
 
     @pytest.mark.parametrize(
         "prompt",
@@ -170,8 +159,6 @@ class TestClassifyReminderIntent:
         assert result["is_ai"] is False
         assert result["mode"] == "notify"
 
-    # -- QnA search --
-
     @pytest.mark.parametrize(
         "prompt",
         [
@@ -188,8 +175,6 @@ class TestClassifyReminderIntent:
         result = _classify_reminder_intent(prompt)
         assert result["is_ai"] is True
         assert result["mode"] == "qna"
-
-    # -- Research (deep analysis) --
 
     @pytest.mark.parametrize(
         "prompt",
@@ -230,9 +215,6 @@ class TestClassifyReminderIntent:
             assert result["mode"] in ("notify", "qna", "research")
 
 
-# ── Remind command ───────────────────────────────────────────────────────────
-
-
 class TestRemindCommand:
     @pytest.mark.asyncio
     async def test_no_args_shows_usage(self):
@@ -245,7 +227,6 @@ class TestRemindCommand:
         context = MagicMock()
         context.args = []
 
-        # Bypass @authorized_only and @safe_handler decorators
         inner = remind_command.__wrapped__.__wrapped__
 
         with patch("app.handlers.cmd_reminders.get_user_reminders", new_callable=AsyncMock, return_value=[]):
@@ -254,9 +235,6 @@ class TestRemindCommand:
         update.message.reply_text.assert_awaited_once()
         call_text = update.message.reply_text.call_args[0][0]
         assert "remind" in call_text.lower() or "Формат" in call_text
-
-
-# ── Delivery ─────────────────────────────────────────────────────────────────
 
 
 @pytest_asyncio.fixture
@@ -452,13 +430,10 @@ class TestCheckAndDeliverReminders:
             patch("app.handlers.cmd_reminders.get_pending_reminders", new_callable=AsyncMock, return_value=pending),
             patch("app.handlers.cmd_reminders.scheduled.finish_delivery", new_callable=AsyncMock) as mock_mark,
         ):
-            await check_and_deliver_reminders(context)  # Should not raise
+            await check_and_deliver_reminders(context)
 
         mock_mark.assert_awaited_once()
         assert mock_mark.await_args.args[1].outcome == "unknown_delivery"
-
-
-# ── Cancel callback ──────────────────────────────────────────────────────────
 
 
 class TestReminderCancelCallback:
@@ -488,7 +463,6 @@ class TestReminderCancelCallback:
         with patch("app.handlers.cmd_reminders.delete_reminder", new_callable=AsyncMock, return_value=True):
             await reminder_cancel_callback(update, context)
 
-        # Button for id=42 should be removed, id=99 should remain
         query.message.edit_reply_markup.assert_awaited_once()
         new_markup = query.message.edit_reply_markup.call_args[1]["reply_markup"]
         remaining = [btn.callback_data for row in new_markup.inline_keyboard for btn in row]
@@ -512,7 +486,6 @@ class TestReminderCancelCallback:
         with patch("app.handlers.cmd_reminders.delete_reminder", new_callable=AsyncMock, return_value=False):
             await reminder_cancel_callback(update, context)
 
-        # Should show error alert (the second query.answer call with show_alert=True)
         calls = query.answer.call_args_list
         assert any(c.kwargs.get("show_alert") is True for c in calls)
 

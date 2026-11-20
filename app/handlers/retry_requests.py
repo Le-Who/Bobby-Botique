@@ -20,8 +20,6 @@ class MessageRequest:
     response_ref: tuple[int, int] | None = None
 
 
-# The canonical state's lifetime also bounds source identities. These never
-# survive eviction/erasure and cannot accidentally attach to a new user state.
 _message_requests: weakref.WeakKeyDictionary[state.UserState, MessageRequest] = weakref.WeakKeyDictionary()
 
 
@@ -157,6 +155,5 @@ def legacy_request(user_id: int, text: str, chat_state) -> RetryRequest:
         except StaleRetryRequest:
             request.history_start = len(history)
         else:
-            # A legacy completed/partial turn may already have scheduled memory.
             request.memory_scheduled = True
     return request

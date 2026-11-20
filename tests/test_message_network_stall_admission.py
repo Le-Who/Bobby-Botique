@@ -88,7 +88,6 @@ async def network_flow(monkeypatch):
     monkeypatch.setattr(state, "_PERSIST_DEBOUNCE_SEC", 60)
     monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
     monkeypatch.setattr("app.repos.users.save_user_state", AsyncMock())
-    # User 1 is the synthetic administrator; user 2 takes the real auth-cache path.
     monkeypatch.setattr(db_manager, "_user_auth_cache", {2: True})
     monkeypatch.setattr(security, "rate_limiter", security.RateLimiter())
     monkeypatch.setattr(messages, "metrics_collector", MetricsCollector())

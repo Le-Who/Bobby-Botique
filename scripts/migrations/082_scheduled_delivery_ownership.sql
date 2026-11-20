@@ -1,4 +1,3 @@
--- Preserve existing reminders/subscriptions; journal new scheduled executions.
 ALTER TABLE public.brief_subscriptions
     ADD COLUMN IF NOT EXISTS delivery_revision bigint NOT NULL DEFAULT 1;
 

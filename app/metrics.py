@@ -41,22 +41,19 @@ class MetricsCollector:
 
     def __init__(self):
         self.metrics = PerformanceMetrics()
-        self.response_times = deque(maxlen=1000)  # Храним последние 1000 requestов
-        self.error_log = deque(maxlen=100)  # Храним последние 100 ошибок
-        self.api_event_log = deque(maxlen=200)  # Храним последние API события
+        self.response_times = deque(maxlen=1000)
+        self.error_log = deque(maxlen=100)
+        self.api_event_log = deque(maxlen=200)
         self.daily_metrics: dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
-        # Persisted totals are display data, never new deltas for the next UPSERT.
         self._persisted_daily_metrics: dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
-        # Per-user daily metrics: key = date_str -> uid
         self._user_daily: dict[str, dict[int, dict[str, Any]]] = defaultdict(
             lambda: defaultdict(lambda: {"request_count": 0, "model_usage": {}})
         )
         self._events_queue = asyncio.Queue()
         self._last_save_time = time.time()
-        self._save_interval = 300  # Save каждые 5 минут
+        self._save_interval = 300
         self._bg_save_task = None
-        self._lock = asyncio.Lock()  # Protects daily_metrics reset in _save_metrics_to_db
-        # Serializes DB reads with flushes across the snapshot/reset/write gap.
+        self._lock = asyncio.Lock()
         self._flush_lock = asyncio.Lock()
         self._api_daily: dict[str, int] = defaultdict(int)
         self._api_flushed: dict[str, int] = defaultdict(int)
@@ -93,14 +90,12 @@ class MetricsCollector:
     def _prune_old_metrics(self):
         """Remove stale daily_metrics and _user_daily entries to prevent unbounded growth."""
         today = date.today()
-        # Prune daily_metrics older than 8 days
         from datetime import timedelta as _td
 
         cutoff = (today - _td(days=8)).isoformat()
         stale_days = [d for d, metrics in self.daily_metrics.items() if d < cutoff and metrics == PerformanceMetrics()]
         for d in stale_days:
             del self.daily_metrics[d]
-        # Past-day deltas survive until their write succeeds.
         today_str = today.isoformat()
         stale_dates = [
             d
@@ -139,14 +134,11 @@ class MetricsCollector:
             self.daily_metrics[today].request_count += 1
             self.daily_metrics[today].total_response_time += response_time
 
-            # Per-user tracking
             uid = event.get("user_id")
             if uid:
                 self._user_daily[today][uid]["request_count"] += 1
 
         elif event_type == "model_response":
-            # Delivery credits the winning model to its user; providers own
-            # attempt counters, including retries and cancelled racing lanes.
             uid = event["user_id"]
             model = event["model"]
             usage = self._user_daily[today][uid]["model_usage"]
@@ -164,7 +156,6 @@ class MetricsCollector:
                 self.metrics.model_usage[model] = self.metrics.model_usage.get(model, 0) + 1
                 self.daily_metrics[today].model_usage[model] = self.daily_metrics[today].model_usage.get(model, 0) + 1
 
-                # Per-user model usage
                 uid = event.get("user_id")
                 if uid:
                     mu = self._user_daily[today][uid]["model_usage"]
@@ -308,8 +299,6 @@ class MetricsCollector:
                         period["reason"] = "Traffic accounting has not been activated."
                     return traffic
                 coverage_start = rows[0]["coverage_start"].astimezone(tz)
-                # New events can arrive during the query, but no flush can commit
-                # them while this lock is held. Include them once as pending.
                 self._drain_events()
                 for name, start in starts.items():
                     first_day, last_day = start.date().isoformat(), current.date().isoformat()
@@ -355,7 +344,6 @@ class MetricsCollector:
         global_saved = False
         users_saved = False
 
-        # ── Phase 1: Atomic snapshot + reset under lock (O(1), no I/O) ────
         try:
             async with self._lock:
                 today = metric_date
@@ -363,7 +351,6 @@ class MetricsCollector:
 
                 daily = self.daily_metrics.get(today_str, PerformanceMetrics())
 
-                # Snapshot daily metrics
                 snapshot_data = {
                     "date": today,
                     "request_count": daily.request_count,
@@ -376,8 +363,6 @@ class MetricsCollector:
                     "model_usage": dict(daily.model_usage),
                 }
 
-                # Reset immediately — events arriving after this point
-                # will accumulate in fresh counters, not be lost
                 daily.request_count = 0
                 daily.total_response_time = 0.0
                 daily.error_count = 0
@@ -387,26 +372,22 @@ class MetricsCollector:
                 daily.api_calls.clear()
                 daily.model_usage.clear()
 
-                # Snapshot per-user metrics
                 user_snapshot = [
                     (uid, {"request_count": data["request_count"], "model_usage": dict(data["model_usage"])})
                     for uid, data in self._user_daily[today_str].items()
                     if data["request_count"] > 0 or data["model_usage"]
                 ]
-                # Reset per-user counters
                 for _uid, data in self._user_daily[today_str].items():
                     if data["request_count"] > 0 or data["model_usage"]:
                         data["request_count"] = 0
                         data["model_usage"] = {}
 
-            # Snapshot unsaved errors (outside lock — error_log only appended, safe to read)
             errors_to_process = [error for error in self.error_log if not error.get("saved", False)]
 
         except Exception as e:
             logging.error("Error creating metrics snapshot: %s", e, exc_info=True)
             return
 
-        # ── Phase 2: Save to DB (I/O, no lock held) ──────────────────────
         try:
             if snapshot_data and any(value for key, value in snapshot_data.items() if key != "date"):
                 await db.db_query(
@@ -459,7 +440,6 @@ class MetricsCollector:
                 persisted.total_response_time += snapshot_data["total_response_time"]
                 persisted.error_count += snapshot_data["error_count"]
 
-            # Save new errors
             if errors_to_process:
                 unsaved_errors = [e for e in errors_to_process if not e.get("saved", False)]
                 if unsaved_errors:
@@ -484,7 +464,6 @@ class MetricsCollector:
             self._last_save_time = time.time()
             logging.info("Metrics saved (bg): %s reqs", snapshot_data["request_count"] if snapshot_data else 0)
 
-            # Save per-user metrics
             if user_snapshot:
                 params_list = [
                     (
@@ -519,12 +498,9 @@ class MetricsCollector:
                 users_saved = True
                 logging.debug("Per-user metrics flushed for up to %s existing users", len(user_snapshot))
 
-                # Update streaks for active users
                 try:
                     from app.repos.analytics import record_daily_activity
 
-                    # This API records today's streak; a delayed previous-day
-                    # flush must not manufacture activity for today.
                     if metric_date == date.today():
                         for uid, data in user_snapshot:
                             if data["request_count"] > 0:
@@ -534,7 +510,6 @@ class MetricsCollector:
 
         except (Exception, asyncio.CancelledError) as e:
             logging.error("Error saving metrics to database: %s", e, exc_info=True)
-            # ── Compensate: re-add snapshot values so they aren't lost ────
             if snapshot_data:
                 try:
                     async with self._lock:
@@ -551,7 +526,6 @@ class MetricsCollector:
                                 daily.api_calls[k] = daily.api_calls.get(k, 0) + v
                             for k, v in snapshot_data["model_usage"].items():
                                 daily.model_usage[k] = daily.model_usage.get(k, 0) + v
-                        # Re-add per-user data
                         for uid, data in user_snapshot if not users_saved else []:
                             self._user_daily[today_str][uid]["request_count"] += data["request_count"]
                             for k, v in data["model_usage"].items():
@@ -566,7 +540,6 @@ class MetricsCollector:
     async def _load_metrics_from_db(self):
         """Загружает метрики из базы данных"""
         try:
-            # Load общие metrics (without JSONB полей в основном requestе)
             result = await db.db_query("""
                 SELECT
                     COALESCE(SUM(request_count), 0) as total_requests,
@@ -588,8 +561,6 @@ class MetricsCollector:
                 self.metrics.cache_hits = row["total_cache_hits"]
                 self.metrics.cache_misses = row["total_cache_misses"]
 
-            # Optimized: Aggregate JSONB fields in SQL (O(1) Python processing)
-            # Aggregate api_calls
             api_calls_result = await db.db_query("""
                 SELECT key, SUM(value::numeric) as total
                 FROM metrics, jsonb_each_text(api_calls)
@@ -600,7 +571,6 @@ class MetricsCollector:
 
             self.metrics.api_calls = {row["key"]: int(row["total"]) for row in api_calls_result}
 
-            # Aggregate model_usage
             model_usage_result = await db.db_query("""
                 SELECT key, SUM(value::numeric) as total
                 FROM metrics, jsonb_each_text(model_usage)
@@ -610,7 +580,6 @@ class MetricsCollector:
             """)
 
             self.metrics.model_usage = {row["key"]: int(row["total"]) for row in model_usage_result}
-            # Load дневные metrics за afterдние 7 дней
             daily_result = await db.db_query("""
                 SELECT metric_date, request_count, total_response_time, error_count,
                        search_queries, cache_hits, cache_misses, api_calls, model_usage
@@ -648,7 +617,6 @@ class MetricsCollector:
                     )
                     continue
 
-            # Load afterдние ошибки
             error_result = await db.db_query("""
                 SELECT error_type, error_message, request_id, created_at
                 FROM error_logs
@@ -656,9 +624,7 @@ class MetricsCollector:
                 LIMIT 100
             """)
 
-            self.error_log.clear()  # Clear existing before loading
-            # Query returns newest-first; store chronologically so append() keeps
-            # the deque invariant of oldest -> newest for live events as well.
+            self.error_log.clear()
             for row in reversed(error_result):
                 safe_message, message_fingerprint = _safe_error_message(row["error_message"])
                 self.error_log.append(
@@ -668,7 +634,7 @@ class MetricsCollector:
                         "message": safe_message,
                         "message_fingerprint": message_fingerprint,
                         "request_id": row.get("request_id"),
-                        "saved": True,  # Loaded from DB, so it is saved
+                        "saved": True,
                     }
                 )
             logging.info("Metrics loaded from database")
@@ -701,8 +667,6 @@ class MetricsCollector:
             if not success:
                 observation.set_outcome("failed")
         else:
-            # Legacy synchronous operations have an existing single accounting
-            # owner. Their duration is retained without treating HTTP/PTB as work.
             emit("request.finished", outcome="succeeded" if success else "failed", duration_ms=response_time * 1000)
         self._events_queue.put_nowait(
             {
@@ -854,7 +818,6 @@ class MetricsCollector:
         self._traffic_epoch_pending = True
         await self._activate_traffic_epoch()
         await self._load_metrics_from_db()
-        # Start background processor even while the database is recovering.
         if not self._bg_save_task:
             self._bg_save_task = asyncio.create_task(self._event_processor())
             logging.info("Metrics event processor task started")
@@ -877,15 +840,12 @@ class MetricsCollector:
     async def cleanup(self):
         """Очищает ресурсы и сохраняет метрики"""
         try:
-            # Stop background task
             if self._bg_save_task:
                 self._bg_save_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._bg_save_task
                 self._bg_save_task = None
 
-            # Producers are drained by lifecycle cleanup before this boundary.
-            # Cancelling the consumer does not process its queued final events.
             while not self._events_queue.empty():
                 event = self._events_queue.get_nowait()
                 try:
@@ -893,33 +853,25 @@ class MetricsCollector:
                 finally:
                     self._events_queue.task_done()
 
-            # Check, что база данных доступна before сохранением
             if db.db_manager.is_connected:
                 await self._save_metrics_to_db()
             else:
                 logging.warning("Database pool unavailable during metrics cleanup, skipping save")
         except Exception as e:
             logging.error("Error during metrics cleanup: %s", e, exc_info=True)
-            # Не позволяем ошибкам метрик прерывать shutdown
 
 
-# Глобальный экземпляр сборщика метрик
 metrics_collector = MetricsCollector()
 
 
-# Re-export middleware for backward compatibility
 from app.utils.metrics_middleware import MetricsMiddleware, track_metrics  # noqa: F401,E402
-
-# ============================================================================
-# ROLE AND CONVERSATION METRICS
-# ============================================================================
 
 
 @dataclass
 class RoleMetrics:
     """Метрики использования ролей"""
 
-    role_applications: dict[str, int] = field(default_factory=dict)  # role_key -> count
+    role_applications: dict[str, int] = field(default_factory=dict)
     custom_roles_created: int = 0
     role_clears: int = 0
     role_saves: int = 0
@@ -984,7 +936,6 @@ class RoleConversationMetricsCollector:
     async def record_role_application(self, role_key: str):
         """Записывает применение роли"""
         self.role_metrics.role_applications[role_key] = self.role_metrics.role_applications.get(role_key, 0) + 1
-        # Evict least-used roles when dict exceeds cap
         if len(self.role_metrics.role_applications) > self._MAX_ROLE_ENTRIES:
             least_key = min(self.role_metrics.role_applications, key=self.role_metrics.role_applications.get)  # type: ignore[arg-type]
             del self.role_metrics.role_applications[least_key]
@@ -1063,7 +1014,6 @@ class RoleConversationMetricsCollector:
         elif "жёсткий лимит" in reason:
             self.summarization_metrics.summarizations_hard_limit += 1
 
-        # Track LLM vs local tier
         if reason.startswith("llm:"):
             self.summarization_metrics.llm_summarizations += 1
         elif reason.startswith("local:"):
@@ -1071,7 +1021,6 @@ class RoleConversationMetricsCollector:
 
         self.summarization_metrics.total_tokens_saved += tokens_saved
 
-        # Update average summary length
         current_avg = self.summarization_metrics.average_summary_length
         count = self.summarization_metrics.summarizations_triggered
         self.summarization_metrics.average_summary_length = (current_avg * (count - 1) + summary_length) / count
@@ -1118,7 +1067,6 @@ class RoleConversationMetricsCollector:
         }
 
 
-# Глобальный экземпляр сборщика метрик ролей и бесед
 role_conv_metrics = RoleConversationMetricsCollector()
 
 
@@ -1137,9 +1085,6 @@ async def get_system_status_data() -> dict[str, Any]:
     today_pacific = time_utils.get_pacific_date()
     current_month = time_utils.get_current_month_str()
 
-    # ⚡ Bolt Optimization: Phase 1 — fan out 3 independent I/O calls concurrently.
-    # Previously: metrics summary + gemini keys + tavily keys ran sequentially (~3× RTT).
-    # Now: all three run in parallel (~1× max RTT).
     metrics, gemini_keys_raw, tavily_keys_raw = await asyncio.gather(
         metrics_collector.get_metrics_summary(),
         db.db_query("SELECT key_hash, api_key FROM api_keys"),
@@ -1161,8 +1106,6 @@ async def get_system_status_data() -> dict[str, Any]:
         for row in tavily_keys_raw
     ]
 
-    # ⚡ Phase 2 — fan out usage queries concurrently (only if keys exist).
-    # Gemini usage and Tavily usage are independent of each other.
     gemini_usage_coro = (
         db.db_query(
             "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",

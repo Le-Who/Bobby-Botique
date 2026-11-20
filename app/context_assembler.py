@@ -1,4 +1,3 @@
-# /app/context_assembler.py
 """
 Backward-compatibility facade — all logic lives in ``app.context`` subpackage.
 

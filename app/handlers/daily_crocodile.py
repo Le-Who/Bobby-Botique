@@ -37,7 +37,6 @@ async def _edit_callback_text(
     if msg and msg.text is not None:
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
     else:
-        # Photo / media message — edit the caption instead.
         await query.edit_message_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 
@@ -243,8 +242,6 @@ async def send_daily_prompt(
     return sent_as_photo
 
 
-# Daily Crocodile is intentionally public to any Telegram-authenticated user.
-# Whitelist still gates the rest of the bot via command/message handlers.
 @safe_handler("Не удалось открыть Крокодил дня")
 async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
@@ -305,7 +302,6 @@ async def send_daily_menu_for_user(
     is_subscribed = bool(pref and pref.get("is_subscribed"))
     now = datetime.now(tz=UTC)
     today = repo.today_puzzle_date(now)
-    # Mark delivery so the scheduler doesn't send a duplicate today.
     if is_subscribed and not repo.was_daily_delivered_today(pref, puzzle_date=today, now=now):
         await repo.mark_daily_sent(
             user_id,
@@ -460,9 +456,6 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
     from app.handlers.daily_2048 import check_daily_2048_jobs
     from app.handlers.daily_trivia import check_daily_trivia_jobs
 
-    # Every game is available to player-selected daily subscriptions. Each
-    # handler sends only to its own recipients; the admin choice keeps its
-    # longer preparation window and discovery invitation.
     outcomes = await asyncio.gather(
         check_daily_2048_jobs(context, admin_mode=game_mode),
         check_daily_trivia_jobs(context, admin_mode=game_mode),

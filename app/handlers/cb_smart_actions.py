@@ -1,4 +1,3 @@
-# /app/handlers/cb_smart_actions.py
 """Callback handlers for Smart Suggestions, Proactive Intent Routing, and Edit Query.
 
 Handles:
@@ -29,24 +28,20 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     await query.answer()
 
-    # Extract suggestion ID or raw text from callback_data: "suggest:..."
     suggestion_id_or_text = (query.data or "").removeprefix("suggest:").strip()
     if not suggestion_id_or_text:
         return
 
     from app.utils.response_tags import SUGGESTION_CACHE
 
-    # Try to look up the full text from the cache using the hash ID
     suggestion_text = SUGGESTION_CACHE.get(suggestion_id_or_text)
     if not suggestion_text:
-        # If it's a cache miss and looks like an MD5 hash fragment, it's expired
         if len(suggestion_id_or_text) <= 10 and all(c in "0123456789abcdefABCDEF" for c in suggestion_id_or_text):
             try:
                 await query.answer("❌ Подсказка устарела. Пожалуйста, напишите запрос вручную.", show_alert=True)
             except Exception:
                 pass
             return
-        # Fallback for legacy buttons that might have full text in callback_data
         suggestion_text = suggestion_id_or_text
 
     user = update.effective_user
@@ -71,7 +66,6 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     user_state = get_user_state(user.id)
     if user_state.is_processing or get_user_lock(user.id).locked():
-        # Inform user but don't crash
         try:
             from app.handlers.messages import _send_busy_ephemeral
 
@@ -157,7 +151,6 @@ async def intent_route_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     user_id = user.id
     msg = query.message
-    # Ensure this is a real Message, not InaccessibleMessage
     if not isinstance(msg, Message):
         return
 
@@ -181,7 +174,6 @@ async def _route_draw(msg: Message, user_id: int) -> None:
             await msg.reply_text("❌ Не удалось определить запрос.")
             return
 
-        # Find the last user message
         last_user_msg = ""
         for entry in reversed(chat_state.history):
             if entry.get("role") == "user":
@@ -193,7 +185,6 @@ async def _route_draw(msg: Message, user_id: int) -> None:
             await msg.reply_text("❌ Не найден текст для генерации.")
             return
 
-        # Use sendMessageDraft to pre-fill /draw command
         try:
             await msg.get_bot().send_message_draft(
                 chat_id=msg.chat_id,
@@ -201,7 +192,6 @@ async def _route_draw(msg: Message, user_id: int) -> None:
                 text=f"/draw {last_user_msg[:200]}",
             )
         except Exception:
-            # Fallback: just tell the user what to type
             await msg.reply_text(
                 f"🎨 Скопируйте и отправьте:\n`/draw {last_user_msg[:200]}`",
                 parse_mode="Markdown",
@@ -254,7 +244,6 @@ async def _route_tts(
             await msg.reply_text("❌ Нет текста для озвучивания.")
             return
 
-        # Resolve the user's configured voice preference
         _user_id = user_id
         tts_voice = ""
         tts_temperature_val: float | None = None
@@ -300,7 +289,6 @@ async def edit_query_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not user or not chat:
         return
 
-    # Retrieve the last sent message from persisted user state
     try:
         from app.state import ensure_state_loaded, get_last_sent_message
 
@@ -321,10 +309,8 @@ async def edit_query_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
     except Exception as exc:
         logging.debug("send_message_draft failed for edit_query: %s", exc)
-        # Fallback: show the text so user can copy it
         msg = query.message
         if isinstance(msg, Message):
-            # Truncate for display
             display = last_text[:500]
             await msg.reply_text(
                 f"✏️ Ваш последний запрос:\n\n`{display}`",

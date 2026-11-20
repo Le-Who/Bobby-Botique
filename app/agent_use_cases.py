@@ -27,17 +27,12 @@ from app.repos.keys import (
     reserve_openrouter_key_usage,
 )
 
-# In-memory health state for Opencode keys (dict: key_hash → suspended_until UTC).
-# Not persisted to DB — keys self-recover after cooldown or on bot restart.
-# 30s default cooldown matches the transient error penalty in KeyStatusManager.
 _opencode_key_health: dict[str, datetime] = {}
 _OPENCODE_COOLDOWN = timedelta(seconds=30)
 
-# In-memory health state for FreeTheAI keys (same pattern as Opencode).
 _freetheai_key_health: dict[str, datetime] = {}
 _FREETHEAI_COOLDOWN = timedelta(seconds=30)
 
-# Environment-owned credentials have no DB key rows. Health is local to this process.
 _openai_key_health: dict[str, datetime] = {}
 _openai_key_cursor = 0
 
@@ -161,12 +156,9 @@ class AgentRequestUseCase:
         if is_openai_model(preferred_model):
             return await self._resolve_openai_request(preferred_model, excluded)
 
-        # Opencode Go models take priority (they also contain '/')
         if is_opencode_model(preferred_model):
             return await self._resolve_opencode_request(preferred_model, excluded)
 
-        # FreeTheAI models (cat/, yng/, vhr/, or/google/lyria-*) — must check
-        # BEFORE the generic "/" detection to prevent OpenRouter collision.
         if is_freetheai_model(preferred_model):
             return await self._resolve_freetheai_request(preferred_model, excluded)
 
@@ -195,11 +187,9 @@ class AgentRequestUseCase:
 
         excluded = excluded_key_hashes or set()
 
-        # Invalidate cache when exclusions exist (caller retrying after failure)
         if excluded and invalidate_cache_func:
             await invalidate_cache_func(preferred_model)
 
-        # Try preferred model — DB query already filters excluded + suspended
         try:
             key = await get_key_func(preferred_model, excluded_hashes=excluded)
         except DecryptionError as e:
@@ -217,7 +207,6 @@ class AgentRequestUseCase:
             f"All keys for preferred model {preferred_model} are exhausted or excluded. Attempting fallback."
         )
 
-        # Try fallback models
         for fallback_model in fallback_priority:
             if fallback_model == preferred_model:
                 continue
@@ -329,13 +318,11 @@ class AgentRequestUseCase:
             key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
             if key_hash in excluded:
                 continue
-            # Check in-memory suspension (resets on restart — intentional for short cooldowns)
             suspended_until = _opencode_key_health.get(key_hash)
             if suspended_until and now < suspended_until:
                 continue
             return {"api_key": key, "key_hash": key_hash}, preferred_model, None
 
-        # All keys excluded or suspended — clean up expired suspensions and report
         expired = [h for h, until in list(_opencode_key_health.items()) if now >= until]
         for h in expired:
             del _opencode_key_health[h]
@@ -366,7 +353,6 @@ class AgentRequestUseCase:
                 continue
             return {"api_key": key, "key_hash": key_hash}, preferred_model, None
 
-        # Clean up expired suspensions
         expired = [h for h, until in list(_freetheai_key_health.items()) if now >= until]
         for h in expired:
             del _freetheai_key_health[h]
@@ -391,7 +377,6 @@ class AgentRequestUseCase:
         if is_openai_model(model_name):
             use_openrouter = False
         elif use_openrouter is None:
-            # FreeTheAI models contain '/' but should NOT be treated as OpenRouter
             use_openrouter = (
                 "/" in model_name and not is_opencode_model(model_name) and not is_freetheai_model(model_name)
             ) or get_use_openrouter()
@@ -402,11 +387,9 @@ class AgentRequestUseCase:
                 None,
             )
 
-        # Unified path: delegate to Provider classes (same path as ProviderRouter)
         from app.providers import get_provider_for_model
 
         provider = get_provider_for_model(model_name, api_key)
-        # Build kwargs, only pass timeout if caller specified one
         kwargs: dict[str, Any] = {
             "history": history,
             "model_name": model_name,
@@ -420,7 +403,7 @@ class AgentRequestUseCase:
         if provider_max_retries is not None:
             kwargs["max_retries"] = max(1, provider_max_retries)
         elif timeout is not None:
-            kwargs["max_retries"] = 1  # tight budget → no retries
+            kwargs["max_retries"] = 1
         response = await provider.get_response(**kwargs)
 
         if on_provider_error is not None and not response.success and provider.provider_name == "gemini":
@@ -430,7 +413,6 @@ class AgentRequestUseCase:
         return response.text, token_count
 
     async def increment_key_usage(self, key_hash: str, model_name: str, use_openrouter: bool | None = None) -> None:
-        # Opencode Go and FreeTheAI: in-memory only, no DB key tracking.
         if is_openai_model(model_name) or is_opencode_model(model_name) or is_freetheai_model(model_name):
             return
         if use_openrouter is None:

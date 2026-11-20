@@ -25,9 +25,6 @@ def test_upgrade_hints_respect_current_routes_and_distinct_model_families(monkey
     assert (result.model if result else None) == expected
 
 
-# ── _get_tier ────────────────────────────────────────────────────────────────
-
-
 class TestGetTier:
     """Tier ranking should follow the hierarchy: 3.5-flash > 3.1-flash-lite > stale models."""
 
@@ -46,9 +43,6 @@ class TestGetTier:
 
     def test_case_insensitive(self):
         assert _get_tier("GEMINI-3.1-FLASH-LITE") == 4
-
-
-# ── _find_model ──────────────────────────────────────────────────────────────
 
 
 class TestFindModel:
@@ -71,9 +65,6 @@ class TestFindModel:
         assert _find_model(["gemini-3.5-flash"], []) is None
 
 
-# ── select_model ─────────────────────────────────────────────────────────────
-
-
 class TestSelectModel:
     """Model selection should suggest upgrades based on message content, never downgrades."""
 
@@ -87,10 +78,7 @@ class TestSelectModel:
             "gemini-3.5-flash",
             "gemini-3.1-flash-lite",
         ]
-        # Tier hierarchy: 3.5-flash=5, 3.1-flash-lite=4
         monkeypatch.setattr("app.model_selector.settings", mock_settings)
-
-    # ── Code detection ───────────────────────────────────────────────────
 
     def test_code_message_suggests_top_tier(self):
         result = select_model("```python\ndef hello(): pass\n```", current_model="gemini-3.1-flash-lite")
@@ -103,8 +91,6 @@ class TestSelectModel:
             result = select_model(keyword, current_model="gemini-3.1-flash-lite")
             assert result is not None, f"Failed to detect code keyword: {keyword}"
 
-    # ── Reasoning detection ──────────────────────────────────────────────
-
     def test_reasoning_message_suggests_upgrade(self):
         result = select_model(
             "Проанализируй разницу между async и threading",
@@ -114,11 +100,9 @@ class TestSelectModel:
         assert result.model == "gemini-3.5-flash"
 
     def test_long_message_suggests_upgrade(self):
-        long_msg = "x " * 600  # >1000 chars
+        long_msg = "x " * 600
         result = select_model(long_msg, current_model="gemini-3.1-flash-lite")
         assert result is not None
-
-    # ── No suggestion cases ──────────────────────────────────────────────
 
     def test_simple_greeting_returns_none(self):
         assert select_model("привет!", current_model="gemini-3.5-flash") is None
@@ -140,8 +124,6 @@ class TestSelectModel:
         """Should not suggest switching to the same model (already at top available tier)."""
         result = select_model("```\ncode block\n```", current_model="gemini-3.5-flash")
         assert result is None
-
-    # ── SelectionResult structure ────────────────────────────────────────
 
     def test_result_has_correct_fields(self):
         result = select_model("Объясни подробно как работает GIL", current_model="gemini-3.1-flash-lite")

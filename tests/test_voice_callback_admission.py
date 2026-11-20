@@ -28,7 +28,6 @@ async def admission(monkeypatch, ownership):
     application = (
         Application.builder().token("1234567890:synthetic-admission-token").concurrent_updates(processor).build()
     )
-    # Lifecycle startup contacts Telegram. Only offline dispatch needs these flags.
     application._initialized = True
     application._running = True
     application.bot._bot_user = User(999, "Synthetic", True, username="synthetic_bot")
@@ -189,7 +188,6 @@ async def admission(monkeypatch, ownership):
     async def start_text(name):
         window["name"] = name
         await dispatch(update(11))
-        # Real block=False dispatch has returned; its handler still owns admission.
         await entered.wait()
         owner = state.get_active_task(11)
         assert owner is not None and not owner.done()

@@ -1,4 +1,3 @@
-/* Real templates and scripts; all HTTP responses below are synthetic and offline. */
 const assert = require('node:assert/strict');
 const path = require('node:path');
 let input = '';
@@ -13,8 +12,6 @@ process.stdin.on('end', async () => {
     page.setDefaultTimeout(3000);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    // Deliver a synthetic SSE response through the browser's native EventSource
-    // only after the canonical failed-probe snapshot has rendered.
     let releaseEvents;
     const eventsReady = new Promise(resolve => { releaseEvents = resolve; });
     let releaseCanonicalEvents;
@@ -130,7 +127,6 @@ process.stdin.on('end', async () => {
       assert.match(await page.locator('[data-source="queue"]').textContent(), /stale/);
       assert.match(await page.locator('[data-source="metrics"]').textContent(), /current/);
       for (const state of ['starting', 'ready', 'draining', 'stopped', 'failed']) {
-        // The explicit supervisor state must win over a legacy service value.
         snapshot.overview.lifecycle = { state, ready: state === 'ready' };
         await page.evaluate(() => refreshAll());
         assert.equal(await page.locator('#svc-bot').getAttribute('aria-label'), state);

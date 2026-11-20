@@ -18,7 +18,6 @@ MIGRATIONS = ROOT / "scripts/migrations"
 
 
 async def legacy_baseline(connection):
-    # This connection points only at the generated clone, never the source DB.
     assert (await connection.fetchval("SELECT current_database()")).startswith("gemaibot_test_contract_")
     await connection.execute(
         "DROP SCHEMA public CASCADE; DROP SCHEMA IF EXISTS extensions CASCADE; CREATE SCHEMA public"
@@ -150,7 +149,6 @@ async def test_legacy_uuid_graph_upgrade_preserves_relationships_and_provenance(
 async def test_cli_and_startup_apply_pending_migration_once(
     contract_pool, contract_database_url, db_conn, tmp_path, monkeypatch
 ):
-    # A stale CLI pending list must not replay DDL already committed by startup.
     migration = tmp_path / "999_contract_once.sql"
     migration.write_text(
         "CREATE TABLE contract_apply_once(value integer); INSERT INTO contract_apply_once VALUES(1);", encoding="utf-8"

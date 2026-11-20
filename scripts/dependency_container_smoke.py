@@ -23,9 +23,6 @@ def main() -> int:
     if verify_environment_main([]) != 0:
         return 1
 
-    # PostgreSQL/Redis behavior is exercised by the disposable service job. The
-    # image smoke stays offline and verifies that the real application route can
-    # import and render through the production dependency graph.
     from app import web
 
     web.database.is_database_connected = lambda: True

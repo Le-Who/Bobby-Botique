@@ -111,7 +111,6 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer(_BUSY_TOAST, show_alert=True)
         return
 
-    # Clear chat history and system prompt, similar to /newchat command
     async with state.get_user_lock(user_id):
         chat_state = await get_user_chat(user_id)
         chat_state.history = []
@@ -126,10 +125,8 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         clear_retry_request(user_id)
     await leave_tarot_for_chat(user_id, query.message)
 
-    # Remove the old inline keyboard
     await query.edit_message_reply_markup(reply_markup=None)
 
-    # Send confirmation message
     await query.message.reply_text(t("chat.new_topic", lang))
 
 
@@ -200,9 +197,6 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
-
-
-# ── Help sub-topic handlers ──────────────────────────────────────────────────
 
 
 async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -302,7 +296,6 @@ async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAU
     await update_thinking_level(user_id, next_level)
     chat_state.thinking_level = next_level
 
-    # Rebuild settings menu
     from app.handlers.commands import _thinking_display
 
     lang = _lang(update)
@@ -344,7 +337,6 @@ async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await cancel_user_memory_tasks(user_id)
 
-    # Rebuild settings menu
     lang = _lang(update)
     formatted_text, parse_mode, keyboard = _build_settings_view(chat_state, lang)
     with contextlib.suppress(telegram.error.BadRequest):

@@ -1,4 +1,3 @@
-# tests/test_game_cache.py
 """Unit tests for app/games/judgement_cache.py — the local-file LRU caches.
 
 All tests run offline. In-process stores are cleared before and after each
@@ -33,8 +32,6 @@ from app.games.judgement_cache import (
     get_cached_judgement,
     get_cached_word_category,
 )
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 _COLD = GuessJudgement(status="cold", score=0.1, hint="Попробуй ещё")
 _WARM = GuessJudgement(status="warm", score=0.5, hint="Теплее!")
@@ -82,9 +79,6 @@ async def test_redis_cache_hits_respect_local_capacity(monkeypatch, store_name, 
     assert "old" not in store
 
 
-# ── _make_key ─────────────────────────────────────────────────────────────────
-
-
 class TestMakeKey:
     def test_deterministic(self):
         assert _make_key("Крокодил", "Аллигатор") == _make_key("Крокодил", "Аллигатор")
@@ -105,19 +99,12 @@ class TestMakeKey:
         assert key1 != key2
 
 
-# ── _hints_key ────────────────────────────────────────────────────────────────
-
-
 class TestHintsKey:
     def test_normalises(self):
         assert _hints_key("  Слон  ", "Животные") == _hints_key("слон", "животные")
 
     def test_separator_is_null_byte(self):
-        # Keys for different words must never collide even if concatenated naively
         assert _hints_key("слон", "животные") != _hints_key("слонживотные", "")
-
-
-# ── Judgement cache round-trip ────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -129,8 +116,6 @@ class TestJudgementCacheRoundTrip:
 
         assert result is not None
         assert result.status == "warm"
-        # NOTE: the cache module returns the deserialized object with cached=False;
-        # the `cached=True` flag is set by judge_guess() in judge.py, not here.
         assert result.cached is False
 
     async def test_case_insensitive_retrieval(self):
@@ -153,7 +138,7 @@ class TestJudgementCacheRoundTrip:
 
         result = await get_cached_judgement("крокодил", "аллигатор")
         assert result is None
-        assert key not in _store  # entry cleaned up
+        assert key not in _store
 
     async def test_lru_eviction_at_capacity(self):
         """When _store is at _MAX_ENTRIES, inserting a new entry evicts the oldest.
@@ -164,7 +149,6 @@ class TestJudgementCacheRoundTrip:
         from app.games.judgement_cache import _MAX_ENTRIES
 
         with _no_persist:
-            # Fill to exact capacity so next insert triggers eviction
             for i in range(_MAX_ENTRIES):
                 _store[f"dummy-key-{i:06d}"] = _COLD.model_dump_json()
 
@@ -172,11 +156,9 @@ class TestJudgementCacheRoundTrip:
             first_key = "dummy-key-000000"
             assert first_key in _store
 
-            # One more real entry → evict oldest (dummy-key-000000)
             await cache_judgement("слон", "носорог", _COLD)
 
             assert len(_store) == _MAX_ENTRIES
-            # Oldest entry was evicted
             assert first_key not in _store
 
     async def test_topic_context_isolated(self):
@@ -187,9 +169,6 @@ class TestJudgementCacheRoundTrip:
 
         assert same is not None
         assert other is None
-
-
-# ── Hints cache round-trip ────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

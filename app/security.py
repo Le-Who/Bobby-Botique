@@ -20,10 +20,6 @@ from quart import jsonify, render_template, request
 
 from app.errors import InputSanitizationError
 
-# Pre-compiled pattern to strip ASCII control characters (0x00–0x1F) in sanitize_query.
-# Using a module-level compiled regex is ~5-10x faster than the equivalent
-# "".join(c for c in s if ord(c) >= 32) generator expression, because the
-# match loop runs in C rather than bytecode-interpreted Python.
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f]")
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -34,28 +30,25 @@ _MULTIPLE_UNDERSCORES_RE = re.compile(r"_+")
 class InputSanitizer:
     """Input sanitization and validation utilities."""
 
-    # Dangerous patterns
     DANGEROUS_PATTERNS = [
-        r"<script[^>]*>.*?</script>",  # Script tags
-        r"<iframe[^>]*>.*?</iframe>",  # Iframe tags
-        r"javascript:",  # JavaScript protocol
-        r"vbscript:",  # VBScript protocol
-        r"data:",  # Data protocol
-        r"<[^>]*>",  # HTML tags
-        r"&[#\w]+;",  # HTML entities
-        r"\\[xX][0-9a-fA-F]{2}",  # Hex escapes
-        r"\\[0-7]{1,3}",  # Octal escapes
-        r"\\[abfnrtv]",  # Control character escapes
+        r"<script[^>]*>.*?</script>",
+        r"<iframe[^>]*>.*?</iframe>",
+        r"javascript:",
+        r"vbscript:",
+        r"data:",
+        r"<[^>]*>",
+        r"&[#\w]+;",
+        r"\\[xX][0-9a-fA-F]{2}",
+        r"\\[0-7]{1,3}",
+        r"\\[abfnrtv]",
     ]
 
-    # Allowed file extensions
     ALLOWED_EXTENSIONS = {
         "image": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"},
         "document": {".pdf", ".doc", ".docx", ".txt", ".rtf"},
         "archive": {".zip", ".rar", ".7z", ".tar", ".gz"},
     }
 
-    # Maximum lengths
     MAX_LENGTHS = {"message": 4096, "filename": 255, "url": 2048, "query": 1000}
 
     def __init__(self):
@@ -78,21 +71,16 @@ class InputSanitizer:
         if not isinstance(text, str):
             raise InputSanitizationError(f"Expected string, got {type(text).__name__}")
 
-        # Check length
         max_len = max_length or self.MAX_LENGTHS["message"]
         if len(text) > max_len:
             raise InputSanitizationError(f"Text too long: {len(text)} > {max_len}")
 
-        # Remove dangerous patterns
         sanitized = text
         for pattern in self.compiled_patterns:
             sanitized = pattern.sub("", sanitized)
 
-        # HTML escape remaining content
         sanitized = html.escape(sanitized)
 
-        # Remove multiple spaces and normalize
-        # Optimization: use pre-compiled module-level regex for higher throughput
         sanitized = _WHITESPACE_RE.sub(" ", sanitized).strip()
 
         if not sanitized:
@@ -116,18 +104,13 @@ class InputSanitizer:
         if not isinstance(filename, str):
             raise InputSanitizationError(f"Expected string, got {type(filename).__name__}")
 
-        # Check length
         if len(filename) > self.MAX_LENGTHS["filename"]:
             raise InputSanitizationError(f"Filename too long: {len(filename)} > {self.MAX_LENGTHS['filename']}")
 
-        # Remove path separators and dangerous characters
-        # Optimization: use pre-compiled module-level regexes
         sanitized = _DANGEROUS_FILENAME_CHARS_RE.sub("_", filename)
 
-        # Remove multiple underscores
         sanitized = _MULTIPLE_UNDERSCORES_RE.sub("_", sanitized)
 
-        # Remove leading/trailing underscores and dots
         sanitized = sanitized.strip("_.")
 
         if not sanitized:
@@ -152,11 +135,9 @@ class InputSanitizer:
         if not filename:
             raise InputSanitizationError("Filename is empty")
 
-        # Extract extension
         extension = filename.lower()
         extension = "." + extension.split(".")[-1] if "." in extension else ""
 
-        # Determine allowed extensions
         allowed_extensions: set[str] = set()
         if allowed_types is None:
             for ext_set in self.ALLOWED_EXTENSIONS.values():
@@ -189,50 +170,37 @@ class InputSanitizer:
         if not isinstance(url, str):
             raise InputSanitizationError(f"Expected string, got {type(url).__name__}")
 
-        # Check length
         if len(url) > self.MAX_LENGTHS["url"]:
             raise InputSanitizationError(f"URL too long: {len(url)} > {self.MAX_LENGTHS['url']}")
 
-        # Parse URL
         try:
             parsed = urlparse(url)
         except ValueError as e:
             raise InputSanitizationError(f"Invalid URL format: {e}") from e
 
-        # Check protocol
         dangerous_protocols = {"javascript", "vbscript", "data", "file"}
         if parsed.scheme.lower() in dangerous_protocols:
             raise InputSanitizationError(f"Dangerous protocol: {parsed.scheme}")
 
-        # Only allow HTTP/HTTPS
         if parsed.scheme not in {"http", "https"}:
             raise InputSanitizationError(f"Protocol not allowed: {parsed.scheme}")
 
-        # Validate hostname
         if not parsed.netloc:
             raise InputSanitizationError("Missing hostname")
 
         hostname = parsed.hostname
         if not hostname:
-            # Fallback if parsed.hostname is None but netloc exists
             hostname = parsed.netloc.split(":")[0]
-            # Remove brackets if present (for IPv6)
             if hostname.startswith("[") and hostname.endswith("]"):
                 hostname = hostname[1:-1]
 
-        # Check for localhost
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
         try:
-            # This handles both IPv4 and IPv6
             ipaddress.ip_address(hostname)
-            # If we are here, it IS an IP address.
-            # Current policy: Block ALL IP addresses.
             raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
         except ValueError:
-            # Not an IP address, continue
             pass
 
         return url
@@ -253,21 +221,15 @@ class InputSanitizer:
         if not isinstance(query, str):
             raise InputSanitizationError(f"Expected string, got {type(query).__name__}")
 
-        # Check length
         if len(query) > self.MAX_LENGTHS["query"]:
             raise InputSanitizationError(f"Query too long: {len(query)} > {self.MAX_LENGTHS['query']}")
 
-        # Remove dangerous patterns
         sanitized = query
         for pattern in self.compiled_patterns:
             sanitized = pattern.sub("", sanitized)
 
-        # Remove control characters (runs in C via compiled RE — ~5-10× faster than
-        # the "".join(c for c in s if ord(c) >= 32) generator expression).
         sanitized = _CONTROL_CHARS_RE.sub("", sanitized)
 
-        # Normalize whitespace
-        # Optimization: use pre-compiled module-level regex
         sanitized = _WHITESPACE_RE.sub(" ", sanitized).strip()
 
         if not sanitized:
@@ -293,47 +255,41 @@ class InputSanitizer:
 
         sanitized = {}
 
-        # Validate required fields
         required_fields = ["message_id", "from", "chat", "date"]
         for field in required_fields:
             if field not in message:
                 raise InputSanitizationError(f"Missing required field: {field}")
 
-        # Sanitize text content
         if "text" in message:
             sanitized["text"] = self.sanitize_text(message["text"])
 
-        # Sanitize caption
         if "caption" in message:
             sanitized["caption"] = self.sanitize_text(message["caption"])
 
-        # Validate user data
         if "from" in message:
             user = message["from"]
             if not isinstance(user, dict):
                 raise InputSanitizationError("Invalid user data")
 
-            sanitized["from"] = {  # type: ignore[assignment]  # mixed value types in dict
+            sanitized["from"] = {  # type: ignore[assignment]
                 "id": user.get("id"),
                 "username": (self.sanitize_text(user.get("username", ""), 32) if user.get("username") else None),
                 "first_name": (self.sanitize_text(user.get("first_name", ""), 64) if user.get("first_name") else None),
                 "last_name": (self.sanitize_text(user.get("last_name", ""), 64) if user.get("last_name") else None),
             }
 
-        # Validate chat data
         if "chat" in message:
             chat = message["chat"]
             if not isinstance(chat, dict):
                 raise InputSanitizationError("Invalid chat data")
 
-            sanitized["chat"] = {  # type: ignore[assignment]  # mixed value types in dict
+            sanitized["chat"] = {  # type: ignore[assignment]
                 "id": chat.get("id"),
                 "type": chat.get("type"),
                 "title": (self.sanitize_text(chat.get("title", ""), 255) if chat.get("title") else None),
                 "username": (self.sanitize_text(chat.get("username", ""), 32) if chat.get("username") else None),
             }
 
-        # Copy other safe fields
         safe_fields = [
             "message_id",
             "date",
@@ -365,26 +321,22 @@ class InputSanitizer:
 
         validated = {}
 
-        # Validate filename
         if "filename" in metadata:
             validated["filename"] = self.sanitize_filename(metadata["filename"])
 
-        # Validate file size
         if "file_size" in metadata:
             file_size = metadata["file_size"]
             if not isinstance(file_size, int) or file_size <= 0:
                 raise InputSanitizationError("Invalid file size")
-            if file_size > 50 * 1024 * 1024:  # 50MB limit
+            if file_size > 50 * 1024 * 1024:
                 raise InputSanitizationError("File too large")
-            validated["file_size"] = file_size  # type: ignore[assignment]  # dynamic dict value
+            validated["file_size"] = file_size  # type: ignore[assignment]
 
-        # Validate MIME type
         if "mime_type" in metadata:
             mime_type = metadata["mime_type"]
             if not isinstance(mime_type, str):
                 raise InputSanitizationError("Invalid MIME type")
 
-            # Check against allowed MIME types
             allowed_mime_types = {
                 "image/jpeg",
                 "image/png",
@@ -409,7 +361,6 @@ class InputSanitizer:
         return validated
 
 
-# Global sanitizer instance
 input_sanitizer = InputSanitizer()
 
 
@@ -449,11 +400,6 @@ def sanitize_input(input_data: Any, input_type: str = "text", **kwargs) -> Any:
         raise InputSanitizationError(f"Sanitization failed: {e}") from e
 
 
-# ============================================================================
-# RATE LIMITING
-# ============================================================================
-
-
 class RateLimiter:
     """Sliding-window per-user rate limiter with periodic cleanup."""
 
@@ -467,7 +413,7 @@ class RateLimiter:
         self.window_seconds = window_seconds
         self._user_requests: dict[int, deque[float]] = defaultdict(deque)
         self._lock = asyncio.Lock()
-        self._cleanup_interval = 300  # Cleanup every 5 minutes
+        self._cleanup_interval = 300
         self._last_cleanup = time.time()
 
     async def check_rate_limit(self, user_id: int) -> bool:
@@ -483,20 +429,16 @@ class RateLimiter:
         current_time = time.time()
 
         async with self._lock:
-            # Periodically clean up old entries
             if current_time - self._last_cleanup > self._cleanup_interval:
                 self._cleanup_old_entries(current_time)
                 self._last_cleanup = current_time
 
-            # Get user's request list
             user_requests = self._user_requests[user_id]
 
-            # Remove requests older than the window
             cutoff_time = current_time - self.window_seconds
             while user_requests and user_requests[0] <= cutoff_time:
                 user_requests.popleft()
 
-            # Check limit
             if len(user_requests) >= self.max_requests:
                 logging.warning(
                     "Rate limit exceeded for user %s: %s/%s requests",
@@ -506,7 +448,6 @@ class RateLimiter:
                 )
                 return False
 
-            # Record current request
             user_requests.append(current_time)
             return True
 
@@ -516,11 +457,9 @@ class RateLimiter:
         users_to_remove = []
 
         for user_id, requests in self._user_requests.items():
-            # Remove stale requests
             while requests and requests[0] <= cutoff_time:
                 requests.popleft()
 
-            # Mark users with no active requests for removal
             if not self._user_requests[user_id]:
                 users_to_remove.append(user_id)
 
@@ -571,8 +510,6 @@ class SyncRateLimiter:
         self._cleanup_every = cleanup_every
         self._call_count = 0
 
-    # ------------------------------------------------------------------
-
     def check(self, key: str) -> bool:
         """Return *True* if the request is allowed, *False* if rate-limited.
 
@@ -594,8 +531,6 @@ class SyncRateLimiter:
         """Record one event against *key*."""
         with self._lock:
             self._requests[key].append(time.time())
-
-    # ------------------------------------------------------------------
 
     def _maybe_cleanup(self, cutoff: float) -> None:
         self._call_count += 1
@@ -647,7 +582,6 @@ def rate_limit(
                     429,
                 )
 
-            # Record success
             limiter.record(client_ip)
             return await f(*args, **kwargs)
 
@@ -656,8 +590,6 @@ def rate_limit(
     return decorator
 
 
-# Global rate limiter instance
-# Settings: 30 requests per minute by default
 rate_limiter = RateLimiter(max_requests=30, window_seconds=60)
 
 

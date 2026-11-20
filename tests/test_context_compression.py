@@ -16,8 +16,6 @@ async def test_l1_diary_obeys_tight_estimated_token_budget_without_breaking_unic
 
     monkeypatch.setattr(compression, "L1_MAX_TOKENS", 12)
     monkeypatch.setattr("app.state.get_role_diary", lambda *_: [diary])
-    # No pool is acquired: the unavailable consolidated store takes its normal
-    # fallback while the independent process-local role diary remains usable.
     monkeypatch.setattr("app.database.db_manager.pool", None)
     result = await compression.build_l1_context(42, "offline-key", role_id="role")
 

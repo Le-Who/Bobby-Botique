@@ -239,7 +239,6 @@ def test_ci_grafana_secret_allows_the_host_probe_and_container_but_no_other_user
     secret_default = compose["secrets"]["grafana_admin_password"]["file"].split(":-", 1)[1].removesuffix("}")
     secret = (Path("ops/observability") / secret_default).as_posix()
 
-    # Both actual host consumers use StackProbe, whose constructor reads this file.
     probe_passwords = re.findall(r"--password-file\s+(\S+)", run)
     e2e_passwords = re.findall(r"export TEST_GRAFANA_PASSWORD_FILE=(\S+)", run)
     assert probe_passwords == e2e_passwords == [secret]

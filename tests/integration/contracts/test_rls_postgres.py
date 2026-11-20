@@ -90,8 +90,6 @@ async def test_runtime_provisions_rls_for_every_application_table(db_conn):
 
 
 async def test_security_migration_revokes_api_role_grants(db_conn):
-    # This suite uses an explicitly ephemeral local server and a cloned DB.
-    # Create the Supabase roles only when absent and remove only those we own.
     created_roles = []
     tables = (*_DATA_API_RESTRICTED_TABLES, "roles")
     try:
@@ -136,7 +134,6 @@ async def test_memory_functions_resolve_extensions_without_mutable_search_paths(
 
 
 async def test_natal_report_rls_isolates_tenants(contract_pool, db_conn, tenant_role):
-    # This contract runs only in the disposable database cloned by this suite.
     await db_conn.execute(f'GRANT SELECT, INSERT ON public.natal_reports TO "{tenant_role}"')
     await db_conn.execute("INSERT INTO public.users(user_id) VALUES (84001), (84002) ON CONFLICT DO NOTHING")
     own_id, foreign_id = uuid4().hex, uuid4().hex
@@ -174,7 +171,6 @@ async def test_natal_report_rls_isolates_tenants(contract_pool, db_conn, tenant_
 
 @pytest.mark.parametrize("table", ["long_term_memory", "memory_node_sources", "private_data_leases"])
 async def test_nonowner_role_denies_foreign_crud_and_allows_own(contract_pool, db_conn, tenant_role, table):
-    # Owner-filtered repository tests cannot detect absent USING/WITH CHECK policies.
     await configure(db_conn)
     await db_conn.execute("INSERT INTO users(user_id) VALUES(84001),(84002)")
     await db_conn.execute("INSERT INTO chats(user_id) VALUES(84001),(84002)")

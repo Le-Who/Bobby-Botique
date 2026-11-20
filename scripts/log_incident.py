@@ -42,7 +42,7 @@ def main() -> int:
         since=args.since,
         until=args.until,
     )
-    source = sys.stdin if args.input == "-" else open(args.input, encoding="utf-8")  # noqa: SIM115
+    source = sys.stdin if args.input == "-" else open(args.input, encoding="utf-8")
     try:
         manifest = export_incident(
             source,

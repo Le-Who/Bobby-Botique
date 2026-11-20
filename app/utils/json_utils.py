@@ -16,7 +16,6 @@ def extract_json_object(text: str) -> dict | None:
         return None
     cleaned = text.strip()
 
-    # Strip outer code fence
     if cleaned.startswith("```"):
         lines = cleaned.split("\\n")
         if len(lines) > 1:
@@ -25,14 +24,12 @@ def extract_json_object(text: str) -> dict | None:
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
 
-    # Strip textual prefixes like `json`/`JSON`
     lower = cleaned.lstrip()
     for prefix in ("json\\n", "json\\r\\n", "json ", "JSON\\n", "JSON\\r\\n", "JSON "):
         if lower.startswith(prefix):
             cleaned = cleaned[len(cleaned) - len(lower) + len(prefix) :].lstrip()
             break
 
-    # Walk all '{' occurrences and try to assemble balanced object
     n = len(cleaned)
     for i in range(n):
         if cleaned[i] != "{":
@@ -61,12 +58,10 @@ def extract_json_object(text: str) -> dict | None:
                         try:
                             obj = json.loads(candidate)
                         except Exception:
-                            break  # Current block invalid, try next i
+                            break
                         if isinstance(obj, dict):
-                            # Normalize system_prompt → prompt
                             if "prompt" not in obj and "system_prompt" in obj:
                                 obj["prompt"] = obj.get("system_prompt")
-                            # Require mandatory fields
                             if all(k in obj for k in ("title", "purpose", "prompt")):
                                 return obj
                         break

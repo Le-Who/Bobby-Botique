@@ -645,8 +645,6 @@ class MemoryQueueStore:
         )
 
 
-# Each script uses Redis TIME. The namespace is deliberately incompatible with
-# the pre-v2 lists: startup never scans, claims or deletes legacy work.
 from app.queue_lua import QUEUE_SCRIPT as _QUEUE_SCRIPT
 
 
@@ -660,8 +658,6 @@ class RedisQueueStore:
 
     async def _call(self, action: str, **body) -> Any:
         async with asyncio.timeout(5):
-            # redis-py reloads only after NOSCRIPT, which confirms no mutation ran.
-            # Transport failures must escape without repeating uncertain claims.
             raw = await self._script(
                 keys=[self.namespace],
                 args=[json.dumps({"action": action, **body}, ensure_ascii=False, separators=(",", ":"))],
@@ -767,7 +763,6 @@ class RedisQueueStore:
         await self._call("sweep")
 
     async def claim(self, lane: str, owner_token: str) -> JobClaim | None:
-        # Never repeat an uncertain claim: its owner will be recovered conservatively.
         data = await self._call("claim", lane=lane, owner_token=owner_token, policy=LANE_POLICIES[lane].as_dict())
         if not data:
             return None

@@ -42,7 +42,7 @@ class TestRecursiveChunk:
         """Every chunk should be within max_tokens (approximately)."""
         text = "Word. " * 1000
         chunks = recursive_chunk(text, max_tokens=50)
-        max_chars = int(50 * 3.5 * 1.3)  # 30% tolerance for overlap
+        max_chars = int(50 * 3.5 * 1.3)
         for chunk in chunks:
             assert len(chunk) <= max_chars, f"Chunk too large: {len(chunk)} > {max_chars}"
 
@@ -51,7 +51,6 @@ class TestRecursiveChunk:
         text = "Sentence one. " * 100
         chunks = recursive_chunk(text, max_tokens=30, overlap_ratio=0.2)
         if len(chunks) >= 2:
-            # Last part of chunk[0] should appear in beginning of chunk[1]
             tail = chunks[0][-20:]
             assert tail in chunks[1] or any(word in chunks[1][:50] for word in tail.split()), (
                 "No overlap detected between consecutive chunks"
@@ -121,17 +120,14 @@ class TestChunkForContext:
         text = "Content block. " * 5000
         result = chunk_for_context(text, max_context_tokens=500)
         result_tokens = _estimate_tokens(result)
-        # Should be within budget (some tolerance)
-        assert result_tokens <= 600  # 500 + tolerance
+        assert result_tokens <= 600
 
     def test_query_relevance_affects_selection(self):
         """Chunks matching the query should be selected over non-matching."""
-        # Build doc with distinct sections
         section_a = "Machine learning models and neural networks. " * 100
         section_b = "Cooking recipes for pasta and pizza. " * 100
         section_c = "Database optimization and query performance. " * 100
         text = section_a + "\n\n" + section_b + "\n\n" + section_c
 
         result = chunk_for_context(text, query="database query optimization", max_context_tokens=200)
-        # The result should contain database-related content
         assert "database" in result.lower() or "query" in result.lower() or "optimization" in result.lower()

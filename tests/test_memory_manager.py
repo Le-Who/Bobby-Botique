@@ -15,20 +15,19 @@ from app.memory_manager import (
 )
 
 
-# Mock psutil
 @pytest.fixture
 def mock_psutil():
     with patch("app.memory_manager.psutil") as mock:
         process = MagicMock()
-        process.memory_info.return_value.rss = 100 * 1024 * 1024  # 100 MB
-        process.memory_info.return_value.vms = 200 * 1024 * 1024  # 200 MB
+        process.memory_info.return_value.rss = 100 * 1024 * 1024
+        process.memory_info.return_value.vms = 200 * 1024 * 1024
         process.memory_percent.return_value = 50.0
         process.cpu_percent.return_value = 10.0
         mock.Process.return_value = process
 
         virtual_memory = MagicMock()
-        virtual_memory.available = 500 * 1024 * 1024  # 500 MB
-        virtual_memory.total = 1000 * 1024 * 1024  # 1000 MB
+        virtual_memory.available = 500 * 1024 * 1024
+        virtual_memory.total = 1000 * 1024 * 1024
         mock.virtual_memory.return_value = virtual_memory
         yield mock
 
@@ -36,12 +35,9 @@ def mock_psutil():
 class TestMemoryManager:
     @pytest.fixture(autouse=True)
     async def setup_teardown(self):
-        # Create a fresh instance for each test to avoid side effects
         self.manager = MemoryManager()
-        # Patch the global instance with our fresh instance
         with patch("app.memory_manager.memory_manager", self.manager):
             yield
-        # Cleanup
         await self.manager.stop()
 
     def test_initialization(self):
@@ -58,7 +54,7 @@ class TestMemoryManager:
         assert manager.thresholds.warning_percent == 80.0
         assert manager.thresholds.critical_percent == 90.0
         assert manager.thresholds.cleanup_percent == 50.0
-        await manager.stop()  # Ensure it stops
+        await manager.stop()
 
     def test_cleanup_callbacks(self):
         callback = MagicMock()
@@ -81,19 +77,15 @@ class TestMemoryManager:
 
     @pytest.mark.asyncio
     async def test_check_memory_usage_low(self, mock_psutil):
-        # Setup low memory usage
         mock_psutil.Process.return_value.memory_percent.return_value = 30.0
         self.manager.thresholds.cleanup_percent = 40.0
 
-        # Spy on cleanup methods
         self.manager._preventive_cleanup = AsyncMock()
         self.manager._suggested_cleanup = AsyncMock()
         self.manager._emergency_cleanup = AsyncMock()
 
-        # Manually trigger check
         await self.manager._check_memory_usage()
 
-        # Should trigger preventive cleanup if cooldown passed (default is 300s, let's force cooldown pass)
         self.manager._last_cleanup = 0
         await self.manager._check_memory_usage()
 
@@ -103,11 +95,9 @@ class TestMemoryManager:
 
     @pytest.mark.asyncio
     async def test_check_memory_usage_warning(self, mock_psutil):
-        # Setup warning memory usage
         mock_psutil.Process.return_value.memory_percent.return_value = 75.0
         self.manager.thresholds.warning_percent = 70.0
 
-        # Spy on cleanup methods
         self.manager._preventive_cleanup = AsyncMock()
         self.manager._suggested_cleanup = AsyncMock()
         self.manager._emergency_cleanup = AsyncMock()
@@ -120,11 +110,9 @@ class TestMemoryManager:
 
     @pytest.mark.asyncio
     async def test_check_memory_usage_critical(self, mock_psutil):
-        # Setup critical memory usage
         mock_psutil.Process.return_value.memory_percent.return_value = 90.0
         self.manager.thresholds.critical_percent = 85.0
 
-        # Spy on cleanup methods
         self.manager._preventive_cleanup = AsyncMock()
         self.manager._suggested_cleanup = AsyncMock()
         self.manager._emergency_cleanup = AsyncMock()
@@ -137,11 +125,9 @@ class TestMemoryManager:
 
     @pytest.mark.asyncio
     async def test_callback_execution(self):
-        # Create an async callback
         async_callback = AsyncMock()
         self.manager.add_cleanup_callback(async_callback)
 
-        # Trigger cleanup directly (e.g. suggested)
         await self.manager._suggested_cleanup()
 
         async_callback.assert_called_once()
@@ -158,11 +144,8 @@ class TestMemoryManager:
 
         resource = TestResource()
 
-        # Verify callback is registered
-        # Need to find the bound method in the callbacks list
         assert len(self.manager._cleanup_callbacks) > 0
 
-        # Trigger cleanup
         await self.manager._suggested_cleanup()
 
         assert resource.cleaned is True
@@ -175,10 +158,8 @@ class TestMemoryManager:
 
         assert len(cache._cache) == 3
 
-        # Access 'a' so it's not the oldest
         cache.get("a")
 
-        # Add 'd', should evict 'b' (oldest access)
         cache.put("d", 4)
 
         assert "b" not in cache._cache
@@ -194,22 +175,13 @@ class TestMemoryManager:
 
         assert len(cache._cache) == 4
 
-        # Trigger cleanup via manager
-        # Since DocumentCache registers itself with the global manager,
-        # and we mocked the global manager in setup, we need to register it with OUR manager
-        # But wait, DocumentCache uses 'memory_manager' from the module.
-        # We patched 'app.memory_manager.memory_manager' so it should use our self.manager
-
         await self.manager._suggested_cleanup()
 
-        # Cleanup should remove half items (4 // 2 = 2 removed) -> 2 remaining
         assert len(cache._cache) == 2
 
     @pytest.mark.asyncio
     async def test_global_convenience_functions(self):
-        # These functions use the global 'memory_manager' which we patched
 
-        # Test add/remove callback
         cb = MagicMock()
         add_memory_cleanup_callback(cb)
         assert cb in self.manager._cleanup_callbacks
@@ -217,15 +189,10 @@ class TestMemoryManager:
         remove_memory_cleanup_callback(cb)
         assert cb not in self.manager._cleanup_callbacks
 
-        # Test get_stats
-        with patch(
-            "app.memory_manager.psutil"
-        ):  # mock psutil again for this call if needed, or rely on errors being handled
+        with patch("app.memory_manager.psutil"):
             stats = get_memory_stats()
             assert isinstance(stats, dict)
 
-        # Test cleanup_memory (force_cleanup)
         await cleanup_memory()
 
-        # Test shutdown_memory_manager
         await shutdown_memory_manager()

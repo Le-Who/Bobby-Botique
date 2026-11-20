@@ -169,8 +169,6 @@ async def test_persisted_redis_claim_finishes_one_handoff_before_cancellation_an
         if command:
             assert (await observer.get(command_key)).startswith("accepted:")
 
-        # An open owner (including a replacement lifecycle) sees the actual NX
-        # decision. A duplicate ACK cannot conceal a missing first queue handoff.
         replay = dict(payload, update_id=update_id + 1) if command else payload
         assert await WebhookAdmissionGate().admit(lambda: operation(replay)) == 200
         assert queue.empty()

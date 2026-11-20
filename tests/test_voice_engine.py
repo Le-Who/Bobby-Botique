@@ -41,7 +41,6 @@ async def test_voice_queue_serializes_jobs_per_user():
     second_release = asyncio.Event()
     started: list[str] = []
 
-    # We patch _pregenerate_audio so the future blocks until we release it.
     _ = manager._pregenerate_audio
 
     async def fake_pregenerate(job):
@@ -53,7 +52,6 @@ async def test_voice_queue_serializes_jobs_per_user():
         return b"fake-ogg-data"
 
     manager._pregenerate_audio = fake_pregenerate  # type: ignore[method-assign]
-    # Also patch _send_ogg to no-op (we don't want real Telegram calls).
     manager._send_ogg = AsyncMock()  # type: ignore[method-assign]
 
     first = await manager.enqueue(
@@ -78,7 +76,6 @@ async def test_voice_queue_serializes_jobs_per_user():
     await asyncio.sleep(0.05)
     assert first.queue_position == 1
     assert second.queue_position == 2
-    # Same-user synthesis remains FIFO under a lease retained through delivery.
     assert started == ["one"]
 
     first_release.set()

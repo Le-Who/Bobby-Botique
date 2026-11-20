@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 _ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "artifacts"
 
-# Normalized game_id mapping to setting key & file name
 _GAME_MAP = {
     "dailycroc": ("daily_croc_placeholder_file_id", "dailycroc_cover.png"),
     "daily_croc": ("daily_croc_placeholder_file_id", "dailycroc_cover.png"),
@@ -28,7 +27,7 @@ _GAME_MAP = {
 }
 
 _cache: dict[str, tuple[str, float]] = {}
-_TTL = 60.0  # seconds
+_TTL = 60.0
 
 
 def normalize_game_id(game_id: str) -> str:
@@ -90,7 +89,6 @@ async def set_cover_from_upload(game_id: str, image_bytes: bytes) -> Path:
     _ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     file_path.write_bytes(image_bytes)
 
-    # Invalidate cache & DB setting so next send uploads the new file to Telegram
     invalidate_cache(game_id)
     await set_global_setting(setting_key, "")
     return file_path

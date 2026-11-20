@@ -1,21 +1,9 @@
--- Migration 011: Add foreign key constraints with ON DELETE CASCADE
--- Applied via Supabase MCP on 2026-02-28
---
--- Pre-cleanup: Removed 403 orphan rows (2 chats, 400 conv_messages, 1 group_message)
--- Added 18 FK constraints across 13 tables
---
--- Design decisions:
---   - ON DELETE CASCADE for all child→parent relationships
---   - ON DELETE SET NULL for nullable owner_user_id columns
---   - Idempotent DO $$ blocks per schema-constraints best practice
 
--- ── STEP 1: Clean up orphan rows ────────────────────────────────────────────
 
 DELETE FROM chats c WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.user_id = c.user_id);
 DELETE FROM conversation_messages cm WHERE NOT EXISTS (SELECT 1 FROM conversations cv WHERE cv.id = cm.conversation_id);
 DELETE FROM group_messages gms WHERE NOT EXISTS (SELECT 1 FROM group_chats gc WHERE gc.chat_id = gms.chat_id) OR NOT EXISTS (SELECT 1 FROM users u WHERE u.user_id = gms.user_id);
 
--- ── STEP 2: Add FK constraints ──────────────────────────────────────────────
 
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_chats_user_id') THEN ALTER TABLE chats ADD CONSTRAINT fk_chats_user_id FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE; END IF; END $$;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_active_chat_messages_user_id') THEN ALTER TABLE active_chat_messages ADD CONSTRAINT fk_active_chat_messages_user_id FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE; END IF; END $$;

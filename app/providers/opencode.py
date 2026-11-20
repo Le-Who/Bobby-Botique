@@ -306,9 +306,6 @@ class OpencodeGoProvider(OpenRouterProvider):
             route=route,
         )
 
-    # Models that support reasoning_effort (OpenAI-compatible extended thinking).
-    # DeepSeek V4 Pro/Flash: "low"/"high"/"max".
-    # Kimi K2 uses a thinking toggle, not a graded reasoning_effort ladder.
     _REASONING_EFFORT_MODELS = frozenset(
         {
             "deepseek-v4-pro",
@@ -316,10 +313,6 @@ class OpencodeGoProvider(OpenRouterProvider):
         }
     )
 
-    # Models that support OpenAI-compatible function calling (tools array).
-    # All /chat/completions models potentially support tools; we whitelist the
-    # ones confirmed or very likely to support it based on model family.
-    # MiniMax models use Anthropic /messages transport — handled separately.
     _TOOLS_MODELS = frozenset(
         {
             "glm-5",
@@ -337,7 +330,6 @@ class OpencodeGoProvider(OpenRouterProvider):
             "big-pickle",
         }
     )
-    # Map internal thinking_level labels -> API reasoning_effort values.
     _THINKING_TO_EFFORT: dict[str, str] = {
         "low": "low",
         "medium": "high",
@@ -409,12 +401,10 @@ class OpencodeGoProvider(OpenRouterProvider):
         to enrich the payload with model-specific thinking parameters.
         """
         params: dict[str, Any] = {}
-        # reasoning_effort
         if thinking_level and self._supports_reasoning_effort(model_name):
             effort = self._THINKING_TO_EFFORT.get(thinking_level)
             if effort:
                 params["reasoning_effort"] = effort
-        # function calling tools (set by request execution)
         pending_tools = getattr(self, "_pending_tools", None)
         if pending_tools:
             params["tools"] = pending_tools
@@ -499,8 +489,6 @@ class OpencodeGoProvider(OpenRouterProvider):
         tool_choice: str | dict | None = None,
     ) -> AIResponse:
         if not self._uses_messages_transport(model_name):
-            # Inject tools into the parent call via _extra_payload_params override.
-            # We store them on self temporarily so super() picks them up.
             self._pending_tools = tools if (tools and self._supports_tools(model_name)) else None
             self._pending_tool_choice = tool_choice if self._pending_tools else None
             try:

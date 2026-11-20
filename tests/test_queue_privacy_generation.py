@@ -42,8 +42,6 @@ async def test_provider_inflight_then_account_recreated_cannot_enqueue_old_paylo
         privacy_epoch=11,
         operation_id="original-operation",
     )
-    # The provider is in flight with the captured request. Erasure/recreation
-    # advances the existing globally allocated account generation to twelve.
     monkeypatch.setattr("app.repos.memory_consent.resolve_current_epoch", AsyncMock(return_value=12))
     with request_scope(request_id="original-operation"):
         result = await enqueue_deferred_generation(

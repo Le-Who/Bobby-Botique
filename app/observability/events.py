@@ -49,7 +49,6 @@ def emit(
 
         operational_metrics.observe(event, safe_fields)
     except Exception:
-        # Observability must not change business behavior, including on metrics bugs.
         pass
     _LOGGER.log(
         numeric_level,

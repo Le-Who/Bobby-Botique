@@ -22,7 +22,6 @@ _PRODUCTION_DATABASE_URL = os.getenv("GEMAIBOT_TEST_ORIGINAL_DATABASE_URL") or _
 if _database_target_is_forbidden(TEST_DATABASE_URL, _PRODUCTION_DATABASE_URL):
     raise RuntimeError("TEST_DATABASE_URL resolves to the production database target")
 
-# Shared test user ID constant for all integration tests
 TEST_USER_ID = 999999
 
 

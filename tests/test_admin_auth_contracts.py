@@ -118,7 +118,6 @@ async def test_authenticated_controls_csrf_denial_has_no_side_effect(admin_clien
 
 
 def signed_init_data(user_id, auth_date):
-    # Independent signer: no production validator/helper constructs the fixture.
     fields = {
         "auth_date": str(auth_date),
         "query_id": "synthetic-query",
@@ -184,8 +183,6 @@ async def test_valid_admin_auth_methods_still_allow_controls_write(admin_client,
         session["controls_csrf"] = "test-csrf"
         if method == "session":
             session["authenticated"] = True
-    # Quart's test builder UTF-8 encodes headers while its ASGI reader decodes
-    # Latin-1. Supply raw Latin-1 wire bytes for the non-ASCII header positive.
     scope_base = None
     if method == "header" and secret == "é-test-secret":
         assert client.cookie_jar is not None

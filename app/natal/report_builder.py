@@ -424,7 +424,6 @@ def _footer_note_html(note: str) -> str:
 
 
 def _ui_icon(name: str) -> str:
-    # Fixed geometry keeps decorative icons centered independently of platform fonts.
     shapes = {
         "sun": '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>',
         "moon": '<path d="M12 3A9 9 0 1 0 21 12A9 9 0 0 1 12 3Z"/>',
@@ -766,8 +765,6 @@ def build_telegraph_markdown(report: NatalReport) -> str:
 
 def _sanitize_hosted_body(value: str) -> str:
     def clean_link(match: re.Match[str]) -> str:
-        # Browsers discard tabs and newlines in URL schemes. Decode HTML once
-        # (as the browser does) and normalize controls before checking it.
         url = re.sub(r"[\x00-\x20\x7f]+", "", html.unescape(match.group("url")))
         try:
             scheme = urlsplit(url).scheme.lower()
@@ -781,8 +778,6 @@ def _sanitize_hosted_body(value: str) -> str:
 
 
 def _sanitize_hosted_svg(value: str) -> str:
-    # Stored diagrams are untrusted. Permit the drawing vocabulary, never active
-    # HTML, event handlers, CSS, or network resources (including SVG paint URLs).
     if re.search(r"<!\s*(?:DOCTYPE|ENTITY)", value, flags=re.IGNORECASE):
         return ""
     try:

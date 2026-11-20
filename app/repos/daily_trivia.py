@@ -513,7 +513,6 @@ async def get_result_puzzle(
     """Resolve the same immutable question set for display and submission."""
     revision_id = result.puzzle_revision_id if result is not None else None
     if result is not None and revision_id is None:
-        # Migration 065 intentionally leaves pre-existing results unpinned.
         rows = await db.db_query(
             """
             SELECT revision_id FROM public.daily_trivia_puzzle_revisions
@@ -1067,8 +1066,6 @@ async def update_super_result_answer(
     answers_json = json.dumps(answers)
 
     if finished and _db.db_manager.pool:
-        # Both UPDATEs must be atomic: if only the first succeeds the daily
-        # score will never reflect the super-game delta.
         async with _db.db_manager.pool.acquire() as conn, conn.transaction():
             rows = await conn.fetch(
                 """
@@ -1122,7 +1119,6 @@ async def update_super_result_answer(
             )
         return _row_to_super_result([dict(r) for r in rows][0])
 
-    # Non-finished path: single UPDATE, no transaction needed.
     rows = await db.db_query(
         """
         UPDATE public.daily_trivia_super_results
@@ -1438,11 +1434,6 @@ async def delete_used_keys_for_date(p_date: date, *, conn=None) -> int:
         conn=conn,
     )
     return len(result) if result else 0
-
-
-# ---------------------------------------------------------------------------
-# Prompt-message tracking (for in-place result editing)
-# ---------------------------------------------------------------------------
 
 
 async def register_prompt_message(

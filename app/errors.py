@@ -31,10 +31,6 @@ POSTGRES_CONNECTION_ERRORS = (
 )
 TRANSIENT_DATABASE_ERRORS = (*POSTGRES_CONNECTION_ERRORS, ConnectionError, TimeoutError)
 
-# =============================================================================
-# TYPED EXCEPTION HIERARCHY
-# =============================================================================
-
 
 class GemaibotBaseException(Exception):
     """Base exception class for all bot-related errors."""
@@ -48,9 +44,6 @@ class GemaibotBaseException(Exception):
         if self.details:
             return f"{self.message} | Details: {self.details}"
         return self.message
-
-
-# --- Database Exceptions ---
 
 
 class DatabaseError(GemaibotBaseException):
@@ -71,9 +64,6 @@ class DatabaseRateLimitError(DatabaseError):
 
 class DatabasePoolError(DatabaseError):
     """Raised when database connection pool issues occur."""
-
-
-# --- API Exceptions ---
 
 
 class GemaibotAPIError(GemaibotBaseException):
@@ -100,9 +90,6 @@ class APIInvalidResponseError(GemaibotAPIError):
     """Raised when API returns invalid response."""
 
 
-# --- Network Exceptions ---
-
-
 class NetworkError(GemaibotBaseException):
     """Base class for network-related errors."""
 
@@ -127,9 +114,6 @@ class ProviderOverloadError(NetworkError):
     """
 
 
-# --- Validation Exceptions ---
-
-
 class ValidationError(GemaibotBaseException):
     """Base class for validation errors."""
 
@@ -140,9 +124,6 @@ class InputValidationError(ValidationError):
 
 class ConfigurationError(ValidationError):
     """Raised when configuration is invalid."""
-
-
-# --- Business Logic Exceptions ---
 
 
 class BusinessLogicError(GemaibotBaseException):
@@ -161,9 +142,6 @@ class ChatStateError(BusinessLogicError):
     """Raised when chat state operations fail."""
 
 
-# --- Cache Exceptions ---
-
-
 class CacheError(GemaibotBaseException):
     """Base class for cache-related errors."""
 
@@ -174,9 +152,6 @@ class RedisConnectionError(CacheError):
 
 class CacheKeyError(CacheError):
     """Raised when cache key operations fail."""
-
-
-# --- Security Exceptions ---
 
 
 class SecurityError(GemaibotBaseException):
@@ -195,11 +170,6 @@ class DecryptionError(SecurityError):
     """Raised when API key decryption fails (e.g. ADMIN_SECRET mismatch)."""
 
 
-# =============================================================================
-# EXCEPTION CONVERSION UTILITY
-# =============================================================================
-
-
 def convert_to_typed_exception(exception: Exception, context: str = "") -> GemaibotBaseException:
     """Converts generic exceptions to typed exceptions based on context."""
 
@@ -207,7 +177,6 @@ def convert_to_typed_exception(exception: Exception, context: str = "") -> Gemai
     error_type = type(exception).__name__
     error_modules = {base.__module__.split(".", 1)[0] for base in type(exception).__mro__}
 
-    # Database exceptions
     if "asyncpg" in error_modules or "asyncpg" in error_type or "postgres" in error_message.lower():
         if "connection" in error_message.lower() or "timeout" in error_message.lower():
             return DatabaseConnectionError(
@@ -225,7 +194,6 @@ def convert_to_typed_exception(exception: Exception, context: str = "") -> Gemai
                 {"original_error": error_type, "context": context},
             )
 
-    # Network exceptions
     elif "httpx" in error_type or "connection" in error_message.lower():
         if "timeout" in error_message.lower():
             return ConnectionTimeoutError(
@@ -243,7 +211,6 @@ def convert_to_typed_exception(exception: Exception, context: str = "") -> Gemai
                 {"original_error": error_type, "context": context},
             )
 
-    # API exceptions
     elif "api" in error_message.lower() or "gemini" in error_message.lower():
         if "quota" in error_message.lower() or "limit" in error_message.lower():
             return APIQuotaExceededError(
@@ -256,16 +223,10 @@ def convert_to_typed_exception(exception: Exception, context: str = "") -> Gemai
                 {"original_error": error_type, "context": context},
             )
 
-    # Default fallback
     return GemaibotBaseException(
         f"Unexpected error: {error_message}",
         {"original_error": error_type, "context": context},
     )
-
-
-# =============================================================================
-# ERROR CODES — structured classification (replaces emoji-based text parsing)
-# =============================================================================
 
 
 class ErrorCode(StrEnum):
@@ -275,30 +236,26 @@ class ErrorCode(StrEnum):
     via _ERROR_PROPERTIES, eliminating fragile emoji/text pattern matching.
     """
 
-    # Transient / retryable
     TIMEOUT = "TIMEOUT"
-    OVERLOADED = "OVERLOADED"  # 503, server busy
-    NETWORK = "NETWORK"  # connection errors
-    RATE_LIMIT = "RATE_LIMIT"  # per-second/minute throttle
+    OVERLOADED = "OVERLOADED"
+    NETWORK = "NETWORK"
+    RATE_LIMIT = "RATE_LIMIT"
 
-    # Key-related
-    QUOTA_EXCEEDED = "QUOTA_EXCEEDED"  # daily quota exhausted
-    INVALID_KEY = "INVALID_KEY"  # API key rejected
-    KEYS_EXHAUSTED = "KEYS_EXHAUSTED"  # all keys tried, none worked
-    DECRYPTION_FAILED = "DECRYPTION_FAILED"  # ADMIN_SECRET mismatch
-    NO_KEYS = "NO_KEYS"  # provider not configured
+    QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
+    INVALID_KEY = "INVALID_KEY"
+    KEYS_EXHAUSTED = "KEYS_EXHAUSTED"
+    DECRYPTION_FAILED = "DECRYPTION_FAILED"
+    NO_KEYS = "NO_KEYS"
 
-    # Non-retryable
-    INVALID_REQUEST = "INVALID_REQUEST"  # malformed input
-    INVALID_RESPONSE = "INVALID_RESPONSE"  # API returned garbage
-    EMPTY_RESPONSE = "EMPTY_RESPONSE"  # API returned nothing
-    PROCESSING = "PROCESSING"  # general processing failure
-    DOCUMENT = "DOCUMENT"  # document parsing failure
-    GENERIC = "GENERIC"  # catch-all
-    USER_RATE_LIMIT = "USER_RATE_LIMIT"  # per-user throttle (not key-related)
+    INVALID_REQUEST = "INVALID_REQUEST"
+    INVALID_RESPONSE = "INVALID_RESPONSE"
+    EMPTY_RESPONSE = "EMPTY_RESPONSE"
+    PROCESSING = "PROCESSING"
+    DOCUMENT = "DOCUMENT"
+    GENERIC = "GENERIC"
+    USER_RATE_LIMIT = "USER_RATE_LIMIT"
 
 
-# Properties: (retryable, key_related, penalty_category)
 _ERROR_PROPERTIES: dict[ErrorCode, tuple[bool, bool, str]] = {
     ErrorCode.TIMEOUT: (True, False, "transient"),
     ErrorCode.OVERLOADED: (True, False, "transient"),
@@ -318,9 +275,7 @@ _ERROR_PROPERTIES: dict[ErrorCode, tuple[bool, bool, str]] = {
     ErrorCode.USER_RATE_LIMIT: (False, False, "transient"),
 }
 
-# Invisible tag prefix: Zero-Width Space + code in brackets.
-# Invisible to users in Telegram but extractable by code.
-_TAG_PREFIX = "\u200b["  # ​[
+_TAG_PREFIX = "\u200b["
 _TAG_SUFFIX = "]"
 
 
@@ -357,9 +312,6 @@ def strip_error_tag(text: str) -> str:
     return text[end + len(_TAG_SUFFIX) :]
 
 
-# =============================================================================
-# USER-FRIENDLY ERROR MESSAGES (tagged with codes)
-# =============================================================================
 GENERIC_ERROR = tag_error(ErrorCode.GENERIC, "❌ Произошла ошибка. Попробуйте ещё раз.")
 OVERLOADED_ERROR = tag_error(
     ErrorCode.OVERLOADED,
@@ -375,11 +327,6 @@ TIMEOUT_ERROR = tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время 
 NETWORK_ERROR_MSG = tag_error(ErrorCode.NETWORK, "🌐 Ошибка сети. Проверьте подключение.")
 
 
-# =============================================================================
-# ERROR CLASSIFICATION FUNCTIONS — code-based with text fallback
-# =============================================================================
-
-# Exception type → ErrorCode mapping (O(1) classification)
 _EXCEPTION_TYPE_MAP: dict[type, ErrorCode] = {
     TimeoutError: ErrorCode.TIMEOUT,
     ConnectionError: ErrorCode.NETWORK,
@@ -409,14 +356,12 @@ _EXCEPTION_TYPE_MAP: dict[type, ErrorCode] = {
     UserLimitExceededError: ErrorCode.USER_RATE_LIMIT,
     DecryptionError: ErrorCode.DECRYPTION_FAILED,
     AuthenticationError: ErrorCode.INVALID_KEY,
-    # Python programmer-error builtins: code bugs → PROCESSING (not GENERIC)
     UnboundLocalError: ErrorCode.PROCESSING,
     AttributeError: ErrorCode.PROCESSING,
     TypeError: ErrorCode.PROCESSING,
     NameError: ErrorCode.PROCESSING,
 }
 
-# HTTP status code → ErrorCode mapping
 _STATUS_CODE_MAP: dict[int, ErrorCode] = {
     429: ErrorCode.RATE_LIMIT,
     503: ErrorCode.OVERLOADED,
@@ -429,7 +374,6 @@ _STATUS_CODE_MAP: dict[int, ErrorCode] = {
     500: ErrorCode.OVERLOADED,
 }
 
-# ErrorCode → user-facing message
 _ERROR_CODE_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.TIMEOUT: TIMEOUT_ERROR,
     ErrorCode.OVERLOADED: OVERLOADED_ERROR,
@@ -522,17 +466,14 @@ def classify_error_from_exception(exc: Exception) -> ErrorCode:
 
     Falls back to string-based detection for unregistered exception types.
     """
-    # Direct type match
     exc_type = type(exc)
     if exc_type in _EXCEPTION_TYPE_MAP:
         return _EXCEPTION_TYPE_MAP[exc_type]
 
-    # MRO walk for subclass matches
     for base in exc_type.__mro__:
         if base in _EXCEPTION_TYPE_MAP:
             return _EXCEPTION_TYPE_MAP[base]
 
-    # HTTP status code extraction (google.genai.errors.APIError, httpx, etc.)
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     if not isinstance(status, int):
         status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -544,7 +485,6 @@ def classify_error_from_exception(exc: Exception) -> ErrorCode:
     if isinstance(status, int) and status in _STATUS_CODE_MAP:
         return _STATUS_CODE_MAP[status]
 
-    # String fallback for unknown exception types
     if "timeout" in msg or "timed out" in msg:
         return ErrorCode.TIMEOUT
     if "503" in msg or "overloaded" in msg or "unavailable" in msg:
@@ -571,7 +511,6 @@ def user_friendly_error(raw_error: Exception | str) -> str:
 
     Uses typed exception classification first, falls back to text matching.
     """
-    # Type-based classification (primary path)
     if isinstance(raw_error, Exception):
         code = classify_error_from_exception(raw_error)
         message = _ERROR_CODE_MESSAGES.get(code, GENERIC_ERROR)
@@ -582,12 +521,9 @@ def user_friendly_error(raw_error: Exception | str) -> str:
             ErrorCode.TIMEOUT,
             ErrorCode.NETWORK,
         }:
-            # Legacy provider adapters return only friendly text. Preserve the
-            # safe numeric cooldown without copying private provider details.
             return f"{message} Подождите около {retry_after}с."
         return message
 
-    # Text-based classification (legacy path)
     text = raw_error
     low = (text or "").lower()
     if any(x in low for x in ["503", "unavailable", "overloaded"]):
@@ -604,10 +540,8 @@ def is_error_message(text: str) -> bool:
     """Определяет, является ли сообщение ошибкой."""
     if not text:
         return False
-    # Fast path: tagged error
     if extract_error_code(text) is not None:
         return True
-    # Legacy fallback: emoji prefix check
     error_indicators = ["⏰", "❌", "🔄", "🚫", "⏱️", "💳", "🌐", "🔑"]
     return any(text.startswith(indicator) for indicator in error_indicators)
 
@@ -621,14 +555,12 @@ def is_retryable_error(text: str) -> bool:
     """Определяет, можно ли повторить запрос при этой ошибке."""
     if not text:
         return False
-    # Fast path: tagged error
     code = extract_error_code(text)
     if code is not None:
         return is_retryable_error_code(code)
     quota_code = _quota_error_code(text)
     if quota_code is not None:
         return is_retryable_error_code(quota_code)
-    # Legacy fallback: text pattern matching
     retryable_patterns = [
         "⏰",
         "🔄",
@@ -651,13 +583,11 @@ def is_key_related_error(text: str) -> bool:
     """Определяет, является ли ошибка связанной с ключом API."""
     if not text:
         return False
-    # Fast path: tagged error
     code = extract_error_code(text)
     if code is not None:
         return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[1]
     if has_retry_after_hint(text):
         return True
-    # Legacy fallback: text pattern matching
     text_lower = text.lower()
     not_key_patterns = [
         "⏰",
@@ -702,11 +632,9 @@ def classify_key_error(text: str | Exception) -> str:
         return _ERROR_PROPERTIES[classify_error_from_exception(text)][2]
     if not text:
         return "transient"
-    # Fast path: tagged error
     code = extract_error_code(text)
     if code is not None:
         return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[2]
-    # Legacy fallback: text pattern matching
     text_lower = text.lower()
     transient = [
         "⏰",
@@ -750,11 +678,6 @@ def classify_key_error(text: str | Exception) -> str:
     return "transient"
 
 
-# =============================================================================
-# KEYBOARD BUILDERS
-# =============================================================================
-
-
 def build_retry_and_roles_keyboard(
     include_roles: bool = True, *, retry_callback: str = "retry_last"
 ) -> InlineKeyboardMarkup:
@@ -777,20 +700,10 @@ def build_roles_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-# =============================================================================
-# LOGGING HELPERS
-# =============================================================================
-
-
 def log_and_format_error(context: str, err: Exception) -> str:
     """Logs error with context and returns user-friendly message."""
     logging.error("%s: %s", context, err, exc_info=True)
     return user_friendly_error(err)
-
-
-# =============================================================================
-# APIError EXCEPTION CLASS (Telegram-facing)
-# =============================================================================
 
 
 class APIError(GemaibotAPIError):
@@ -816,7 +729,6 @@ class APIError(GemaibotAPIError):
         self.retryable = retryable
         self.key_related = key_related
         self.user_message = user_friendly_error(raw_error)
-        # Initialize base with message + empty details
         super().__init__(self.user_message)
 
     @classmethod
@@ -829,11 +741,6 @@ class APIError(GemaibotAPIError):
             retryable=retryable,
             key_related=key_related,
         )
-
-
-# =============================================================================
-# ASYNC CONTEXT MANAGER FOR UNIFIED ERROR HANDLING
-# =============================================================================
 
 
 @asynccontextmanager
@@ -859,23 +766,19 @@ async def handle_api_errors(
         error_text = str(e)
         user_msg = user_friendly_error(e)
 
-        # Log the error with context
         logging.error("%s: %s", context, e, exc_info=True)
 
-        # Determine keyboard
         keyboard = None
         if show_retry_button and is_retryable_error(error_text):
             keyboard = build_retry_and_roles_keyboard(include_roles=True)
         elif show_retry_button:
             keyboard = build_roles_keyboard()
 
-        # Update the message
         try:
             await placeholder_message.edit_text(user_msg, reply_markup=keyboard)
         except Exception as edit_error:
             logging.warning("Failed to edit message with error: %s", edit_error)
 
-        # Run callback if provided
         if on_error:
             try:
                 result = on_error(e)

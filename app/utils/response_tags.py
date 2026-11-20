@@ -1,4 +1,3 @@
-# /app/utils/response_tags.py
 """Parse and strip LLM-emitted hidden tags from response text.
 
 Tags handled:
@@ -18,15 +17,10 @@ import re
 
 from cachetools import LRUCache
 
-# 10,000 strings * ~100 bytes = ~1 MB memory footprint
-# Survives until process restart. If restarted, old suggestion buttons fail gracefully.
 SUGGESTION_CACHE: LRUCache[str, str] = LRUCache(maxsize=10000)
 
-# ── Intent Tag ────────────────────────────────────────────────────────────────
-# Matches [INTENT:draw], [INTENT:research], [INTENT:tts] anywhere in the text.
 _INTENT_RE = re.compile(r"\[INTENT:(draw|research|tts)\]", re.IGNORECASE)
 
-# Known intent types → button config
 INTENT_BUTTONS: dict[str, tuple[str, str]] = {
     "draw": ("🎨 Нарисовать эту сцену?", "intent_route:draw"),
     "research": ("🔬 Глубокий анализ?", "intent_route:research"),
@@ -48,17 +42,12 @@ def extract_intent(text: str) -> tuple[str, str | None]:
     return text, None
 
 
-# ── Smart Suggestions ─────────────────────────────────────────────────────────
-# Matches [SUGGESTIONS: подсказка1 | подсказка2 | подсказка3] anywhere in text.
-# Also catches Cyrillic С lookalike: [СUGGESTIONS: ...] (U+0421 С instead of ASCII S).
 _SUGGESTIONS_RE = re.compile(
     r"\[[SC\u0421]UGGESTIONS:\s*(.+?)\]",
     re.IGNORECASE,
 )
 
-# Max suggestions to render as buttons
 MAX_SUGGESTIONS = 3
-# Label length limit (Telegram UI max display logic)
 MAX_SUGGESTION_LABEL_LEN = 100
 
 
@@ -81,11 +70,9 @@ def extract_suggestions(text: str) -> tuple[str, list[dict[str, str]]]:
             continue
 
         full_text = s
-        # Truncate visual label just for UI aesthetics, not callback_data limit
         if len(s) > MAX_SUGGESTION_LABEL_LEN:
             s = s[: MAX_SUGGESTION_LABEL_LEN - 3] + "..."
 
-        # Create a short 10-char hash for callback_data
         s_id = hashlib.sha256(full_text.encode("utf-8")).hexdigest()[:10]
         SUGGESTION_CACHE[s_id] = full_text
 
@@ -102,21 +89,15 @@ def parse_response_tags(text: str) -> tuple[str, str | None, list[dict[str, str]
     Returns:
         (cleaned_text, intent_type, suggestions)
     """
-    # Suggestions first (they're usually at the very end before footers)
     text, suggestions = extract_suggestions(text)
-    # Then intent tag
     text, intent = extract_intent(text)
 
-    # Cleanup any excessive blank lines left behind by tag extraction
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text, intent, suggestions
 
 
-# ── Code Block Extraction ─────────────────────────────────────────────────────
-# Matches fenced code blocks: ```lang\ncode\n```
 _CODE_BLOCK_RE = re.compile(r"```(?:\w*)\n(.*?)```", re.DOTALL)
 
-# Minimum code block length to offer CopyTextButton (skip trivial snippets)
 _MIN_CODE_BLOCK_LEN = 20
 
 

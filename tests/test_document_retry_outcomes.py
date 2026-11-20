@@ -27,8 +27,6 @@ from app.queue_contracts import JobOutcome
     ],
 )
 async def test_initial_duplicate_lookup_outage_retries_only_known_transient_errors(monkeypatch, error_type, retryable):
-    # Keep the production lookup facade: its legacy error swallowing must not hide
-    # a queued upload's outage and let it proceed into storage.
     monkeypatch.setattr(repository, "_find_duplicate_document", AsyncMock(side_effect=error_type("synthetic")))
     monkeypatch.setattr(processor.metrics_collector, "record_error", AsyncMock())
     writes = []

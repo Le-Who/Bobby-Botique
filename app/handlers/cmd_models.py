@@ -1,4 +1,3 @@
-# /app/handlers/cmd_models.py
 """Admin /models wizard — zero-downtime model list management.
 
 Flow:
@@ -38,8 +37,7 @@ from app.utils.formatting import TelegramFormatter
 
 logger = logging.getLogger(__name__)
 
-# ConversationHandler state
-AWAITING_MODEL_NAME = 100  # distinct from AWAITING_KEY = 0 in cmd_keys
+AWAITING_MODEL_NAME = 100
 
 _PROVIDERS = {
     "gemini": "🤖 Gemini",
@@ -66,9 +64,6 @@ def _models_admin_step(func):
     return wrapper
 
 
-# ── /models entry point ───────────────────────────────────────────────────────
-
-
 @_models_admin_step
 async def models_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show the provider selector for model management."""
@@ -84,9 +79,6 @@ def _build_provider_selector() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([buttons[index : index + 2] for index in range(0, len(buttons), 2)])
 
 
-# ── Callback router ───────────────────────────────────────────────────────────
-
-
 @_models_admin_step
 async def models_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Route all models:* callback_data payloads."""
@@ -99,7 +91,6 @@ async def models_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return await _show_provider_view(query, provider)
 
     if data.startswith("models:remove:"):
-        # payload: models:remove:<provider>:<short_model_token>
         parts = data.split(":", 3)
         provider, model_token = parts[2], parts[3]
         return await _handle_remove(query, provider, model_token)
@@ -129,9 +120,6 @@ async def models_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return ConversationHandler.END
 
     return ConversationHandler.END
-
-
-# ── Provider view ─────────────────────────────────────────────────────────────
 
 
 async def _show_provider_view(query, provider: str, *, notice: str | None = None) -> int:
@@ -172,9 +160,6 @@ async def _show_provider_view(query, provider: str, *, notice: str | None = None
     return ConversationHandler.END
 
 
-# ── Remove handler ────────────────────────────────────────────────────────────
-
-
 def _resolve_model_token(models: tuple[str, ...], token: str) -> str | None:
     matches = [model for model in models if get_model_hash(model) == token]
     return matches[0] if len(matches) == 1 else None
@@ -205,9 +190,6 @@ async def _handle_remove(query, provider: str, model_token: str) -> int:
     return await _show_provider_view(query, provider, notice=notice)
 
 
-# ── Reset handler ─────────────────────────────────────────────────────────────
-
-
 async def _handle_reset(query, provider: str) -> int:
     label = _PROVIDERS.get(provider, provider)
     restored = await reset_models_to_env(provider)
@@ -224,9 +206,6 @@ async def _handle_reset(query, provider: str) -> int:
     return ConversationHandler.END
 
 
-# ── Add: receive message ──────────────────────────────────────────────────────
-
-
 @_models_admin_step
 async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store the new model name sent by the admin."""
@@ -236,7 +215,6 @@ async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     model_name = (update.message.text or "").strip()
 
-    # Basic sanity: must look like a model identifier
     if not model_name or len(model_name) < 3 or " " in model_name:
         await update.message.reply_text(
             "❌ Некорректное название модели. Должно быть без пробелов, минимум 3 символа.\n"
@@ -247,7 +225,6 @@ async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     added = await add_model(provider, model_name)
     label = _PROVIDERS.get(provider, provider)
 
-    # Delete the admin's message for a clean UI
     with contextlib.suppress(Exception):
         await update.message.delete()
 
@@ -268,9 +245,6 @@ async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]])
     await update.message.chat.send_message(fmt, parse_mode=pm, reply_markup=keyboard)
     return ConversationHandler.END
-
-
-# ── ConversationHandler builder ───────────────────────────────────────────────
 
 
 def build_models_conversation_handler() -> ConversationHandler:

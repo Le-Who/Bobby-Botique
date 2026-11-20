@@ -45,9 +45,6 @@ body {
   background-attachment: fixed;
 }
 
-/* ==========================================
-   TOP HEADER
-   ========================================== */
 .header {
   position: sticky;
   top: 0;
@@ -75,9 +72,6 @@ body {
   gap: 8px;
 }
 
-/* ==========================================
-   TAB NAVIGATION
-   ========================================== */
 .tab-nav {
   display: flex;
   align-items: center;
@@ -113,15 +107,9 @@ body {
   border-bottom-color: var(--accent);
 }
 
-/* ==========================================
-   TAB PANELS
-   ========================================== */
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
-/* ==========================================
-   SHARED: STAT CARDS
-   ========================================== */
 .stats-panel {
   max-width: 1280px;
   margin: 1.2rem auto 0;
@@ -172,9 +160,6 @@ body {
   bottom: 12px;
 }
 
-/* ==========================================
-   SHARED: TOGGLE SWITCH
-   ========================================== */
 .switch {
   position: relative;
   display: inline-block;
@@ -202,9 +187,6 @@ body {
 input:checked + .slider { background-color: var(--green); }
 input:checked + .slider:before { transform: translateX(16px); }
 
-/* ==========================================
-   SHARED: MAIN CONTENT / SECTION
-   ========================================== */
 .main-content {
   max-width: 1280px;
   margin: 0 auto;
@@ -220,9 +202,6 @@ input:checked + .slider:before { transform: translateX(16px); }
   padding-left: 2px;
 }
 
-/* ==========================================
-   BROADCAST: CHANNEL CARDS
-   ========================================== */
 .channel-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -295,9 +274,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 .dot-on { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .dot-off { background: var(--rose); }
 
-/* ==========================================
-   BROADCAST: SUBSCRIBERS TABLE
-   ========================================== */
 .table-wrap {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -358,18 +334,14 @@ input:checked + .slider:before { transform: translateX(16px); }
 .sub-table tr.row-inactive td { opacity: 0.5; }
 .sub-table tr.row-inactive:hover td { opacity: 0.75; background: var(--surface-hover); }
 .mono { font-family: "JetBrains Mono", monospace; font-size: 0.75rem; }
-/* User cell: name on top, mono ID below */
 .cell-user { display: flex; flex-direction: column; gap: 1px; }
 .cell-user-name { font-size: 0.8rem; font-weight: 500; color: var(--text); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .cell-user-id { font-family: "JetBrains Mono", monospace; font-size: 0.68rem; color: var(--text-dim); }
-/* Time cell: hour on top, tz below */
 .cell-time { display: flex; flex-direction: column; gap: 1px; text-align: right; }
 .cell-time-hour { font-family: "JetBrains Mono", monospace; font-size: 0.82rem; color: var(--text); font-weight: 600; }
 .cell-time-tz { font-size: 0.62rem; color: var(--text-dim); }
-/* Date cell */
 .cell-date-never { font-size: 0.72rem; color: var(--text-dim); font-style: italic; }
 .cell-date-val { font-family: "JetBrains Mono", monospace; font-size: 0.72rem; color: var(--text-muted); }
-/* Badge channel */
 .badge-channel {
   display: inline-block;
   font-size: 0.63rem;
@@ -382,7 +354,6 @@ input:checked + .slider:before { transform: translateX(16px); }
   font-weight: 600;
   white-space: nowrap;
 }
-/* Status badges */
 .badge-status {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 0.65rem; font-weight: 600;
@@ -394,7 +365,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 .badge-status-inactive { background: rgba(255,255,255,0.05); color: var(--text-dim); border-color: rgba(255,255,255,0.08); }
 .badge-status-yes { background: rgba(16,185,129,0.1); color: var(--green); border-color: rgba(16,185,129,0.25); }
 .badge-status-no { background: rgba(244,63,94,0.08); color: var(--rose); border-color: rgba(244,63,94,0.18); }
-/* Empty / error states */
 .empty-state {
   padding: 48px 20px;
   text-align: center;
@@ -407,9 +377,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 .error-state-icon { font-size: 1.6rem; margin-bottom: 6px; }
 .error-state-msg { color: var(--rose); font-size: 0.82rem; }
 
-/* ==========================================
-   CROC: PUZZLE GRID (ported from admin_dailycroc.html)
-   ========================================== */
 .puzzle-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
@@ -493,9 +460,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 .security-mode .puzzle-word:active { filter: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ==========================================
-   2048: PANEL (ported from admin_daily2048.html, adapted to dark theme)
-   ========================================== */
 .s2048-shell { max-width: 1240px; margin: 0 auto; padding: 1.5rem; }
 .s2048-toolbar {
   display: grid;
@@ -597,9 +561,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 .field textarea { min-height: 80px; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); outline: none; }
 
-/* ==========================================
-   HOROSCOPE / TAROT STATS
-   ========================================== */
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -650,9 +611,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 .sign-table td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.03); }
 .sign-table td:last-child { text-align: right; font-family: "JetBrains Mono", monospace; color: var(--accent); }
 
-/* ==========================================
-   TOAST NOTIFICATIONS
-   ========================================== */
 .toast-container {
   position: fixed; bottom: 20px; right: 20px; z-index: 1000;
   display: flex; flex-direction: column; gap: 8px; pointer-events: none;
@@ -673,9 +631,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 .toast-error { border-color: var(--rose); }
 .toast-info { border-color: var(--accent); }
 
-/* ==========================================
-   CONFIRMATION MODAL
-   ========================================== */
 .modal {
   display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
   background: rgba(4, 6, 12, 0.8); z-index: 1000; align-items: center; justify-content: center;
@@ -702,7 +657,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 </head>
 <body>
 
-<!-- ========== HEADER ========== -->
 <div class="header">
   <h1>📅 Daily Admin</h1>
   <div class="header-actions" id="croc-header-actions" style="display:none;">
@@ -714,7 +668,6 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 </div>
 
-<!-- ========== TAB NAVIGATION ========== -->
 <nav class="tab-nav" id="tab-nav">
   <button class="tab-btn active" data-tab="broadcast">📡 Рассылки</button>
   <button class="tab-btn" data-tab="croc">🐊 Croc</button>
@@ -737,9 +690,6 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 </div>
 
-<!-- ========================================
-     TAB: BROADCAST
-     ======================================== -->
 <div class="tab-panel active" id="tab-broadcast">
   <div class="main-content">
 
@@ -803,10 +753,8 @@ input:checked + .slider:before { transform: translateX(16px); }
       </div>
     </div>
 
-    <!-- ═══ OFFER HISTORY & MANUAL SEND ═══════════════════════════════════ -->
     <h2 class="section-title" style="margin-top:32px;">📬 История офферов и ручная отправка</h2>
 
-    <!-- Quick send form -->
     <div class="card" style="margin-bottom:18px;padding:18px 20px;">
       <div style="font-size:0.82rem;font-weight:600;color:var(--text-muted);margin-bottom:12px;letter-spacing:.05em;text-transform:uppercase;">🎯 Отправить оффер по User ID</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
@@ -823,7 +771,6 @@ input:checked + .slider:before { transform: translateX(16px); }
       </div>
     </div>
 
-    <!-- Offer history filters -->
     <div class="table-wrap">
       <div class="table-filters">
         <select class="filter-select" id="offer-filter-channel">
@@ -846,7 +793,6 @@ input:checked + .slider:before { transform: translateX(16px); }
         <span style="font-size:0.72rem;color:var(--text-muted);" id="offer-count-label"></span>
       </div>
 
-      <!-- Batch controls (visible when rows are checked) -->
       <div id="offer-batch-bar" style="display:none;align-items:center;gap:10px;padding:10px 14px;background:rgba(139,92,246,.08);border-bottom:1px solid var(--border);">
         <span style="font-size:0.82rem;color:var(--violet);font-weight:600;" id="offer-batch-count">0 выбрано</span>
         <select class="filter-select" id="offer-batch-channel" style="width:auto;">
@@ -911,9 +857,6 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 </div>
 
-<!-- ========================================
-     TAB: CROC
-     ======================================== -->
 <div class="tab-panel" id="tab-croc">
   <div class="stats-panel">
     <div class="stats-row">
@@ -988,9 +931,6 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 </div>
 
-<!-- ========================================
-     TAB: 2048
-     ======================================== -->
 <div class="tab-panel" id="tab-2048">
   <div class="s2048-shell">
     <section class="s2048-toolbar">
@@ -1059,12 +999,6 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 </div>
 
-<!-- ========================================
-     TAB: TRIVIA
-     ======================================== -->
-<!-- ========================================
-     TAB: TRIVIA
-     ======================================== -->
 <div class="tab-panel" id="tab-trivia">
   <div class="stats-panel">
     <div class="stats-row">
@@ -1118,7 +1052,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 
   <div class="s2048-shell" style="margin-top: 1.2rem;">
     <section class="s2048-layout">
-      <!-- Left pane -->
       <div id="trivia-left-pane">
         <h2 class="section-title">Календарь вопросов (последние 14 дней и +7 дней)</h2>
         <button type="button" class="s2048-btn" id="trivia-refresh-list">Обновить список</button>
@@ -1140,7 +1073,6 @@ input:checked + .slider:before { transform: translateX(16px); }
         </div>
       </div>
 
-      <!-- Right pane (Editor) -->
       <aside class="s2048-editor" id="trivia-editor-pane" style="display: none; width: 100%; position: relative;">
         <button class="s2048-btn" id="trivia-btn-close" style="margin-bottom: 16px; font-size: 0.8rem; border-color: var(--text-dim); color: var(--text-muted);">⬅ Назад к календарю</button>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
@@ -1154,10 +1086,8 @@ input:checked + .slider:before { transform: translateX(16px); }
         </section>
 
         <div id="trivia-editor-questions" style="overflow-y: visible; padding-right: 4px; display: flex; flex-direction: column; gap: 12px;">
-          <!-- 5 question forms rendered here -->
         </div>
 
-        <!-- Super questions editable section -->
         <div id="trivia-super-questions-section" style="margin-top: 24px; display: none;">
           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
             <span style="font-size:0.85rem; font-weight:700; color:#ff80bf;">⚡ СУПЕРИГРА — вопросы</span>
@@ -1167,7 +1097,6 @@ input:checked + .slider:before { transform: translateX(16px); }
           </div>
         </div>
 
-        <!-- Regen mode checkboxes + actions -->
         <div style="margin-top: 18px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-surface);">
           <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:8px; font-weight:600;">🤖 Регенерировать через AI:</div>
           <div style="display:flex; align-items:center; gap:14px; margin-bottom:10px; flex-wrap:wrap;">
@@ -1192,9 +1121,6 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 </div>
 
-<!-- ========================================
-     TAB: HOROSCOPE
-     ======================================== -->
 <div class="tab-panel" id="tab-horoscope">
   <div class="main-content">
     <h2 class="section-title">Подписки на гороскоп</h2>
@@ -1216,9 +1142,6 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 </div>
 
-<!-- ========================================
-     TAB: TAROT
-     ======================================== -->
 <div class="tab-panel" id="tab-tarot">
   <div class="main-content">
     <h2 class="section-title">Статус карт на сегодня</h2>
@@ -1258,10 +1181,8 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 </div>
 
-<!-- ========== TOAST ========== -->
 <div class="toast-container" id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
-<!-- ========== MODAL ========== -->
 <div class="modal" id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-message">
   <div class="modal-content">
     <h3 id="modal-title">Подтверждение</h3>
@@ -1280,9 +1201,6 @@ input:checked + .slider:before { transform: translateX(16px); }
 <script nonce="{{ g.csp_nonce }}">
 'use strict';
 
-// ============================================================
-// SHARED UTILITIES
-// ============================================================
 const apiHeaders = { 'Content-Type': 'application/json' };
 const getHeaders = {};
 const fetch = (...args) => window.DailyChrome.fetch(...args);
@@ -1328,9 +1246,6 @@ function getKyivDateString() {
   return window.DailyChrome.today();
 }
 
-// ============================================================
-// TAB ROUTER (hash-based)
-// ============================================================
 const TabRouter = (() => {
   const TABS = ['broadcast', 'croc', '2048', 'trivia', 'horoscope', 'tarot', 'jobs'];
   const HEADER_ACTIONS = {
@@ -1354,12 +1269,10 @@ const TabRouter = (() => {
     const panel = document.getElementById('tab-' + tabId);
     if (panel) panel.classList.add('active');
 
-    // Toggle header action buttons
     document.querySelectorAll('[id$="-header-actions"]').forEach(el => el.style.display = 'none');
     const ha = HEADER_ACTIONS[tabId];
     if (ha) document.getElementById(ha).style.display = 'flex';
 
-    // Lazy-load tab data
     if (tabId === 'broadcast') BroadcastModule.init();
     else if (tabId === 'croc') CrocModule.init();
     else if (tabId === '2048') S2048Module.init();
@@ -1378,17 +1291,11 @@ const TabRouter = (() => {
   return { activate };
 })();
 
-// ============================================================
-// MODULE: BROADCAST
-// ============================================================
 </script>
 <script src="{{ url_for('static', filename='js/daily-broadcast-jobs.js') }}" nonce="{{ g.csp_nonce }}"></script>
 <script src="{{ url_for('static', filename='js/daily-broadcast.js') }}" nonce="{{ g.csp_nonce }}"></script>
 <script nonce="{{ g.csp_nonce }}">
 
-// ============================================================
-// MODULE: CROC (ported from admin_dailycroc.html, delivery toggle removed)
-// ============================================================
 const DailySettingsState = (() => {
   const listeners = new Set();
   return {
@@ -1404,9 +1311,6 @@ const DailySettingsState = (() => {
 <script src="{{ url_for('static', filename='js/daily-croc-editor.js') }}" nonce="{{ g.csp_nonce }}"></script>
 <script nonce="{{ g.csp_nonce }}">
 
-// ============================================================
-// MODULE: 2048 (ported from admin_daily2048.html)
-// ============================================================
 const S2048Module = (() => {
   let initialized = false;
   let puzzles = [];
@@ -1644,16 +1548,10 @@ const S2048Module = (() => {
   return { init, hasDirtyDrafts:()=>retainedDrafts.size>0 || (editorBaseline!==null && signature()!==editorBaseline) };
 })();
 
-// ============================================================
-// MODULE: TRIVIA
-// ============================================================
 </script>
 <script src="{{ url_for('static', filename='js/daily-trivia-editor.js') }}" nonce="{{ g.csp_nonce }}"></script>
 <script nonce="{{ g.csp_nonce }}">
 
-// ============================================================
-// MODULE: HOROSCOPE
-// ============================================================
 const HoroscopeModule = (() => {
   let initialized = false;
 
@@ -1688,9 +1586,6 @@ const HoroscopeModule = (() => {
   return { init };
 })();
 
-// ============================================================
-// MODULE: TAROT
-// ============================================================
 const TarotModule = (() => {
   let initialized = false;
   let catalog = null;
@@ -1818,9 +1713,6 @@ async function uploadGameBanner(gameId, inputEl) {
   }
 }
 
-// ============================================================
-// Banners & File Inputs
-// ============================================================
 const bannerGameIds = ['dailycroc', 'daily2048', 'dailytrivia'];
 bannerGameIds.forEach(gameId => {
   const inputEl = document.getElementById(`${gameId}-banner-input`);
@@ -1833,9 +1725,6 @@ bannerGameIds.forEach(gameId => {
   }
 });
 
-// ============================================================
-// INIT
-// ============================================================
 DailyChrome.init(TabRouter.activate);
 window.addEventListener('beforeunload',event=>{
   if(!TriviaModule.hasDirtyDrafts?.() && !CrocModule.hasDirtyDrafts?.() && !S2048Module.hasDirtyDrafts?.()) return;

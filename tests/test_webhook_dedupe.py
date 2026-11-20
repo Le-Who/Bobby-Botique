@@ -141,7 +141,6 @@ async def test_redis_reclaim_of_cached_update_keeps_command_history_bounded(monk
     lock = asyncio.Lock()
     for update_id in (1, 2, 3, 4):
         assert await should_accept_webhook_update(update_id, seen, lock, capacity=4)
-    # Redis may expire/reset independently; its confirmed claim remains primary.
     redis.claims.clear()
     assert await should_accept_webhook_update(1, seen, lock, payload=_command_payload(), capacity=4)
     assert len(seen) <= 4

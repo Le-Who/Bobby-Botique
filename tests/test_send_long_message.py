@@ -27,7 +27,7 @@ def _patch_helpers():
         patch("app.utils.messaging.deep_dive_keyboard", return_value=None),
         patch("app.utils.messaging._get_telegram_cb") as mock_cb,
     ):
-        # Make the CircuitBreaker relay the call transparently
+
         async def relay(fn, *args, **kwargs):
             return await fn(*args, **kwargs)
 
@@ -54,11 +54,10 @@ class TestSendLongMessageSplitting:
         """Text over 4096 chars must be split into multiple messages."""
         from app.utils.messaging import send_long_message
 
-        long_text = "А" * 5000  # Cyrillic A, well over 4096
+        long_text = "А" * 5000
         msg = _make_message()
         await send_long_message(msg, long_text)
 
-        # First part edited, subsequent parts replied
         msg.edit_text.assert_awaited_once()
         assert msg.reply_text.await_count >= 1
 
@@ -67,7 +66,7 @@ class TestSendLongMessageSplitting:
         """All text content should be present across the split parts."""
         from app.utils.text_format import split_text_safe
 
-        original = "Word" * 1500  # ~6000 chars
+        original = "Word" * 1500
         parts = split_text_safe(original, max_length=4096)
 
         assert len(parts) >= 2
@@ -90,13 +89,12 @@ class TestSendLongMessageSplitting:
         """reply_markup should only appear on the final split part."""
         from app.utils.messaging import send_long_message
 
-        long_text = "Word " * 2000  # ~10K chars, will split into 3+ parts
+        long_text = "Word " * 2000
         msg = _make_message()
         mock_keyboard = MagicMock()
 
         await send_long_message(msg, long_text, reply_markup=mock_keyboard)
 
-        # The last call should have the keyboard
         if msg.reply_text.await_count > 0:
             last_call = msg.reply_text.call_args_list[-1]
             assert last_call.kwargs.get("reply_markup") == mock_keyboard

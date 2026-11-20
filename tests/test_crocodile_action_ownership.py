@@ -219,8 +219,6 @@ async def test_cancelled_winning_guess_finishes_required_publication(monkeypatch
     async def finalize(bot):
         assert bot is sentinel_bot
         finalized.append(croc_store.game.status)
-        # The real finalizer removes game runtime state, including pending
-        # replies; accepted terminal replay must survive that cleanup.
         await crocodile_runtime.clear_runtime_state(croc_store.game.game_id)
 
     sentinel_bot = object()

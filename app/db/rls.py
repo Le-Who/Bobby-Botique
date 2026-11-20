@@ -7,8 +7,6 @@ Extracted from app/database.py to reduce monolith size.
 import logging
 import re
 
-# --- RLS Policy Templates ---
-
 RLS_POLICY_USER = """
 CREATE POLICY {policy_name} ON {table_name}
 FOR ALL USING (
@@ -47,8 +45,6 @@ WITH CHECK (
 );
 """
 
-# Membership is the root of group authorization: querying this table from its
-# own policy recurses, and allowing tenant INSERT would permit self-enrollment.
 _GROUP_MEMBERS_USING = """
     user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint) OR
     (select current_setting('app.is_admin', true)) = 'true'
@@ -72,7 +68,6 @@ WITH CHECK (
 );
 """
 
-# --- RLS Configuration Map ---
 
 RLS_CONFIG = {
     "users": [{"name": "users_policy", "template": RLS_POLICY_USER}],
@@ -178,7 +173,6 @@ RLS_CONFIG = {
 
 VALID_TABLES = set(RLS_CONFIG.keys())
 
-# Regex for safely validating SQL identifiers (table names) before interpolation
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
@@ -210,7 +204,6 @@ async def create_rls_policies(table_name: str, db_query):
     if not policies:
         raise ValueError(f"No RLS policies configured for table: {table_name!r}")
 
-    # Fetch all existing policies for the table at once to avoid N+1 queries.
     existing_policy_records = await db_query(
         "SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = $1",
         (table_name,),
@@ -221,8 +214,6 @@ async def create_rls_policies(table_name: str, db_query):
         policy_name = policy_cfg["name"]
         if policy_name in existing_policies:
             if table_name == "group_members" and policy_name == "group_members_policy":
-                # Repair historical self-recursive policies atomically, without
-                # dropping the policy or changing its identity/grants.
                 await db_query(
                     f"ALTER POLICY {quote_ident(policy_name)} ON {quote_ident(table_name)} "
                     f"USING ({_GROUP_MEMBERS_USING}) WITH CHECK ({_GROUP_MEMBERS_CHECK});"

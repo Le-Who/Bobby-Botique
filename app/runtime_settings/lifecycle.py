@@ -23,8 +23,6 @@ def detached_settings_context() -> Context:
 
 
 def load_controlled_prompts() -> None:
-    # Only import modules declaring controlled static templates. New definitions
-    # no longer require a second registration in this loader.
     for module in get_source_inventory().prompt_modules:
         importlib.import_module(module)
 
@@ -38,7 +36,6 @@ async def refresh_runtime_settings(*, force: bool = False) -> None:
         await refresh_prompts(force=force)
         await refresh_catalogs()
     except Exception as error:
-        # Keep the last confirmed runtime values. Do not log prompt/config content.
         logging.warning("Runtime controls refresh unavailable: %s", type(error).__name__)
 
 

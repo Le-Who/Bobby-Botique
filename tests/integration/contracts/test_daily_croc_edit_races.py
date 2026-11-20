@@ -80,7 +80,6 @@ async def test_start_and_reset_share_row_fence(contract_pool, monkeypatch, winne
                 if winner == "start":
                     await repo.start_puzzle(USER, DAY, conn=first)
                     pending = asyncio.create_task(repo.regenerate_puzzle_word(DAY, expected_revision=1))
-                    # Reset acquires a separate connection from the same real pool.
                     async with asyncio.timeout(5):
                         while not await observer.fetchval(
                             "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",

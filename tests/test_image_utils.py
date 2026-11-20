@@ -38,7 +38,6 @@ class TestImageUtils(unittest.TestCase):
     def test_estimate_image_size_1(self):
         width, height = 200, 100
         image = Image.new("1", (width, height))
-        # For mode '1', we estimate 1 byte per pixel even though packed is less
         expected_size = width * height * 1
         estimated_size = estimate_image_size_in_bytes(image)
         self.assertEqual(estimated_size, expected_size)
@@ -52,22 +51,16 @@ class TestImageUtils(unittest.TestCase):
 
     @patch("app.utils.image_utils.logging.error")
     def test_image_worker_error_path(self, mock_error):
-        # Pass invalid byte data to trigger an exception in Image.open
         result = _image_worker(b"invalid_image_data")
 
-        # Verify that it returns None on exception
         self.assertIsNone(result)
 
-        # Verify that logging.error was called
         mock_error.assert_called_once()
         args, kwargs = mock_error.call_args
         self.assertIn("Error in image processing worker: %s", args[0])
         self.assertTrue(kwargs.get("exc_info"))
 
     def test_import_does_not_create_process_pool(self):
-        # ``reload`` recreates dataclasses, so restore the public TaggedImage
-        # class afterwards. Otherwise other test modules collected earlier can
-        # hold the old class while provider code imports the new one.
         tagged_image_class = image_utils.TaggedImage
         try:
             with patch("concurrent.futures.ProcessPoolExecutor", side_effect=AssertionError("pool should stay lazy")):

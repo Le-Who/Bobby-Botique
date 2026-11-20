@@ -24,7 +24,6 @@ async def test_stream_retry_delay_survives_diagnostic_truncation():
         factory.return_value.aio.models.generate_content_stream = AsyncMock(side_effect=error)
         events = [event async for event in GeminiProvider("fake-key").stream(request, model_name=request.models[0])]
     assert len(events[0].diagnostic) <= 500
-    # The router forwards only the first 200 diagnostic characters to key health.
     assert extract_retry_after_seconds(events[0].diagnostic[:200]) == 47
 
 
@@ -109,7 +108,6 @@ async def test_execute_gemini_request_success():
         mock_client_instance = MockClient.return_value
         mock_response = MagicMock()
         mock_response.text = "Generated Text"
-        # Token count from usage_metadata (not separate count_tokens call)
         mock_usage = MagicMock()
         mock_usage.total_token_count = 50
         mock_response.usage_metadata = mock_usage

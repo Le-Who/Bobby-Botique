@@ -12,8 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# ── _fetch_telegraph_content ──────────────────────────────────────────────────
-
 
 @pytest.mark.asyncio
 async def test_fetch_telegraph_content_extracts_article():
@@ -39,7 +37,6 @@ async def test_fetch_telegraph_content_extracts_article():
 
         result = await _fetch_telegraph_content("https://telegra.ph/Test-01")
 
-    # Should return text extracted from the <article> body
     assert isinstance(result, str)
     assert "My Title" in result
     assert "Some content here." in result
@@ -80,7 +77,6 @@ async def test_fetch_telegraph_content_returns_none_when_no_article_tag():
 
     from app.web_miniapp import _fetch_telegraph_content
 
-    # HTML without <article>
     fake_html = "<html><body><div>No article here</div></body></html>"
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock(return_value=None)
@@ -95,9 +91,6 @@ async def test_fetch_telegraph_content_returns_none_when_no_article_tag():
         result = await _fetch_telegraph_content("https://telegra.ph/Test-01")
 
     assert result is None
-
-
-# ── api_reader_content (backward-compat XHR path) ────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -115,7 +108,6 @@ async def test_api_reader_content_returns_markdown_on_redis_hit():
         app = Quart(__name__)
         async with app.test_request_context("/api/reader/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"):
             resp = await api_reader_content("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-            # response can be tuple (jsonify, status) or just jsonify
             if isinstance(resp, tuple):
                 data = await resp[0].get_json()
             else:

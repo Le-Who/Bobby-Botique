@@ -1,11 +1,6 @@
-# ruff: noqa: E402
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-# ==============================================================================
-# FIXTURES
-# ==============================================================================
 
 
 class ChatState:
@@ -51,7 +46,6 @@ def run_patched():
         custom_roles_full=None,
         custom_role_count=0,
     ):
-        # We patch inside the app.handlers.menus module where it's used
         with (
             patch("app.handlers.menus.get_role_data", db_mock.get_role_data),
             patch("app.handlers.menus.get_conversation_count", AsyncMock(return_value=0)),
@@ -81,7 +75,6 @@ def run_patched():
 
             from app.handlers.menus import get_roles_menu_content
 
-            # The signature is (user_id, chat_state, view_mode="hub", page=0, role_key=None)
             return await get_roles_menu_content(
                 user_id=123,
                 chat_state=state,
@@ -93,20 +86,14 @@ def run_patched():
     return _run
 
 
-# ==============================================================================
-# TEST CASES
-# ==============================================================================
-
-
 @pytest.mark.asyncio
 async def test_hub_view_no_active_role(chat_state, mock_db, run_patched):
     """Test hub view when no role is active."""
     text, parse_mode, reply_markup = await run_patched(chat_state, mock_db, view_mode="hub")
 
     assert "Роли" in text
-    assert "Базовая" in text  # It usually defaults to Базовая (без роли)
+    assert "Базовая" in text
 
-    # Check buttons text
     buttons = [btn.text for row in reply_markup.inline_keyboard for btn in row]
     assert any("Мои роли" in b for b in buttons)
     assert any("Каталог ролей" in b for b in buttons)
@@ -118,7 +105,6 @@ async def test_hub_view_active_system_role(chat_state, mock_db, run_patched):
     """Test hub view with an active system role."""
     chat_state.system_prompt = "You are a helpful assistant."
 
-    # Mock system role definition
     with patch(
         "app.handlers.menus.DEFAULT_ROLES",
         {
@@ -139,7 +125,6 @@ async def test_hub_view_active_custom_role(chat_state, mock_db, run_patched):
     """Test hub view with an active custom role."""
     chat_state.system_prompt = "Custom prompt from user."
 
-    # Not a predefined system role, but exists in user's custom roles
     text, parse_mode, reply_markup = await run_patched(
         chat_state,
         mock_db,
@@ -212,7 +197,6 @@ async def test_list_view_system_roles(chat_state, mock_db, run_patched):
 @pytest.mark.asyncio
 async def test_details_view_system_role(chat_state, mock_db, run_patched):
     """Test 'details' view for a system role."""
-    # We mock get_role_data
     mock_db.get_role_data.return_value = {
         "id": "sys1",
         "title": "Sys Role 1",
@@ -254,7 +238,6 @@ async def test_details_view_custom_role(chat_state, mock_db, run_patched):
 @pytest.mark.asyncio
 async def test_error_conditions(chat_state, mock_db, run_patched):
     """Test various error conditions."""
-    # 1. details block for unknown role
     mock_db.get_role_data.return_value = None
 
     text, parse_mode, reply_markup = await run_patched(
@@ -262,6 +245,5 @@ async def test_error_conditions(chat_state, mock_db, run_patched):
     )
     assert "Роль не найдена" in text
 
-    # 2. Unknown page
     text, parse_mode, reply_markup = await run_patched(chat_state, mock_db, view_mode="invalid_page")
     assert "Ошибка режима" in text

@@ -1,4 +1,3 @@
-/* Shared bounded admin transport. Mutations are never retried automatically. */
 (function (root) {
   'use strict';
   const codes = {401:'session_expired',403:'denied',409:'conflict',429:'temporary_unavailable',503:'temporary_unavailable'};
@@ -43,7 +42,6 @@
   }
 
   function adminFetch(url, options={}) {
-    // Buffer the bounded admin response while the deadline still owns its body.
     return boundedFetch(url, options, async response => {
       const bytes = await response.arrayBuffer();
       return new Response([204,205,304].includes(response.status) ? null : bytes,
@@ -56,8 +54,6 @@
     const admission = data?.admission || data;
     if (data?.outcome_unknown === true || admission?.state === 'unknown' || admission?.reason_code === 'admission_unconfirmed') return true;
     if (admission?.state === 'rejected') return false;
-    // A server/proxy failure can arrive after the write committed. Reconcile
-    // by operation ID or revision before allowing the caller to try again.
     return status >= 500 || (invalidResponse && status >= 200 && status < 300);
   }
 

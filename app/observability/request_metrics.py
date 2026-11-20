@@ -59,8 +59,6 @@ class RequestObservation:
 
     def set_outcome(self, outcome: str) -> None:
         if not self.finished and outcome in {"failed", "cancelled", "partial", "rejected", "deferred"}:
-            # Binary legacy error accounting is less specific than a terminal
-            # already supplied by delivery/admission. Preserve that owner fact.
             if outcome == "failed" and self.outcome != "succeeded":
                 return
             self.outcome = outcome

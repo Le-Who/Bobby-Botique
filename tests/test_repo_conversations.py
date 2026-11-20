@@ -16,7 +16,7 @@ class TestGetRoleDataSystemRoles:
         assert result["key"] == "teacher"
         assert result["is_custom"] is False
         assert len(result["prompt"]) > 10
-        assert result["title"]  # Non-empty
+        assert result["title"]
 
     @pytest.mark.asyncio
     async def test_none_key_returns_none(self):

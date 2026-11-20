@@ -17,9 +17,6 @@ from app.utils.heartbeat import stop_heartbeat
 _agent_use_case = AgentRequestUseCase()
 
 
-# Note: Full AI logic omitted as this is a focused fix for the edge case handler
-
-
 async def handle_ai_response_error(response_text: str, placeholder_message: Message, on_error_callback=None) -> bool:
     """
     Универсальная обработка ошибок AI responseов.
@@ -47,7 +44,6 @@ async def handle_ai_response_error(response_text: str, placeholder_message: Mess
 
     mark_operation_failed()
 
-    # Execute дополнительные действия before обработкой ошибки (наonмер, очистка истории)
     if on_error_callback:
         try:
             if inspect.iscoroutinefunction(on_error_callback):
@@ -57,10 +53,8 @@ async def handle_ai_response_error(response_text: str, placeholder_message: Mess
         except Exception as e:
             logging.error("Error in on_error_callback: %s", e, exc_info=True)
 
-    # Определяем тип клавиатуры в зависимости от типа ошибки
     reply_markup = build_retry_and_roles_keyboard() if is_retryable_error(response_text) else build_roles_keyboard()
 
-    # Пытаемся отредактировать message, if не получается - отправляем new
     try:
         await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
     except Exception as edit_error:
@@ -89,8 +83,6 @@ async def _get_ai_response(
     chat_id: int | None = None,
     use_openrouter: bool | None = None,
 ):
-    # Legacy role operations pass an already selected key. Admission belongs
-    # here, not in the general use case (router callers reserve separately).
     import hashlib
 
     from app.errors import ErrorCode, tag_error

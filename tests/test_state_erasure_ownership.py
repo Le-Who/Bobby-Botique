@@ -114,7 +114,7 @@ async def test_erasure_waits_for_real_sql_retry_and_invalidates_queued_writer(er
         queued = asyncio.create_task(state._persist(current))
         erasure.release_retry.set()
         await asyncio.wait_for(asyncio.gather(first, deletion), 3)
-        erasure.epoch = 200  # The same Telegram ID can be authorized again.
+        erasure.epoch = 200
         await queued
         assert erasure.commits == [(100, 5)]
         assert current._user_id == 0

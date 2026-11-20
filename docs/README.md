@@ -44,6 +44,24 @@ journals and test/deploy reports are not current instructions.
   clarified that all Telegraph publication is opt-in.
 - [ADR 0002](adr/0002-provenance-safe-memory-graph-writes.md): caller-owned atomic
   memory graph/provenance writes. The decision remains applicable.
+- [ADR 0003](adr/0003-runtime-ownership-and-durable-effects.md) records runtime
+  ownership and durable effects.
+- [ADR 0004](adr/0004-deployment-and-operator-boundaries.md) records the separate
+  lifecycles of host services and bot deployment recovery.
+- [ADR 0005](adr/0005-dependency-automation-boundaries.md) records dependency
+  scheduling, grouping, and toolchain decisions.
+- [ADR 0006](adr/0006-numbered-migration-compatibility.md) records the compatibility
+  and rollout decisions behind the numbered SQL chain.
+- [ADR 0007](adr/0007-isolate-verification-at-external-boundaries.md) records how
+  verification isolates side effects and chooses independent observations.
+- [ADR 0008](adr/0008-telegram-interfaces-and-rendering.md) records Telegram
+  interface and rendering decisions.
+- [ADR 0009](adr/0009-provider-attempts-and-admission.md) records provider
+  attempt ownership and admission decisions.
+- [ADR 0010](adr/0010-revision-owned-admin-and-daily-interfaces.md) records
+  revision ownership for administrative and daily game interfaces.
+- [ADR 0011](adr/0011-telemetry-evidence-ownership.md) records ownership of
+  telemetry and operational evidence.
 
 ADRs preserve the problem and rejected alternatives. A design proposal does not
 silently override an accepted decision or describe deployed behavior.

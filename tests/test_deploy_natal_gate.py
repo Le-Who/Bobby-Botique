@@ -22,9 +22,8 @@ def _bash_executable() -> str:
 def _run_natal_gate(*, enabled: str = "true", failed_check: str = "") -> subprocess.CompletedProcess[str]:
     workflow = Path(".github/workflows/deploy.yml").read_text(encoding="utf-8")
     start = workflow.index('            if [ "$(printf \'%s\' "$NATAL_REPORTS_ENABLED"')
-    end = workflow.index("            # ── Media Cleanup Cron", start)
+    end = workflow.index("            docker stop tg-media-cleanup", start)
     gate = textwrap.dedent(workflow[start:end])
-    # Run the real workflow branch, replacing only the external Docker boundary.
     harness = textwrap.dedent(
         r"""
         set -eu

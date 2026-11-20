@@ -12,8 +12,6 @@ from typing import Any
 import asyncpg
 
 from app.config import settings
-
-# Performance: Import Pydantic models at module level to avoid __import__ lock overhead in hot DB paths
 from app.core.entities import UserStateRow
 from app.database import (
     clear_user_context,
@@ -34,7 +32,6 @@ async def is_authorized(user_id: int) -> bool:
     if is_admin(user_id):
         return True
 
-    # Check cache
     if user_id in db_manager._user_auth_cache:
         return db_manager._user_auth_cache[user_id]
 
@@ -51,7 +48,6 @@ async def is_authorized(user_id: int) -> bool:
             )
             is_auth = result and result[0]["is_authorized"] == 1
 
-            # Update cache
             db_manager._user_auth_cache[user_id] = is_auth
 
             return is_auth
@@ -71,8 +67,6 @@ async def erase_user_account(user_id: int) -> None:
 
     from app.state import get_user_state
 
-    # Retain the canonical state across LRU eviction while its persistence lock
-    # orders full SQL retries before deletion and post-commit invalidation.
     user_state = get_user_state(user_id)
     async with asyncio.timeout(_STATE_ERASURE_WAIT_SECONDS):
         await user_state._persist_lock.acquire()
@@ -96,16 +90,11 @@ async def _erase_user_account_with_persistence_locked(user_id: int) -> None:
     from app.context.summarizer import cancel_user_summarization_tasks
     from app.repos.memory_autosave import cancel_user_memory_tasks
 
-    # Unlike durable LTM writes, summary tasks can hold raw conversation
-    # history that is already inside an external provider call.  Cancellation
-    # must therefore finish before any account rows are erased.
     await cancel_user_summarization_tasks(user_id)
 
     try:
         await cancel_user_memory_tasks(user_id)
     except Exception as exc:
-        # Durable deletion remains authoritative even if a local task registry
-        # is already shutting down or otherwise unavailable.
         logging.warning("Could not cancel LTM tasks before account erasure for %s: %s", user_id, exc)
 
     if not db_manager.is_connected:
@@ -115,9 +104,6 @@ async def _erase_user_account_with_persistence_locked(user_id: int) -> None:
 
     from app.repos.memory_consent import private_data_barrier
 
-    # The common guard owns phase 1, lease draining, crash-safe takeover, and
-    # exact-generation compensation.  It is armed before COMMIT can expose the
-    # blocked state.
     async with private_data_barrier(
         user_id,
         is_admin=True,
@@ -128,12 +114,8 @@ async def _erase_user_account_with_persistence_locked(user_id: int) -> None:
         await get_voice_reply_manager().purge_user_jobs(user_id, ltm_only=False)
         from app.queue import task_queue
 
-        # The privacy barrier has drained external-use leases; no database lock
-        # is held across the Redis erase or cancellation of queue-owned work.
         await task_queue.purge_user_jobs(user_id)
 
-        # Once destructive work starts, caller cancellation must not separate a
-        # committed DELETE from local invalidation and release waiting writers.
         operation = asyncio.create_task(_finish_account_erasure(user_id, privacy_barrier))
         cancellation: asyncio.CancelledError | None = None
         while not operation.done():
@@ -154,9 +136,6 @@ async def _finish_account_erasure(user_id: int, privacy_barrier: int) -> None:
     """Own the destructive transaction and local invalidation through acknowledgment."""
     delete_completed = False
     try:
-        # Phase 2: reacquire the same lock, verify nobody replaced the
-        # generation while leases drained, then perform the atomic destructive
-        # work.
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await set_user_context(user_id, True, conn=conn)
             try:
@@ -183,8 +162,6 @@ async def _finish_account_erasure(user_id: int, privacy_barrier: int) -> None:
                 )
                 affected_group_ids = {int(row["chat_id"]) for row in affected_group_rows}
 
-                # Attempts cascade with personal snapshots. Only anonymous batch
-                # counts survive; an in-flight attempt stays conservatively unknown.
                 await db_query(
                     """WITH removed AS (
                            DELETE FROM public.broadcast_recipients WHERE recipient_id=$1
@@ -281,16 +258,12 @@ async def _finish_account_erasure(user_id: int, privacy_barrier: int) -> None:
                 await clear_user_context(conn=conn)
     except BaseException:
         if delete_completed:
-            # A failed COMMIT acknowledgment cannot establish rollback. Discard
-            # old local snapshots without reporting a successful durable erase.
             from app.state import purge_user_runtime_state
 
             db_manager._user_auth_cache.pop(user_id, None)
             purge_user_runtime_state(user_id)
         raise
 
-    # Only clear process-local authorization/state after the transaction has
-    # committed.  If the transaction rolls back, the user must remain usable.
     db_manager._user_auth_cache.pop(user_id, None)
     try:
         from app.group_chat import group_chat_manager

@@ -23,7 +23,6 @@ class _ActionBudget:
     in_flight: set[int] = field(default_factory=set)
 
 
-# The application has one bot per loop; do not retain state across loop shutdown.
 _budgets: WeakKeyDictionary[asyncio.AbstractEventLoop, _ActionBudget] = WeakKeyDictionary()
 
 

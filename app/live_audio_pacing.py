@@ -23,6 +23,4 @@ class LiveAudioPacer:
             await sleep(self._next_send - now)
         if wait_ready is not None:
             await wait_ready()
-        # Input is signed PCM16 mono: two bytes per sample. A two-times
-        # catch-up rate drains queued silence without an ever-growing delay.
         self._next_send = max(self._next_send, monotonic()) + byte_count / (sample_rate * 2 * 2)

@@ -90,11 +90,6 @@ async def test_stalled_redis_eval_is_bounded_by_admission_deadline(monkeypatch):
         await asyncio.gather(task, return_exceptions=True)
 
 
-# ============================================================================
-# 1. CACHE STAMPEDE TEST
-# ============================================================================
-
-
 class TestCacheStampede:
     """Verify that concurrent cache misses don't cause duplicate computations."""
 
@@ -106,16 +101,13 @@ class TestCacheStampede:
         cache = MultiLayerCache()
 
         with patch("app.cache.redis_client", None):
-            # Pre-populate
             await cache.set("test_key", "search", {"result": "hello"})
 
-            # Fire 50 concurrent reads
             async def read():
                 return await cache.get("test_key", "search")
 
             results = await asyncio.gather(*[read() for _ in range(50)])
 
-            # All 50 should return the same cached value
             for r in results:
                 assert r is not None
                 assert r["result"] == "hello"
@@ -127,25 +119,17 @@ class TestCacheStampede:
 
         cache = MultiLayerCache()
 
-        # Patch redis_client to None to test only in-memory layer
         with patch("app.cache.redis_client", None):
 
             async def write(i: int):
                 await cache.set(f"key_{i}", "search", {"value": i})
 
-            # Fire 50 concurrent writes
             await asyncio.gather(*[write(i) for i in range(50)])
 
-            # Verify all writes succeeded in memory
             for i in range(50):
                 result = await cache.get(f"key_{i}", "search")
                 assert result is not None
                 assert result["value"] == i
-
-
-# ============================================================================
-# 2. ADMIN ALERT RATE LIMITER UNDER LOAD
-# ============================================================================
 
 
 class TestAlertRateLimiterConcurrent:
@@ -167,19 +151,12 @@ class TestAlertRateLimiterConcurrent:
         mock_app.bot = AsyncMock()
 
         with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
-            # Fire 20 concurrent alerts
             tasks = [alert_admin(mock_app, f"Alert {i}", AlertSeverity.WARNING) for i in range(20)]
             await asyncio.gather(*tasks)
 
-        # Should have sent at most _MAX_ALERTS (5)
         assert mock_app.bot.send_message.call_count <= _MAX_ALERTS
 
         _alert_timestamps.clear()
-
-
-# ============================================================================
-# 3. STREAMING WRITER CONCURRENT WRITES
-# ============================================================================
 
 
 class TestTelegramRenderSessionWrites:
@@ -209,7 +186,6 @@ class TestTelegramRenderSessionWrites:
             min_chunk_size=1,
         ).open()
 
-        # Write 20 chunks as fast as possible
         for i in range(20):
             await session.append(f"chunk{i} ")
 
@@ -220,14 +196,8 @@ class TestTelegramRenderSessionWrites:
             actions=None,
         )
 
-        # The full text should contain all chunks
         for i in range(20):
             assert f"chunk{i}" in transport.edits[-1]
-
-
-# ============================================================================
-# 4. KEY RESOLUTION CONCURRENT ACCESS
-# ============================================================================
 
 
 class TestKeyResolutionConcurrent:
@@ -243,13 +213,11 @@ class TestKeyResolutionConcurrent:
         async def mock_get_key(model, excluded_hashes=None):
             nonlocal call_count
             call_count += 1
-            # Simulate slight async delay
             await asyncio.sleep(0.001)
             return {"api_key": f"key_{call_count}", "key_hash": f"hash_{call_count}"}
 
         use_case = AgentRequestUseCase()
 
-        # Fire 10 concurrent key resolutions
         tasks = [
             use_case._resolve_key_generic(
                 "gemini-3.1-flash-lite",
@@ -260,19 +228,12 @@ class TestKeyResolutionConcurrent:
         ]
         results = await asyncio.gather(*tasks)
 
-        # All should return a key (no None)
         for key, model, err in results:
             assert key is not None
             assert "api_key" in key
             assert err is None
 
-        # All 10 calls should have completed
         assert call_count == 10
-
-
-# ============================================================================
-# 5. ERROR PIPELINE CONCURRENT CLASSIFICATION
-# ============================================================================
 
 
 class TestErrorPipelineConcurrent:
@@ -294,15 +255,12 @@ class TestErrorPipelineConcurrent:
         async def classify_error(text):
             return is_error_message(text), is_retryable_error(text)
 
-        # Classify all 100 texts concurrently
         all_texts = tagged_errors + normal_texts
         results = await asyncio.gather(*[classify_error(t) for t in all_texts])
 
-        # First 50 should be errors + retryable
         for is_err, is_retry in results[:50]:
             assert is_err is True
             assert is_retry is True
 
-        # Last 50 should NOT be errors
         for is_err, is_retry in results[50:]:
             assert is_err is False

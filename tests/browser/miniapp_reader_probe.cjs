@@ -112,7 +112,6 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
           assert.equal(await page.locator('#mem-stats-text').textContent(), '1 / 500');
         }
       } else if (['reload_delete', 'navigate_delete', 'reload_failure'].includes(payload.scenario)) {
-        // Observe actual HTTP delivery independently from old-page fetch dispatch.
         if (payload.scenario === 'navigate_delete') {
           await page.goto('http://ui.test/departed');
           assert.equal(page.url(), 'http://ui.test/departed');

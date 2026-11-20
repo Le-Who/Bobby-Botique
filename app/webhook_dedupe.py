@@ -10,7 +10,7 @@ from collections.abc import Mapping
 
 try:
     from app.cache import redis_client
-except Exception:  # pragma: no cover - defensive fallback during partial imports
+except Exception:  # pragma: no cover
     redis_client = None
 
 logger = logging.getLogger(__name__)
@@ -67,8 +67,6 @@ class WebhookUpdateClaim:
                 logger.warning("Webhook reservation release unavailable type=%s", type(exc).__name__)
 
     async def confirm_enqueued(self) -> None:
-        # Queue acceptance is definitive even if the subsequent Redis ACK is
-        # lost. Retain that local evidence for this process's future retries.
         async with self.lock:
             now = time.monotonic()
             remembered = self.keys[-self.capacity :]

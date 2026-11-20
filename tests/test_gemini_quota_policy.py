@@ -76,7 +76,6 @@ async def test_unspecified_provider_429_keeps_pair_cooling_for_a_full_minute(mon
 @pytest.mark.parametrize("limit", [None, 1000])
 async def test_concurrent_internal_selections_spread_across_healthy_keys(monkeypatch, limit):
     manager = keys.DailyKeyManager("api_keys", "key_usage")
-    # All concurrent reads can see the same daily counts before reservations commit.
     rows = [{"key_hash": f"h{i}", "api_key": f"fake-{i}", "request_count": 0} for i in range(4)]
     monkeypatch.setattr(keys, "db_query", AsyncMock(return_value=rows))
     monkeypatch.setattr(keys, "safe_decrypt", lambda value: value)
@@ -120,7 +119,6 @@ async def test_confirmed_daily_exhaustion_is_not_deduplicated_as_transient(monke
     await manager.suspend_key("fake-hash", "gemini-test", "quota", "daily quota exhausted")
     assert query.await_count == 4
     assert query.await_args.args[1][2] > datetime.now(UTC)
-    # An older in-flight failure must not shorten a stronger active cooldown.
     assert "GREATEST(key_model_status.suspended_until, $3)" in query.await_args.args[0]
 
 

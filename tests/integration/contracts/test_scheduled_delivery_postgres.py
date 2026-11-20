@@ -139,7 +139,7 @@ async def test_safe_failures_retry_with_new_owner_sequence_and_bounded_budget(co
         started = await attempt(claim)
         assert await repo.finish_attempt(started["attempt_id"], claim["owner_token"], result)
         assert await repo.finish_delivery(claim, result)
-        assert await repo.claim_reminder(source) is None  # backoff
+        assert await repo.claim_reminder(source) is None
         async with contract_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE public.scheduled_deliveries SET retry_at=clock_timestamp()-interval '1 second' WHERE delivery_id=$1",
@@ -179,8 +179,6 @@ async def test_brief_retry_is_independent_of_initial_hour_and_keeps_exact_slot(c
         await conn.execute(
             "UPDATE public.brief_subscriptions SET preferred_hour=(preferred_hour+23)%24 WHERE id=$1", row["id"]
         )
-    # The initial execution has already been admitted in its preferred hour.
-    # Its next persisted retry remains eligible in a later scheduler hour.
     original = await repo.claim_brief(USER)
     assert original
     assert await repo.finish_delivery(original, DeliveryResult("failed", "preparation_failed", True))

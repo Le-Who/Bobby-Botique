@@ -155,8 +155,6 @@ def _repair_physical_seams(parts: list[SpeechSourcePart], hard_seams: set[int]) 
     for index in range(len(parts) - 1):
         left, right = parts[index], parts[index + 1]
         if left.reply_to_message_id not in hard_seams:
-            # Desktop trims the source separator on both sides of a natural
-            # cut. Restore one spoken separator, without inventing a paragraph.
             if left.text and right.text and not left.text[-1].isspace() and not right.text[0].isspace():
                 parts[index] = replace(left, text=left.text + " ")
             continue
@@ -306,8 +304,6 @@ async def _enqueue_speech_request(
     if shared_cleanup:
         from app.providers.tts import clean_speech_parts
 
-        # Formatting can cross a client cut. Clean one contiguous source while
-        # keeping surviving text attached to the original Telegram message.
         cleaned = clean_speech_parts([part.text for part in parts])
         parts = tuple(replace(part, text=text) for part, text in zip(parts, cleaned, strict=True))
     try:
@@ -369,8 +365,6 @@ async def _enqueue_speech_request(
             logger.exception("Direct speech source enqueue failed")
             key = "speech.unavailable"
         success = False
-        # Every physical source receives its own rejection, including parts
-        # following a partial queue admission. Never silently drop the tail.
         for source_id in (part.reply_to_message_id, *part.merged_source_ids):
             await _notify_source(
                 context.bot,

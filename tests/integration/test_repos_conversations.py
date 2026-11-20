@@ -13,8 +13,6 @@ class TestConversationCRUD:
     async def test_save_and_list_conversations(self, db_conn_with_user, test_user_id):
         ids = [await conversations.save_conversation(test_user_id, title) for title in ("Chat A", "Chat B", "Chat C")]
         assert all(conversation_id is not None for conversation_id in ids)
-        # CURRENT_TIMESTAMP is identical within the fixture transaction; give the
-        # list API distinct timestamps so its ordering and pagination are observable.
         await db_conn_with_user.executemany(
             "UPDATE conversations SET created_at = $1 WHERE id = $2",
             [(datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=index), cid) for index, cid in enumerate(ids)],

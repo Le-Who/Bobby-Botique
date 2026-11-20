@@ -1,4 +1,3 @@
-/* Revision-owned queue commands; server metadata only, never job payloads. */
 (() => {
   'use strict';
   const byId = id => document.getElementById(id);

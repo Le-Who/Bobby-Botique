@@ -39,7 +39,7 @@ async def checkpoint_until(predicate, owner):
 
 @pytest.fixture
 async def admission(monkeypatch):
-    uid = 1  # Synthetic configured administrator: real authorization has no SQL I/O.
+    uid = 1
     monkeypatch.setattr(state, "USER_STATES", state._UserStateStore(maxsize=8))
     monkeypatch.setattr(state, "_ACTIVE_TASKS", {})
     monkeypatch.setattr(state, "_LAST_BOT_MESSAGE", {})

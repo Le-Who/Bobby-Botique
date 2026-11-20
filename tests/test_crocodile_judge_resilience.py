@@ -138,8 +138,6 @@ async def test_selected_judge_sends_schema_to_google_sdk(monkeypatch):
     from app.providers import gemini
 
     async def generate_content(*, model, contents, config):
-        # A JSON-only request still permits missing fields. The actual API schema
-        # must constrain the result, rather than only asking for it in the prompt.
         text = VALID_RESPONSE if config.response_schema is not None else '{"score":0.6}'
         return SimpleNamespace(text=text)
 
@@ -164,8 +162,6 @@ async def test_selected_chain_reaches_reserve_after_primary_times_out(monkeypatc
         "resolve_process",
         AsyncMock(return_value=ResolvedPolicy((MODEL, "gemini-3.6-flash"), "sequential", True, 1)),
     )
-    # Scale the real deadlines together; the primary must expire before the
-    # enclosing chain, so the configured reserve can still answer.
     monkeypatch.setattr(
         daily_ai,
         "asyncio",

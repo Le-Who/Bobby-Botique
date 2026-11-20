@@ -153,8 +153,6 @@ async def generation_request_from_history(
         thinking_level=typed_thinking,
         grounding=grounding,
         workload=workload,
-        # Only an epoch captured by the original operation can authorize later
-        # private retention. Never resolve a new epoch after history assembly.
         allow_deferred=allow_deferred and privacy_epoch is not None and bool(operation_id),
         allow_key_race=allow_key_race,
         route_strategy=route_strategy,

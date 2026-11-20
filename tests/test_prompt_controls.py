@@ -87,7 +87,7 @@ def test_json_braces_allowed_and_roles_preserve_imported_dict_identity():
         )
         assert roles is registry_module.DEFAULT_ROLES
         assert roles["teacher"]["prompt"] == "New teacher"
-        assert old_role != "New teacher"  # Previously copied conversation prompt remains independent.
+        assert old_role != "New teacher"
         assert registry.get_task_prompt("prompt_engineer") == 'Return {"title": "name"}'
     finally:
         registry.apply_overrides({}, revision=2)

@@ -22,15 +22,13 @@ from app.db.migration_manifest import (
     migration_version,
 )
 
-# ── Result container ──────────────────────────────────────────────────────────
-
 
 class MigrationResult:
     """Returned by run_migrations() so callers can react to failures."""
 
     def __init__(self) -> None:
         self.applied: list[str] = []
-        self.failed: list[tuple[str, str]] = []  # (version, error_message)
+        self.failed: list[tuple[str, str]] = []
         self.pending_at_start: int = 0
 
     @property
@@ -41,9 +39,6 @@ class MigrationResult:
         return (
             f"MigrationResult(applied={self.applied}, failed={self.failed}, pending_at_start={self.pending_at_start})"
         )
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
 
 
 async def run_migrations(db_query, db_manager) -> MigrationResult:
@@ -58,10 +53,6 @@ async def run_migrations(db_query, db_manager) -> MigrationResult:
     """
     result = MigrationResult()
 
-    # A transaction-scoped lock is safe behind PgBouncer transaction pooling and
-    # serializes table initialization, version reads, migration DDL, and version
-    # inserts across replicas. Nested transactions below are asyncpg savepoints,
-    # preserving the historical per-file rollback boundary on one connection.
     try:
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext('gemaibotv2:schema_migrations'))")
@@ -90,8 +81,6 @@ async def run_migrations(db_query, db_manager) -> MigrationResult:
     if result.failed:
         return result
 
-    # 4. Legacy inline migrations (for environments without SQL files)
-    #    These are idempotent column-add checks that run on every startup.
     await _run_legacy_migrations(db_query)
 
     return result
@@ -176,9 +165,6 @@ async def _run_numbered_migrations_locked(locked_query, conn, result: MigrationR
             break
 
 
-# ── Legacy inline migrations ─────────────────────────────────────────────────
-
-
 async def _run_legacy_migrations(db_query):
     """Legacy inline migrations — idempotent column-add checks."""
     try:
@@ -218,7 +204,6 @@ async def _run_legacy_migrations(db_query):
         if "display_name" not in user_col_names:
             await db_query("ALTER TABLE public.users ADD COLUMN IF NOT EXISTS display_name TEXT;")
 
-        # Ensure chats table has ltm_enabled column
         chats_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='chats'")
         chats_col_names = {c["column_name"] for c in chats_columns}
         if "ltm_enabled" not in chats_col_names:

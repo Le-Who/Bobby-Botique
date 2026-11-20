@@ -63,7 +63,6 @@ class Histogram:
         consumed = 0
         for upper, size in zip(BUCKETS, self.counts, strict=True):
             if size and consumed + size >= target:
-                # Values above the last finite bucket are censored, never JSON Infinity.
                 return previous if math.isinf(upper) else previous + (upper - previous) * (target - consumed) / size
             consumed += size
             previous = upper

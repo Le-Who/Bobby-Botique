@@ -1,4 +1,3 @@
-# /app/handlers/msg_voice.py
 """Voice message handler — conversational voice flow.
 
 Downloads OGG from Telegram, transcribes via Gemini, shows transcript
@@ -32,8 +31,6 @@ from app.repos.memory_consent import capture_epoch
 from app.utils.metrics_middleware import mark_operation_failed
 from app.utils.tg_file import get_file_bytes
 
-# Overall timeout for the entire voice processing pipeline (download + transcribe + UI).
-# Safety net above the per-call resilience timeouts (30s × 2 retries × 3 keys = 180s max).
 _VOICE_OVERALL_TIMEOUT_S = 90.0
 
 _VOICE_ACTION_PATTERN = re.compile(
@@ -63,9 +60,8 @@ async def handle_voice_inline(
     if not voice:
         return
 
-    lang = "ru"  # default; refined after transcription
+    lang = "ru"
 
-    # Wrap entire voice flow in an overall timeout safety net
     try:
         await asyncio.wait_for(
             _process_voice_pipeline(placeholder_message, update, context, user_id, voice, lang),
@@ -133,7 +129,6 @@ async def _process_voice_pipeline_leased_impl(
     memory_epoch: int | None = None,
 ) -> None:
     """Core voice pipeline: download → transcribe → show UI / auto-route."""
-    # 1. Download OGG bytes from Telegram
     voice_file = await voice.get_file()
     voice_bytes = await get_file_bytes(context.bot, voice_file)
 
@@ -142,7 +137,6 @@ async def _process_voice_pipeline_leased_impl(
         await placeholder.edit_text(t("voice.download_failed", lang))
         return
 
-    # 2. Transcribe via multimodal processor (with retries + key fallback)
     from app.utils.multimodal_processor import transcribe_voice
 
     transcript, intent, ai_draw_prompt = await transcribe_voice(voice_bytes, mime_type="audio/ogg")
@@ -152,10 +146,8 @@ async def _process_voice_pipeline_leased_impl(
         await placeholder.edit_text(t("voice.transcription_failed", lang))
         return
 
-    # Refine language detection from actual transcript content
     lang = detect_language(transcript)
 
-    # 3b. Check for image generation intent (AI extracted or Regex fallback)
     _draw_prompt = None
     if intent == "draw" and ai_draw_prompt:
         _draw_prompt = ai_draw_prompt
@@ -191,12 +183,9 @@ async def _process_voice_pipeline_leased_impl(
         )
         return
 
-    # 3. Detect "Show & Tell" — voice is a Reply to a photo message
     attached_image = await _detect_show_and_tell(update)
 
-    # 4. Route based on intent
     if intent == "transcription":
-        # Intent: user asked for transcription → show clean transcript
         await _show_transcript_only(
             placeholder,
             transcript,
@@ -207,7 +196,6 @@ async def _process_voice_pipeline_leased_impl(
             chat_state=None,
         )
     elif intent == "search":
-        # Check if we should auto-route even for search
         from app.intent_router import try_direct_intent
 
         intent_result = await try_direct_intent(transcript)
@@ -232,7 +220,6 @@ async def _process_voice_pipeline_leased_impl(
                 context,
             )
         else:
-            # Intent: user wants to search the web → show with Deep Search button
             await _show_confirmation_ui(
                 placeholder,
                 transcript,
@@ -246,7 +233,6 @@ async def _process_voice_pipeline_leased_impl(
                 memory_epoch=memory_epoch,
             )
     else:
-        # Intent: conversational → check if auto-routing is applicable
         from app.intent_router import try_direct_intent
 
         intent_result = await try_direct_intent(transcript)
@@ -261,7 +247,6 @@ async def _process_voice_pipeline_leased_impl(
         should_auto = _should_auto_route(transcript)
 
         if should_auto and not attached_image:
-            # Low complexity + no attached media → auto-submit
             logging.info("Voice auto-route triggered for user %s (LOW complexity)", user_id)
             await _auto_route_to_chat(
                 placeholder,
@@ -273,7 +258,6 @@ async def _process_voice_pipeline_leased_impl(
                 context,
             )
         else:
-            # Show confirmation UI with standard buttons
             await _show_confirmation_ui(
                 placeholder,
                 transcript,
@@ -305,12 +289,9 @@ def _should_auto_route(transcript: str) -> bool:
     """
     text_lower = transcript.strip().lower()
 
-    # Heuristic 1: Explicit voice commands (> 10 chars to avoid false positives)
-    # Give some leeway for ASR padding/filler words at the beginning
     if _VOICE_ACTION_PATTERN.match(text_lower) and len(text_lower) > 8:
         return True
 
-    # Heuristic 2: Low-complexity classifier (greetings, confirmations)
     from app.thinking_classifier import classify_thinking_level
 
     level = classify_thinking_level(transcript)
@@ -328,11 +309,9 @@ async def _detect_show_and_tell(update: Update) -> dict | None:
         return None
 
     try:
-        # Use the largest available photo resolution
         photo = reply.photo[-1]
         file_unique_id = photo.file_unique_id
 
-        # Check the compressed image cache first (3 min TTL, covers recent photos)
         from app.utils.image_utils import _compressed_cache
 
         cached = _compressed_cache.get(file_unique_id)
@@ -344,7 +323,6 @@ async def _detect_show_and_tell(update: Update) -> dict | None:
                 "file_unique_id": file_unique_id,
             }
 
-        # Cache miss — download from Telegram (fast fallback)
         photo_file = await photo.get_file()
         photo_bytes = await get_file_bytes(update.message.reply_to_message.get_bot(), photo_file)
         if photo_bytes:
@@ -416,7 +394,6 @@ async def _show_confirmation_ui_owned(
     from app.handlers.cb_voice import _discard_voice_edit, _voice_operation_current
     from app.utils.formatting import TelegramFormatter
 
-    # Build display text
     show_tell_indicator = f"\n🖼️ _{t('voice.show_tell_detected', lang)}_" if attached_image else ""
     confirm_text = (
         f"{t('voice.transcript_label', lang)}\n\n"
@@ -426,9 +403,7 @@ async def _show_confirmation_ui_owned(
     )
     formatted, parse_mode = TelegramFormatter.format_text(confirm_text)
 
-    # Build keyboard based on intent
     if intent == "search":
-        # Primary action = Deep Search
         keyboard = [
             [InlineKeyboardButton(t("voice.btn_deep_search", lang), callback_data="voice:deep_search")],
             [
@@ -457,7 +432,6 @@ async def _show_confirmation_ui_owned(
     if not _voice_operation_current(_operation):
         return
 
-    # Store pending voice data for callback handler
     if context.user_data is not None:
         from app.voice_intent import detect_tts_intent
 
@@ -484,7 +458,6 @@ async def _show_confirmation_ui_owned(
             "reply_with_voice": voice_decision.explicit_tts,
             "_operation": _operation,
         }
-        # Attach "Show & Tell" image if present
         if attached_image:
             pending["attached_image"] = attached_image
 
@@ -512,25 +485,21 @@ async def _auto_route_to_image(
     from app.handlers.cmd_image import _build_main_menu, _escape_md, _set_draw_state
     from app.utils.formatting import TelegramFormatter
 
-    # 1. Update the canvas state with the detected prompt
     state = _set_draw_state(
         context,
         prompt=draw_prompt,
         awaiting_prompt=False,
     )
 
-    # 2. Render confirmation text
     auto_text = (
         f"{t('voice.transcript_label', lang)}\n_{transcript}_\n\n"
         f"🎨 **Подтвердите запрос к ИИ-художнику:**\n`{_escape_md(draw_prompt)}`"
     )
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
 
-    # 3. Apply canvas menu inline
     keyboard = _build_main_menu(state)
     await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=keyboard)
 
-    # 4. Background LTM storage (same as auto-route to chat)
     chat_state = await get_user_chat(user_id)
     memory_epoch = capture_epoch(chat_state)
     if memory_epoch is not None:
@@ -579,28 +548,22 @@ async def _auto_route_to_chat(
     from app.handlers.ai_chat import _handle_regular_chat
     from app.voice_intent import detect_tts_intent
 
-    # ⚡ Bolt Optimization: Fetch chat state, detect TTS intent, and send placeholder concurrently.
-    # Eliminates sequential I/O waits (Telegram HTTP + DB + LLM).
     new_placeholder, chat_state, voice_decision = await asyncio.gather(
         placeholder.reply_text("⏳ _Анализирую текст..._", parse_mode="Markdown"),
         get_user_chat(user_id),
         detect_tts_intent(user_text=transcript),
     )
 
-    # Run the chat pipeline inline (we already hold user_lock from caller)
     await _handle_regular_chat(
         new_placeholder,
         user_id,
         transcript,
         chat_state,
         reply_with_voice=voice_decision.explicit_tts,
-        # The media pipeline below stores the enriched transcript and file
-        # provenance.  Avoid a second plain-text LTM row for the same voice.
         capture_text_memory=False,
         user_parts=[f"{t('voice.history_marker', lang)}\n{transcript}"],
     )
 
-    # Background LTM storage
     memory_epoch = capture_epoch(chat_state)
     if memory_epoch is not None:
         _uid = user_id
@@ -644,7 +607,6 @@ async def _show_transcript_only(
     formatted, parse_mode = TelegramFormatter.format_text(display_text)
     await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
-    # Store in chat history
     if chat_state is None:
         chat_state = await get_user_chat(user_id)
 
@@ -656,7 +618,6 @@ async def _show_transcript_only(
     )
     await update_user_chat(user_id, chat_state)
 
-    # Store in long-term memory (background, non-blocking)
     memory_epoch = capture_epoch(chat_state)
     if memory_epoch is not None:
         _voice_uid = user_id
@@ -705,16 +666,12 @@ async def _auto_route_to_search(
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
     await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
-    # ⚡ Bolt Optimization: Fetch chat state and send placeholder concurrently.
     new_placeholder, chat_state = await asyncio.gather(
         placeholder.reply_text("⏳ _Ищу информацию в сети..._", parse_mode="Markdown"), get_user_chat(user_id)
     )
 
     user_message_with_marker = f"{t('voice.history_marker', lang)}\n{transcript}"
 
-    # ── Decide between Deep Research and Quick Search ──────────────────────
-    # Deep Research path: _handle_research_agent saves history internally.
-    # QnA path: we capture the answer and persist it ourselves.
     if getattr(chat_state, "is_deep_dive", False) or getattr(chat_state, "search_enabled", False):
         from app.handlers.ai_search import _handle_research_agent
 
@@ -736,10 +693,6 @@ async def _auto_route_to_search(
             user_id=user_id,
         )
 
-        # ── Persist QnA turn to chat history (Bug fix: QnA was not saved) ─
-        # _handle_qna_search uses a throwaway history dict for the API call;
-        # it does NOT write back to chat_state. We do it here so the user's
-        # QnA searches survive session restarts and feed into future LTM.
         if answer:
             chat_state.history.append({"role": "user", "parts": [user_message_with_marker]})
             chat_state.history.append({"role": "model", "parts": [answer]})

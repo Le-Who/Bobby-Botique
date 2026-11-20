@@ -41,8 +41,6 @@ async def test_resolve_key_generic_catches_decryption_error(use_case):
 @pytest.mark.asyncio
 async def test_resolve_key_generic_catches_decryption_error_in_fallback(use_case):
     """DecryptionError during fallback model resolution also returns 'decryption_failed'."""
-    # First call: returns None (no key for preferred model)
-    # Second call (fallback): raises DecryptionError
     get_key = AsyncMock(side_effect=[None, DecryptionError("bad secret")])
 
     key, model, resolution = await use_case._resolve_key_generic(
@@ -115,6 +113,5 @@ async def test_decryption_error_does_not_retry(use_case):
         provider_name="Gemini",
     )
 
-    # Only 1 call — immediately returned, no retries or fallback attempts
     assert get_key.await_count == 1
     assert resolution == "decryption_failed"

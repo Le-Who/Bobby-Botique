@@ -1,4 +1,3 @@
-# app/core/entities.py
 """Pydantic domain models for the DAO boundary.
 
 These models enforce fail-fast validation when mapping raw asyncpg rows
@@ -29,7 +28,7 @@ class ChatStateRow(BaseModel):
     JSONB payload returned by the composite SQL query.
     """
 
-    model_config = ConfigDict(extra="ignore")  # tolerate extra columns from wider SELECTs
+    model_config = ConfigDict(extra="ignore")
 
     model: str | None = None
     token_count: int = 0
@@ -70,7 +69,7 @@ class UserStateRow(BaseModel):
     document_mode: bool = False
     selected_document_id: int | None = None
     awaiting_custom_role_input: bool = False
-    generated_role: dict[str, Any] | None = None  # JSONB → dict
+    generated_role: dict[str, Any] | None = None
     last_custom_role_prompt: str | None = None
     generating_custom_role: bool = False
     last_sent_message_text: str | None = None

@@ -49,7 +49,6 @@ def held_provider(started, release, result):
         try:
             await release.wait()
         except asyncio.CancelledError:
-            # Also fence SDKs which finish despite cancellation.
             await release.wait()
         return result, 1
 

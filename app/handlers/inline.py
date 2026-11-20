@@ -78,10 +78,6 @@ def _get_lang(obj) -> str:
     return "ru" if user_lang and user_lang.startswith("ru") else "en"
 
 
-# ── Constants ────────────────────────────────────────────────────────────────
-
-
-# Primary inline model is now dynamic.
 async def get_inline_model() -> str:
     from app.config import settings
     from app.repos.settings_repo import get_global_setting
@@ -94,10 +90,8 @@ _INLINE_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 _INLINE_GROUNDING_MODEL = GEMINI_GROUNDING_MODEL
 _INLINE_GROUNDING_STANDBY_MODEL = GEMINI_GROUNDING_FALLBACK_MODEL
 
-# Outer timeout for the entire generation pipeline.
 _GEN_TIMEOUT_S = 12.0
 _GEN_SEARCH_TIMEOUT_S = 20.0
-# Seconds after which we edit the placeholder to show a progress message.
 _GEN_PROGRESS_AFTER_S = 4.0
 
 _TAROT_LITE_MODEL = "gemini-3.1-flash-lite"
@@ -116,27 +110,16 @@ _INLINE_SEARCH_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# ── Image intent detection ────────────────────────────────────────────────────
-# Matches a broad set of image-generation intents in both Russian and English.
-# Russian: нарисуй, нарисуй арт/картину, изобрази, сгенерируй (standalone),
-#          создай изображение/арт/аватар, сделай картинку, покажи рисунок.
-# English: draw, generate image, create image, make an image, imagine, portrait.
 _IMAGE_INTENT_RE = re.compile(
     r"(?:"
-    # Russian — draw / illustrate
     r"нарисуй|нарисуйте|нарисовать|рисуй"
     r"|изобрази|изобразите|изобразить"
-    # generate (standalone — no noun required; prompt follows)
     r"|сгенерируй|сгенерируйте|сгенерировать"
-    # create — only when followed by an image noun to avoid false-positives
-    # on "создай список", "создай напоминание", etc.
     r"|создай\s+(?:изображение|картинку|рисунок|арт|фото|картину|аватар|постер|обложку|мем)"
     r"|создайте\s+(?:изображение|картинку|рисунок|арт|фото|картину)"
     r"|создать\s+(?:изображение|картинку|рисунок|арт|фото|картину)"
-    # make / show
     r"|сделай\s+(?:изображение|картинку|рисунок|арт|фото|картину|аватар|мем)"
     r"|покажи\s+(?:изображение|картинку|рисунок)"
-    # English
     r"|draw|draws|drawing"
     r"|generate\s*(?:an?\s+)?(?:image|picture|photo|art|illustration|avatar|meme)"
     r"|create\s*(?:an?\s+)?(?:image|picture|photo|art|illustration|avatar|meme)"
@@ -146,45 +129,27 @@ _IMAGE_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# ── Smart-routing patterns ────────────────────────────────────────────────────
-# Quoted text in prompt → wan-image (renders text accurately on images)
 _QUOTED_TEXT_RE = re.compile(r'["\u00ab\u00bb\u201c\u201d].+?["\u00ab\u00bb\u201c\u201d]|\'.+?\'', re.DOTALL)
 
-# Image editing intent → klein (FLUX.2 Klein 4B, edit/inpaint capable).
-# INVARIANT: every branch MUST contain an image noun (фото/картинку/изображение/photo/image).
 _IMAGE_EDIT_INTENT_RE = re.compile(
     r"(?:"
-    # Branch A: Russian standard edit verbs + image noun directly after
     r"(?:измени|отредактируй|добавь|убери|замени|перекраси"
     r"|улучши|подправь|подтяни|ретушируй|обрежь|вырежи|удали)"
     r"\s+(?:фото|фотку|картинку|изображение)"
     r"|"
-    # Branch B: Russian background removal — verb + фон/задний план + image noun
-    # Natural order: "удали фон с фото", "сотри фон картинки"
     r"(?:удал[ий]|сотри|убери|вырежи)\s+(?:фон|задний\s+план)"
     r"\s+(?:(?:с|на|у|из|со)\s+)?(?:фото|фотки|картинки|картинку|изображени[яе])"
     r"|"
-    # Branch C: English standard edit verbs + image noun
     r"(?:edit|change|add|remove|replace|modify|inpaint"
     r"|enhance|retouch|touch.?up|crop|upscale)"
     r"\s+(?:фото|фотку|картинку|изображение|image|photo|picture|the\s+image|the\s+photo)"
     r"|"
-    # Branch D: English background removal + required image noun
     r"(?:remove|erase)\s+(?:the\s+)?background"
     r"\s+(?:from\s+)?(?:фото|фотки|картинки|image|photo|picture|the\s+image|the\s+photo)"
     r")",
     re.IGNORECASE,
 )
 
-# Image model variants surfaced in inline results.
-# Format: (result_id_prefix, display_title, pollinations_model)
-# Approved set (2026-04-13):
-#   ⚡ Турбо    — Z-Image Turbo (6B Flux + 2× upscaling), fast & crisp
-#   🤖 Умный   — GPT Image 1 Mini, prompt auto-enhanced by the model
-#   🎨 Арт     — Qwen Image Plus, stylized / avatar quality
-#   🅰️ Мем    — Wan 2.7 Image, accurate text rendering on images
-#   🔷 Изменить — FLUX.2 Klein 4B, auto-routed only (hidden from menu)
-# Format: (result_id, display_title, pollinations_model)
 _IMAGE_MODELS_IDS: list[tuple[str, str]] = [
     ("img_turbo", "zimage"),
     ("img_smart", "gptimage"),
@@ -202,16 +167,9 @@ def _get_image_models(lang: str) -> list[tuple[str, str, str]]:
     ]
 
 
-# Klein is NOT shown in the inline menu — it is auto-routed when user attaches
-# an image with an edit intent keyword.
 _IMG_KLEIN_ID = "img_edit"
 _IMG_KLEIN_MODEL = "klein"
 
-# ── Placeholder images — locally minted file_ids ──────────────────────────────
-# Instead of fetching external URLs (which the Local Bot API Server may fail to
-# reach), we generate small colored JPEGs via Pillow, upload them once to the
-# admin chat to obtain stable Telegram file_ids, then reuse those forever.
-# Mapping: result_id → (bg_rgb, fg_rgb, label)
 _PLACEHOLDER_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], str]] = {
     "img_turbo": ((13, 17, 23), (88, 166, 255), "⚡ Turbo"),
     "img_smart": ((13, 43, 13), (0, 230, 118), "🤖 Smart"),
@@ -220,33 +178,26 @@ _PLACEHOLDER_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int],
     _IMG_KLEIN_ID: ((26, 26, 13), (255, 224, 102), "🪄 Edit"),
 }
 
-# Lazily populated by _ensure_placeholders() on first inline query.
 _placeholder_file_ids: dict[str, str] = {}
 
 
-# Board intent prefix — compiled once; shared by query and result handlers.
 _BOARD_PREFIX_RE = re.compile(r"^(?:доска|board|трекер)\s*:\s*", re.IGNORECASE)
 
-# Crocodile intent prefix.
-# Matches: "крокодил:животные", "croc:animals", "крокодил:=пылесос", "croc:=vacuum"
 _CROC_PREFIX_RE = re.compile(
     r"^(?:крокодил|крок|croc|crocodile) ?:\s*",
     re.IGNORECASE,
 )
 
-# Horoscope intent prefix
 _HOROSCOPE_PREFIX_RE = re.compile(
     r"^(?:гороскоп|horoscope)[\s:]*",
     re.IGNORECASE,
 )
 
-# Tarot intent prefix
 _TAROT_PREFIX_RE = re.compile(
     r"^(?:таро|tarot|расклад)[\s:]*",
     re.IGNORECASE,
 )
 
-# Model emoji map reused in the generated image caption.
 _MODEL_EMOJI: dict[str, str] = {
     "zimage": "⚡",
     "seedream5": "🌱",
@@ -282,7 +233,6 @@ async def _ensure_placeholders(bot) -> None:
         return
 
     async with _placeholder_mint_lock:
-        # Double-check after acquiring lock (concurrent callers).
         if _placeholder_file_ids:
             return
 
@@ -290,7 +240,6 @@ async def _ensure_placeholders(bot) -> None:
 
         all_ids = [m[0] for m in _IMAGE_MODELS_IDS] + [_IMG_KLEIN_ID]
 
-        # ── Build all image buffers synchronously (CPU-bound, no I/O) ─────
         pending: list[tuple[str, io.BytesIO]] = []
         for result_id in all_ids:
             style = _PLACEHOLDER_STYLES.get(result_id)
@@ -298,14 +247,10 @@ async def _ensure_placeholders(bot) -> None:
                 continue
             bg_rgb, fg_rgb, label = style
 
-            # Generate a large colored JPEG with clearly visible centered text.
-            # 800×450 matches 16:9 aspect — looks clean in Telegram's grid.
             W, H = 800, 450
             img = Image.new("RGB", (W, H), bg_rgb)
             draw = ImageDraw.Draw(img)
 
-            # Load the largest available built-in font.
-            # load_default(size=N) requires Pillow ≥ 10.1; fall back for older builds.
             try:
                 font_large = ImageFont.load_default(size=56)
                 font_small = ImageFont.load_default(size=28)
@@ -315,19 +260,17 @@ async def _ensure_placeholders(bot) -> None:
 
             hint_line = "⏳ Генерация…"
 
-            # Measure and center both lines
             bb1 = draw.textbbox((0, 0), label, font=font_large)
             tw1, th1 = bb1[2] - bb1[0], bb1[3] - bb1[1]
             bb2 = draw.textbbox((0, 0), hint_line, font=font_small)
             tw2, th2 = bb2[2] - bb2[0], bb2[3] - bb2[1]
 
-            gap = 18  # pixels between lines
+            gap = 18
             total_h = th1 + gap + th2
             y1 = (H - total_h) / 2
             y2 = y1 + th1 + gap
 
             draw.text(((W - tw1) / 2, y1), label, fill=fg_rgb, font=font_large)
-            # Hint line in a slightly dimmer shade
             dim_fg = tuple(max(0, c - 60) for c in fg_rgb)
             draw.text(((W - tw2) / 2, y2), hint_line, fill=dim_fg, font=font_small)
 
@@ -336,10 +279,6 @@ async def _ensure_placeholders(bot) -> None:
             buf.seek(0)
             pending.append((result_id, buf))
 
-        # ⚡ Bolt: upload all placeholders to Telegram concurrently.
-        # Previously each send_photo + delete_message was awaited in sequence;
-        # now all N uploads happen in parallel, cutting first-inline-query
-        # initialisation from O(N × telegram_rtt) to O(telegram_rtt).
         async def _mint_one(result_id: str, buf: io.BytesIO) -> None:
             try:
                 msg = await bot.send_photo(
@@ -364,22 +303,17 @@ async def _ensure_placeholders(bot) -> None:
         )
 
 
-# ── Tabbed response store ──────────────────────────────────────────────────────
-# In-memory TTL dict for segmented responses. Keyed by inline_message_id.
-# Entries expire after _TABS_TTL_S. Capped at _TABS_STORE_MAX entries (FIFO eviction).
-_TABS_TTL_S = 600.0  # 10 minutes
+_TABS_TTL_S = 600.0
 _TABS_STORE_MAX = 256
-_inline_tabs_store: dict[str, dict] = {}  # {imid: {tldr, details, sources, created}}
+_inline_tabs_store: dict[str, dict] = {}
 
 
 def _tabs_store_put(inline_message_id: str, segments: dict) -> None:
     """Insert segmented response; evict oldest entries when cap is reached."""
     now = time.monotonic()
-    # Evict expired first
     expired = [k for k, v in _inline_tabs_store.items() if now - v["created"] > _TABS_TTL_S]
     for k in expired:
         _inline_tabs_store.pop(k, None)
-    # Enforce cap
     if len(_inline_tabs_store) >= _TABS_STORE_MAX:
         oldest = sorted(_inline_tabs_store, key=lambda k: _inline_tabs_store[k]["created"])
         for k in oldest[: len(oldest) // 4 + 1]:
@@ -398,10 +332,6 @@ def _tabs_store_get(inline_message_id: str) -> dict | None:
     return entry
 
 
-# ── User-facing inline UX strings ────────────────────────────────────────────
-# Kept as named constants for easy future extraction to i18n.
-
-
 def _placeholder_html(bot_name: str, lang: str) -> str:
     return t("inline.search_progress", lang, bot_name=_html.escape(bot_name))
 
@@ -418,20 +348,11 @@ def _get_loading_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton(t("inline.loading", lang), callback_data="inline_noop")]])
 
 
-# ── Retry store ──────────────────────────────────────────────────────────────
-# Keyed by short UUID, stores params needed to re-run _generate_and_edit_inline.
-# Entries auto-expire; we prune on every new insert. TTL = 5 minutes.
 _RETRY_TTL_S = 300.0
 _retry_store: dict[str, dict] = {}
 
-# Short marker inserted by the "Ещё вопрос" button. Telegram does not provide a
-# hidden payload for switch_inline_query_current_chat, so the token must ride in
-# the visible inline query and stay compact.
 _INLINE_FOLLOWUP_MARKER = "↪"
 _INLINE_FOLLOWUP_RE = re.compile(r"^↪\ufe0f?\s*([0-9a-fA-F]{16})\s*(.*)$", re.DOTALL)
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def _get_tones(lang: str) -> list[tuple[str, str, str]]:
@@ -465,9 +386,6 @@ def _parse_inline_followup_query(query: str) -> tuple[str, str] | None:
     if not match:
         return None
     return match.group(1).lower(), match.group(2).strip()
-
-
-# ── Public handlers ───────────────────────────────────────────────────────────
 
 
 def parse_inline_query(query: str) -> dict:
@@ -551,7 +469,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
     placeholder = _placeholder_html(bot_name, lang)
 
     if not user_query:
-        # Guide the user when no text has been typed yet.
         await query.answer(
             results=[
                 InlineQueryResultArticle(
@@ -626,7 +543,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
-    # Compatibility is final at query time and does not need chosen feedback.
     from app.natal.compatibility import (
         CompatibilityQueryError,
         build_sign_compatibility_html,
@@ -661,22 +577,17 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
         await query.answer([result], cache_time=0, is_personal=True)
         return
 
-    # ── Image intent ──────────────────────────────────────────────────────────
     parsed = parse_inline_query(user_query)
 
-    # ── Image intent ──────────────────────────────────────────────────────────
     if parsed.get("is_image_intent"):
         stripped_prompt = parsed["stripped_prompt"]
         has_quoted_text = parsed["has_quoted_text"]
         has_edit_intent = parsed["has_edit_intent"]
 
-        # ── Smart auto-routing ────────────────────────────────────────────────
         if has_edit_intent:
-            # Edit/inpaint mode: show only klein
             routed_models: list[tuple[str, str, str]] = [(_IMG_KLEIN_ID, t("inline.img_edit", lang), _IMG_KLEIN_MODEL)]
             auto_hint = t("inline.img_edit_hint", lang)
         elif has_quoted_text:
-            # Meme/text mode: wan-image first for text accuracy
             models_for_lang = _get_image_models(lang)
             meme_entry = next((m for m in models_for_lang if m[0] == "img_meme"), None)
             rest = [m for m in models_for_lang if m[0] != "img_meme"]
@@ -686,7 +597,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
             routed_models = _get_image_models(lang)
             auto_hint = ""
 
-        # Ensure placeholder file_ids are minted (lazy, once per process)
         await _ensure_placeholders(context.bot)
 
         results_img = [
@@ -712,7 +622,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
         await query.answer(results_img, cache_time=0, is_personal=True)
         return
 
-    # ── Board / Topic Aggregator intent ───────────────────────────────────────
     if _BOARD_PREFIX_RE.match(user_query):
         topic = _BOARD_PREFIX_RE.sub("", user_query).strip() or user_query
         board_init_html = t("inline.board_init", lang, topic=_html.escape(topic))
@@ -734,7 +643,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
         await query.answer(results_board, cache_time=0, is_personal=True)
         return
 
-    # ── Crocodile / Chadrades game intent ────────────────────────────────────────
     if _CROC_PREFIX_RE.match(user_query):
         arg = _CROC_PREFIX_RE.sub("", user_query).strip()
         is_custom = arg.startswith("=")
@@ -764,7 +672,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
         await query.answer(results_croc, cache_time=0, is_personal=True)
         return
 
-    # ── Horoscope intent ─────────────────────────────────────────────────────────
     if _HOROSCOPE_PREFIX_RE.match(user_query):
         arg = _HOROSCOPE_PREFIX_RE.sub("", user_query).strip()
         if not arg:
@@ -788,11 +695,9 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
         await query.answer(results_horo, cache_time=0, is_personal=True)
         return
 
-    # ── Tarot intent ────────────────────────────────────────────────────────────────────────────
     if _TAROT_PREFIX_RE.match(user_query):
-        # 1. Parse intent
         arg = _TAROT_PREFIX_RE.sub("", user_query).strip()
-        has_question = bool(arg)  # evaluate BEFORE applying fallback
+        has_question = bool(arg)
 
         if not arg:
             arg = "Без вопроса"
@@ -802,7 +707,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
         )
         results_tarot = []
 
-        # 1. Карта дня — только если значимый вопрос не введён
         if not has_question:
             results_tarot.append(
                 InlineQueryResultArticle(
@@ -817,7 +721,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
                 )
             )
 
-        # 2. Да или Нет — всегда в списке
         results_tarot.append(
             InlineQueryResultArticle(
                 id="tarot_yesno",
@@ -831,7 +734,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
             )
         )
 
-        # 3. Отношения
         results_tarot.append(
             InlineQueryResultArticle(
                 id="tarot_love",
@@ -845,7 +747,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
             )
         )
 
-        # 4. Классический (Прошлое / Настоящее / Будущее)
         results_tarot.append(
             InlineQueryResultArticle(
                 id="tarot",
@@ -859,7 +760,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
             )
         )
 
-        # 5. Кельтский крест
         results_tarot.append(
             InlineQueryResultArticle(
                 id="tarot_celtic",
@@ -873,7 +773,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
             )
         )
 
-        # 6. Мгновенное предсказание — без LLM, контент уже готов
         results_tarot.append(
             InlineQueryResultArticle(
                 id="tarot_fortune",
@@ -883,14 +782,12 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
                     message_text=_build_fortune_cookie_html(),
                     parse_mode="HTML",
                 ),
-                # No loading keyboard — content is already final
             )
         )
 
         await query.answer(results_tarot, cache_time=0, is_personal=True)
         return
 
-    # ── Default: 3 tone variants ──────────────────────────────────────────────
     results = [
         InlineQueryResultArticle(
             id=tone_id,
@@ -905,7 +802,6 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
         for tone_id, label, _ in _get_tones(lang)
     ]
 
-    # cache_time=0 ensures each new character triggers a fresh result list.
     await query.answer(results, cache_time=0, is_personal=True)
 
 
@@ -935,7 +831,6 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     result_id = chosen.result_id
     user_id = chosen.from_user.id if chosen.from_user else None
 
-    # ── Guard: empty / hint ───────────────────────────────────────────────────
     if not user_query or result_id == "hint":
         bot_name = context.bot.first_name or "бота"
         lang = _get_lang(chosen)
@@ -987,18 +882,14 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
         )
         return
 
-    # ── Image generation path ─────────────────────────────────────────────────
     if result_id.startswith("img_"):
-        # Include klein (auto-routed, hidden from menu) in model lookup
         all_known_models = _IMAGE_MODELS_IDS + [(_IMG_KLEIN_ID, _IMG_KLEIN_MODEL)]
         prov_model = next(
             (entry[1] for entry in all_known_models if entry[0] == result_id),
-            "zimage",  # fallback to Турбо
+            "zimage",
         )
-        # Extract clean prompt: remove intent verb prefix
         parsed = parse_inline_query(user_query)
         prompt = parsed.get("stripped_prompt", user_query)
-        # gptimage (Умный mode) supports prompt enhancement from Pollinations
         enhance_prompt = result_id == "img_smart"
         get_task_manager().submit(
             _generate_and_swap_media(
@@ -1012,7 +903,6 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
         )
         return
 
-    # ── Board / Topic Aggregator path ─────────────────────────────────────────
     if result_id == "board":
         topic = _BOARD_PREFIX_RE.sub("", user_query).strip() or user_query
         get_task_manager().submit(
@@ -1025,7 +915,6 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
         )
         return
 
-    # ── Crocodile game path ───────────────────────────────────────────────────────────
     if result_id == "croc":
         arg = _CROC_PREFIX_RE.sub("", user_query).strip()
         get_task_manager().submit(
@@ -1038,7 +927,6 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
         )
         return
 
-    # ── Horoscope path ───────────────────────────────────────────────────────────
     if result_id == "horoscope":
         get_task_manager().submit(
             _generate_horoscope_inline(
@@ -1050,10 +938,7 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
         )
         return
 
-    # ── Tarot paths ────────────────────────────────────────────────────────────────────────────
     if result_id.startswith("tarot"):
-        # Fortune cookie: content was baked into InputTextMessageContent at query time.
-        # The message is already final — no background generation needed.
         if result_id == "tarot_fortune":
             return
 
@@ -1068,7 +953,6 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
         )
         return
 
-    # ── Default text generation path ──────────────────────────────────────────
     get_task_manager().submit(
         _generate_and_edit_inline(
             bot=context.bot,
@@ -1078,9 +962,6 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
             user_id=user_id,
         )
     )
-
-
-# ── Photo Placeholder Swap ────────────────────────────────────────────────────
 
 
 async def _generate_and_swap_media(
@@ -1137,9 +1018,6 @@ async def _generate_and_swap_media_impl(
         image_bytes = result.images[0]
         caption = f"🎨 <b>{_html.escape(prompt[:200])}</b>\n<i>{_get_model_emoji(model)} {model} • {elapsed:.1f}s</i>"
 
-        # ── Step 1: Mint a file_id by uploading bytes to the admin chat ───
-        # edit_message_media with inline_message_id only accepts a file_id
-        # string or a URL — InputFile(BytesIO(...)) multipart is rejected.
         file_id: str | None = None
         temp_msg = None
         try:
@@ -1151,7 +1029,6 @@ async def _generate_and_swap_media_impl(
         except Exception as upload_err:
             logging.error("Inline image: admin-chat upload failed: %s", upload_err)
 
-        # Delete temp message silently — non-critical
         if temp_msg is not None:
             with contextlib.suppress(Exception):
                 await temp_msg.delete()
@@ -1165,7 +1042,6 @@ async def _generate_and_swap_media_impl(
                 )
             return False
 
-        # ── Step 2: Swap placeholder using the minted file_id ─────────────
         try:
             await bot.edit_message_media(
                 inline_message_id=inline_message_id,
@@ -1216,9 +1092,6 @@ async def _generate_and_swap_media_impl(
                 parse_mode="HTML",
             )
     return False
-
-
-# ── Board initialisation (async) ──────────────────────────────────────────────
 
 
 async def _init_board_async(
@@ -1276,11 +1149,9 @@ async def _init_croc_game_async(
     try:
         webapp_base = getattr(settings, "WEBAPP_BASE_URL", "").rstrip("/")
         if not webapp_base:
-            # Derive from WEBHOOK_URL env var if WEBAPP_BASE_URL not set
             webhook_url = os.environ.get("WEBHOOK_URL", "") or ""
             webapp_base = webhook_url.split("/webhook")[0].rstrip("/")
 
-        # ── Resolve word + mode ───────────────────────────────────────────────
         is_generated = False
         topic_id = ""
         sense_context: str | None = None
@@ -1317,7 +1188,6 @@ async def _init_croc_game_async(
                 from app.errors import ProviderOverloadError
 
                 if isinstance(_croc_exc, ProviderOverloadError):
-                    # Infrastructure overload — not the user's fault
                     await bot.edit_message_text(
                         inline_message_id=inline_message_id,
                         text=(
@@ -1329,7 +1199,6 @@ async def _init_croc_game_async(
                         reply_markup=InlineKeyboardMarkup([]),
                     )
                 elif isinstance(_croc_exc, ValueError):
-                    # Genuinely unintelligible category
                     await bot.edit_message_text(
                         inline_message_id=inline_message_id,
                         text=(
@@ -1344,7 +1213,6 @@ async def _init_croc_game_async(
                     raise _croc_exc
                 return
 
-        # ── Create game session ───────────────────────────────────────────────
         game = await create_game(
             target_word=word,
             category=category,
@@ -1355,9 +1223,6 @@ async def _init_croc_game_async(
             sense_context=sense_context,
         )
 
-        # ── Build WebApp URL for the guesser ─────────────────────────────────
-        # Prefer t.me deep link (no "Open this link?" dialog) when a Mini App
-        # short name is registered with @BotFather.  Falls back to direct URL.
         miniapp_short = getattr(settings, "MINIAPP_SHORT_NAME", "")
         bot_username = getattr(bot, "username", "") or ""
         if miniapp_short and bot_username:
@@ -1365,7 +1230,6 @@ async def _init_croc_game_async(
         else:
             game_url = f"{webapp_base}/webapp/game?game_id={game.game_id}"
 
-        # ── Edit inline message ───────────────────────────────────────────────
         if arg.startswith("="):
             status_text = (
                 "🐊 <b>Крокодил</b>\n"
@@ -1410,9 +1274,6 @@ async def _init_croc_game_async(
             )
         except Exception:
             pass
-
-
-# ── Fast 3-way Race Requests for inline generation ───────────────────────────
 
 
 async def _stream_inline_fast(
@@ -1493,7 +1354,6 @@ async def _first_ready_inline_answer(candidates: tuple[tuple[str, asyncio.Task],
     try:
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            # Prefer the configured model only when both finish in the same turn.
             for model, task in candidates:
                 if task not in done:
                     continue
@@ -1652,9 +1512,6 @@ async def _generate_inline_answer(
     return await _first_ready_inline_answer(((preferred_model, primary_task), (_INLINE_FALLBACK_MODEL, lite_task)))
 
 
-# ── Background generation ─────────────────────────────────────────────────────
-
-
 async def _generate_and_edit_inline(
     bot,
     inline_message_id: str,
@@ -1685,14 +1542,10 @@ async def _generate_and_edit_inline(
     tone_label = _tone_display(tone_id, lang)
     today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
-    # ── Check tabs setting early (needed for system prompt) ──────────────────
     tabs_enabled_now = await get_global_setting("inline_tabs_enabled", "off") == "on"
 
     _enable_web_search = _should_use_inline_web_search(user_query)
 
-    # ── Step 1: Build system prompt ───────────────────────────────────────────
-    # Search grounding is used only for fresh/current-data intents. General
-    # quick inline answers stay on flash-lite without a Search tool call.
     from app.runtime_settings.additional_prompts import render_additional_prompt
 
     _tabs_directive = render_additional_prompt("inline.tabs") if tabs_enabled_now else ""
@@ -1722,12 +1575,9 @@ async def _generate_and_edit_inline(
             )
     history.append({"role": "user", "parts": [user_query]})
 
-    # ── Step 2: Generate ───────────────────────────────────────────────────────
-    # Default route: flash-lite 2+1 race (Vertex + AI Studio keys).
-    # High-complexity route: configured primary + flash-lite hot standby.
     _gen_start = time.monotonic()
     final_answer: str | None = None
-    _grounding_sources: list[tuple[str, str]] = []  # Grounding Citations (url, title)
+    _grounding_sources: list[tuple[str, str]] = []
     _gen_timed_out = False
     _generation_timeout = _GEN_SEARCH_TIMEOUT_S if _enable_web_search else _GEN_TIMEOUT_S
     _progress_shown = False
@@ -1809,7 +1659,6 @@ async def _generate_and_edit_inline(
                 response_length=len(final_answer or ""),
             )
 
-    # Record metrics (we're already in a background task — awaiting is safe)
     if _gen_success:
         await metrics_collector.record_model_response(_response_model, user_id=user_id)
     await metrics_collector.record_request(
@@ -1819,22 +1668,18 @@ async def _generate_and_edit_inline(
         user_id=user_id,
     )
 
-    # ── Step 3: Format and edit inline message ────────────────────────────────
-    # A tagged error response (e.g. quota exhausted) is treated as a failure.
     _is_api_error = bool(final_answer and is_error_message(final_answer))
 
     if final_answer and final_answer.strip() and not _is_api_error:
-        # ── Tabs mode: parse XML segments and show TL;DR with navigation buttons ─
         if tabs_enabled_now:
             segments = _parse_xml_segments(final_answer)
-            if segments:  # successful parse — show tabbed UI
+            if segments:
                 _tabs_store_put(inline_message_id, segments)
                 header = f"<b>{_html.escape(tone_label)}</b> · <code>{_html.escape(user_query[:60])}</code>\n\n"
                 tldr_body = markdown_to_html(segments["tldr"])
                 formatted = header + tldr_body
                 if len(formatted) > 4000:
                     formatted = formatted[:3997] + "…"
-                # Show tldr first; Details/Sources buttons let user switch view.
                 has_sources = bool(segments.get("sources", "").strip())
                 btn_row = [InlineKeyboardButton("📑 Подробнее", callback_data=f"inl_tab:details:{inline_message_id}")]
                 if has_sources:
@@ -1842,11 +1687,10 @@ async def _generate_and_edit_inline(
                         InlineKeyboardButton("🔗 Источники", callback_data=f"inl_tab:sources:{inline_message_id}")
                     )
 
-                # Append continue buttons
                 continue_kb = await _build_continue_keyboard(
                     bot_username=getattr(bot, "username", "") or "",
                     user_query=user_query,
-                    final_answer=segments.get("details", final_answer),  # Use parsed details instead of raw XML
+                    final_answer=segments.get("details", final_answer),
                     tone_id=tone_id,
                     lang=lang,
                     user_id=user_id,
@@ -1870,16 +1714,12 @@ async def _generate_and_edit_inline(
                             reply_markup=reply_markup,
                             link_preview_options=LinkPreviewOptions(is_disabled=True),
                         )
-                return  # Done — tabs path handled
+                return
 
-        # ── Plain text path (tabs off or XML parse failed) ────────────────────
         header = f"<b>{_html.escape(tone_label)}</b> · <code>{_html.escape(user_query[:60])}</code>\n\n"
         body = markdown_to_html(final_answer.strip())
         formatted = header + body
 
-        # ── Grounding Citations — expandable source list ─────────────────────
-        # When Gemini Search Grounding returned real citations, append them as
-        # a collapsed blockquote so the user can verify sources without clutter.
         if _grounding_sources:
             from app.utils.ux_improvements import wrap_in_expandable_blockquote
 
@@ -1890,11 +1730,9 @@ async def _generate_and_edit_inline(
             )
             if src_lines:
                 citations_block = wrap_in_expandable_blockquote(src_lines, label="📎 Источники")
-                # Only append if it fits (leave margin for safety)
                 if len(formatted) + len(citations_block) + 2 <= 3900:
                     formatted += f"\n\n{citations_block}"
 
-        # Telegram inline messages: hard 4096-char limit.
         if len(formatted) > 4000:
             formatted = formatted[:3997] + "…"
     else:
@@ -1905,7 +1743,6 @@ async def _generate_and_edit_inline(
         else:
             formatted = t("inline.timeout_error", lang) if _gen_timed_out else t("inline.generation_error", lang)
 
-    # On failure, attach a retry button so the user can re-trigger generation.
     reply_markup_out: InlineKeyboardMarkup | None = None
     is_failure = not (final_answer and final_answer.strip()) or bool(final_answer and is_error_message(final_answer))
     if is_failure:
@@ -1941,7 +1778,6 @@ async def _generate_and_edit_inline(
             inline_message_id,
             edit_err,
         )
-        # Last-resort: strip HTML tags and retry as plain text.
         try:
             plain = strip_formatting(formatted)[:4000]
             await bot.edit_message_text(
@@ -1998,9 +1834,6 @@ async def _build_continue_keyboard(
         return InlineKeyboardMarkup([[btn_ask_more]])
 
 
-# ── Retry store helpers ───────────────────────────────────────────────────────
-
-
 def _store_retry_params(
     user_query: str,
     tone_id: str,
@@ -2012,9 +1845,6 @@ def _store_retry_params(
     for k in expired:
         _retry_store.pop(k, None)
 
-    # Hard cap: evict oldest entries if store grows beyond 500 items.
-    # Protects against memory accumulation under sustained inline traffic
-    # where inserts outpace the 5-minute TTL eviction.
     _STORE_MAX = 500
     if len(_retry_store) >= _STORE_MAX:
         oldest_keys = sorted(_retry_store, key=lambda k: _retry_store[k]["ts"])[: len(_retry_store) - _STORE_MAX + 100]
@@ -2031,16 +1861,13 @@ def _store_retry_params(
     return retry_id
 
 
-# ── Retry callback handler ────────────────────────────────────────────────────
-
-
 async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the 🔄 Повторить button press on failed inline messages."""
     query = update.callback_query
     if not query:
         return
 
-    await query.answer()  # dismiss the spinner immediately
+    await query.answer()
 
     data = query.data or ""
     if not data.startswith("inl_retry:"):
@@ -2050,7 +1877,6 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
     entry = _retry_store.pop(retry_id, None)
 
     if not entry or (time.monotonic() - entry["ts"] > _RETRY_TTL_S):
-        # Expired or unknown — edit with a polite message
         lang = _get_lang(query)
         with contextlib.suppress(Exception):
             await query.edit_message_text(
@@ -2062,7 +1888,6 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
     if not inline_message_id:
         return
 
-    # Show loading state
     lang = _get_lang(query)
     bot_name = context.bot.first_name or "Bot"
     with contextlib.suppress(Exception):
@@ -2072,7 +1897,6 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
             reply_markup=_get_loading_keyboard(lang),
         )
 
-    # Re-run generation as a background task
     from app.utils.background_tasks import get_task_manager
 
     get_task_manager().submit(
@@ -2085,9 +1909,6 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
             lang=lang,
         )
     )
-
-
-# ── XML segment parser (Tabbed Response UI) ───────────────────────────────────
 
 
 def _parse_xml_segments(text: str) -> dict | None:
@@ -2108,16 +1929,13 @@ def _parse_xml_segments(text: str) -> dict | None:
 
     tldr = _extract("tldr")
     if not tldr:
-        return None  # Model didn't follow XML format — graceful fallback
+        return None
 
     return {
         "tldr": tldr,
         "details": _extract("details"),
         "sources": _extract("sources"),
     }
-
-
-# ── Tab-switch callback handler ────────────────────────────────────────────────
 
 
 async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2133,12 +1951,11 @@ async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
 
     data = query.data or ""
-    # Pattern: inl_tab:<segment>:<inline_message_id>
     parts = data.split(":", 2)
     if len(parts) != 3 or parts[0] != "inl_tab":
         return
 
-    segment_key = parts[1]  # "tldr" | "details" | "sources"
+    segment_key = parts[1]
     inline_message_id = parts[2]
 
     if segment_key not in ("tldr", "details", "sources"):
@@ -2159,7 +1976,6 @@ async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT
     if len(body) > 4000:
         body = body[:3997] + "…"
 
-    # Build keyboard: show "back to TL;DR" for detail/source views; show full nav for tldr
     if segment_key == "tldr":
         has_sources = bool(segments.get("sources", "").strip())
         btn_row = [InlineKeyboardButton("📑 Подробнее", callback_data=f"inl_tab:details:{inline_message_id}")]
@@ -2173,7 +1989,7 @@ async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT
         if segments.get("sources", "").strip():
             btn_row.append(InlineKeyboardButton("🔗 Источники", callback_data=f"inl_tab:sources:{inline_message_id}"))
         reply_markup = InlineKeyboardMarkup([btn_row])
-    else:  # sources
+    else:
         reply_markup = InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔼 TL;DR", callback_data=f"inl_tab:tldr:{inline_message_id}")]]
         )
@@ -2191,12 +2007,6 @@ async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT
         logging.error("Inline tab switch: edit failed for %s: %s", inline_message_id, err)
 
 
-# -- Specialized Inline Generators (Tarot / Horoscope) --------------------------
-
-
-# ── Specialized Inline Generators (Tarot / Horoscope) ──────────────────────────
-
-
 async def _generate_horoscope_inline(
     bot,
     inline_message_id: str,
@@ -2210,7 +2020,6 @@ async def _generate_horoscope_inline(
 
     res = await _handle_horoscope(user_query)
 
-    # Try to extract sign from the query for the deep-link payload
     _SIGN_MAP = {
         "овен": "aries",
         "телец": "taurus",
@@ -2244,7 +2053,6 @@ async def _generate_horoscope_inline(
             detected_sign = slug
             break
 
-    # Build subscribe deep-link button
     try:
         bot_username = (getattr(bot, "username", None) or "").lstrip("@")
     except Exception:
@@ -2446,10 +2254,8 @@ async def _generate_tarot_inline(
                 ),
             )
 
-    # Resolve spread
     spread = SPREAD_BY_ID.get(spread_type, SpreadType.CLASSIC)
 
-    # Extract user question (strip "таро" prefix)
     arg = _TAROT_PREFIX_RE.sub("", user_query).strip()
     if not arg:
         arg = "Общий прогноз"
@@ -2490,7 +2296,6 @@ async def _generate_tarot_inline(
     system_instruction = _build_tarot_system_prompt(spread, tarot_ctx, arg)
     prompt = f"Вопрос к Таро: {arg}"
 
-    # Spread-specific header for the final message
     _HEADER_MAP = {
         SpreadType.CLASSIC: "🔮 Таро",
         SpreadType.DAILY: "🎤 Карта дня",
@@ -2537,7 +2342,6 @@ async def _generate_tarot_inline(
             await _edit_failure("пустой ответ от модели.")
         return
 
-    # Defense-in-depth: strip any surrogate codepoints the LLM may emit
     result = result.strip().encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
 
     if spread == SpreadType.DAILY and daily_card_key:
@@ -2557,7 +2361,6 @@ async def _generate_tarot_inline(
     cards_str = " • ".join(card_names)
     has_question = bool(arg and arg != "Общий прогноз")
 
-    # Only show card list for spreads with a meaningful question
     if spread == SpreadType.DAILY or spread == SpreadType.YES_NO:
         if has_question:
             final_text = f"{header}\n> {arg}\n_Выпала: {cards_str}_\n\n{result}"
@@ -2583,7 +2386,6 @@ async def _generate_tarot_inline(
             edit_e,
             html[:500],
         )
-        # Last resort: strip HTML and retry as plain text
         with contextlib.suppress(Exception):
             from app.utils.text_format import strip_formatting
 

@@ -92,12 +92,10 @@ def mock_boundaries():
         patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as m_update_chat,
         patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as m_resolve,
         patch("app.response_delivery.delivery.get_telegram_response_delivery") as get_delivery,
-        # Secondary dependencies that aren't the focus of this integration test
         patch("app.repos.memory.search_memories", new_callable=AsyncMock, return_value=[]),
         patch("app.handlers.ai_chat.update_stage", new_callable=AsyncMock),
         patch("app.metrics.role_conv_metrics.record_summarization", new_callable=AsyncMock),
     ):
-        # Default happy-path setup
         m_resolve.return_value = (
             {"api_key": "k", "key_hash": "h"},
             "gemini-3.1-flash-lite",
@@ -186,13 +184,11 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
     Risk Covered: System fails to persist AI reply or token counts.
     Level: Unit.
     """
-    # ── Arrange ──
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
     placeholder.chat.type = "private"
     placeholder.get_bot = MagicMock(return_value=None)
 
-    # Pre-existing complete turn
     chat_state = make_chat_state(
         history=[
             {"role": "user", "parts": ["Earlier question"]},
@@ -200,22 +196,17 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
         ]
     )
 
-    # ── Act ──
     await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
-    # ── Assert ──
     mock_boundaries["update_chat"].assert_awaited()
 
-    # We assert on the LAST call to update_chat (which finalizes the state)
     saved_state = mock_boundaries["update_chat"].call_args_list[-1][0][1]
 
-    # Verify Behavior: The generated response is appended to history
     assert len(saved_state.history) == 4, "Expected one real user/model turn"
     assert saved_state.history[-2]["role"] == "user"
     assert saved_state.history[-1]["role"] == "model"
     assert "Hello world!" in saved_state.history[-1]["parts"][0]
 
-    # Verify Behavior: Token limit correctly updated internally
     assert saved_state.token_count > 0, "Expected updated token count based on the assembled chunk"
 
 
@@ -554,22 +545,17 @@ async def test_exhausted_limits_shows_error_message(mock_boundaries):
     Risk Covered: System crashes or hangs when API keys are exhausted.
     Level: Unit.
     """
-    # ── Arrange ──
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
     chat_state = make_chat_state()
 
-    # Simulate routing failing to find any keys
     mock_boundaries["resolve"].return_value = (None, None, "all_exhausted")
 
-    # ── Act ──
     await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
-    # ── Assert ──
     placeholder.edit_text.assert_awaited_once()
     edited_text = placeholder.edit_text.call_args[0][0].lower()
     assert "исчерпаны" in edited_text or "лимит" in edited_text
-    # Ensure stream process was definitely bypassed
     mock_boundaries["delivery"].stream.assert_not_called()
 
 
@@ -601,7 +587,6 @@ async def test_model_exhausted_prompts_fallback_confirmation(mock_boundaries):
     Risk Covered: Silent failure when switching to fallback model instead of asking user.
     Level: Unit.
     """
-    # ── Arrange ──
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
     chat_state = make_chat_state()
@@ -611,15 +596,12 @@ async def test_model_exhausted_prompts_fallback_confirmation(mock_boundaries):
         "confirm_fallback",
     )
 
-    # ── Act ──
     await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
-    # ── Assert ──
     placeholder.edit_text.assert_awaited_once()
     call_args, call_kwargs = placeholder.edit_text.call_args
     assert "reply_markup" in call_kwargs, "Expected inline keyboard for fallback confirmation"
     assert "gemini-3.1-flash-lite" in call_args[0], "Expected fallback model name in prompt"
-    # Ensure stream was bypassed while we wait for user confirmation
     mock_boundaries["delivery"].stream.assert_not_called()
 
 
@@ -629,11 +611,9 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
     Risk Covered: Storing empty AI responses clutters history and causes errors on next turn.
     Level: Unit.
     """
-    # ── Arrange ──
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
 
-    # Starting history has a user message and a model reply
     chat_state = make_chat_state(
         history=[
             {"role": "user", "parts": ["Hi"]},
@@ -648,22 +628,13 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
     )
 
     with patch("app.errors.build_retry_and_roles_keyboard", return_value=None):
-        # ── Act ──
         await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
-    # ── Assert ──
-    # The handler should attempt to rollback the context assembler's injection
-    # In earlier behavior the ContextAssembler didn't append the user msg back to the state in place
-    # if it failed, but let's check what state was saved. As long as it hasn't stored an empty model text.
     mock_boundaries["update_chat"].assert_awaited()
-    # Find the state saved during the error branch
     saved_state = mock_boundaries["update_chat"].call_args_list[-1][0][1]
 
-    # Make sure we didn't save a model role without content, and rolled back the user message
-    # Since we started with user -> model, after adding a user message and failing, it should roll back to user -> model
     assert saved_state.history[-1]["role"] == "model", "Should roll back to the previous model message"
 
-    # The delivery boundary already rendered the failure exactly once.
     placeholder.edit_text.assert_not_awaited()
 
 
@@ -769,22 +740,18 @@ async def test_graph_triples_do_not_shadow_translation_function(mock_boundaries)
     Risk Covered: Memory-recall queries crash silently mid-response with UnboundLocalError.
     Level: Unit.
     """
-    # ── Arrange ──
     user_id = 456
     user_message = "Напомни-ка, как зовут мою жену?"
     placeholder = make_telegram_message(user_id=user_id)
     placeholder.chat.type = "private"
     placeholder.get_bot = MagicMock(return_value=None)
 
-    # LTM enabled so the graph injection code path is triggered
     chat_state = make_chat_state(ltm_enabled=True)
 
-    # Simulate LTM returning memories + both current and SUPERSEDED graph triples —
-    # exactly the inputs that caused the variable shadowing crash.
     mock_memories = [{"content": "wife: Anna", "similarity": 0.9}]
     mock_graph_triples = [
         "user HAS_WIFE Anna",
-        "[SUPERSEDED] user HAS_WIFE Maria",  # temporal triple — also triggers inner loop
+        "[SUPERSEDED] user HAS_WIFE Maria",
     ]
 
     with (
@@ -801,11 +768,8 @@ async def test_graph_triples_do_not_shadow_translation_function(mock_boundaries)
             return_value="<memories>wife: Anna</memories>",
         ),
     ):
-        # ── Act — must complete without raising UnboundLocalError ──
         await _handle_regular_chat(placeholder, user_id, user_message, chat_state)
 
-    # ── Assert ──
-    # Handler completed: state was persisted (not crashed before update_user_chat)
     mock_boundaries["update_chat"].assert_awaited()
     recall.assert_awaited_once_with(user_id, user_message, "k", limit=5, min_similarity=0.60)
     request = mock_boundaries["delivery"].stream.await_args.args[1]
@@ -815,7 +779,6 @@ async def test_graph_triples_do_not_shadow_translation_function(mock_boundaries)
     assert "<temporal_context>" in request.system_instruction
     assert "[SUPERSEDED] user HAS_WIFE Maria" in request.system_instruction
 
-    # The response was appended to history (not rolled back due to an error)
     saved_state = mock_boundaries["update_chat"].call_args_list[-1][0][1]
     assert saved_state.history[-1]["role"] == "model", (
         "Expected model response in history; crash before buttons would leave no model turn"

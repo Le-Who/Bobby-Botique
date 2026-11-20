@@ -9,14 +9,11 @@ from app.natal.private_work import capture_natal_epoch
 from app.web import quart_app
 from app.web_miniapp import _build_and_send_natal_report
 from tests.factories import make_valid_init_data
-from tests.test_natal_queued_access import queued_natal  # noqa: F401
+from tests.test_natal_queued_access import queued_natal
 
 
 @pytest.mark.asyncio
 async def test_queued_natal_report_cannot_cross_account_generation(monkeypatch, queued_natal):  # noqa: F811
-    # Simulate the database boundary only: account erasure/recreation preserves
-    # Telegram user ID and authorization, but allocates a different durable epoch.
-    # No raw birth values, real database, providers or Telegram calls are used.
     entered = asyncio.Event()
     release = asyncio.Event()
 
@@ -32,8 +29,6 @@ async def test_queued_natal_report_cannot_cross_account_generation(monkeypatch, 
     try:
         await asyncio.wait_for(entered.wait(), 1)
         queued_natal.privacy.epoch = 200
-        # Authorization is true again for the recreated account. A boolean
-        # access check alone cannot establish continuity with the old snapshot.
         queued_natal.access.return_value = True
         release.set()
         await task

@@ -5,10 +5,6 @@ import pytest
 from app.errors import InputSanitizationError
 from app.security import InputSanitizer, RateLimiter
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# InputSanitizer.sanitize_text
-# ═══════════════════════════════════════════════════════════════════════════════
-
 
 class TestSanitizeText:
     def setup_method(self):
@@ -44,11 +40,6 @@ class TestSanitizeText:
         assert "&gt;" in result or ">" not in result
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# InputSanitizer.sanitize_filename
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
 class TestSanitizeFilename:
     def setup_method(self):
         self.s = InputSanitizer()
@@ -75,11 +66,6 @@ class TestSanitizeFilename:
             self.s.sanitize_filename("a" * 500)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# InputSanitizer.validate_file_extension
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
 class TestValidateFileExtension:
     def setup_method(self):
         self.s = InputSanitizer()
@@ -101,11 +87,6 @@ class TestValidateFileExtension:
     def test_no_types_allows_all_known(self):
         """When allowed_types is None, all known extensions are allowed."""
         assert self.s.validate_file_extension("doc.pdf") is True
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# InputSanitizer.sanitize_url
-# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestSanitizeUrl:
@@ -145,11 +126,6 @@ class TestSanitizeUrl:
             self.s.sanitize_url("https://example.com/" + "a" * 10000)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# InputSanitizer.sanitize_query
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
 class TestSanitizeQuery:
     def setup_method(self):
         self.s = InputSanitizer()
@@ -171,11 +147,6 @@ class TestSanitizeQuery:
             self.s.sanitize_query("<script>evil()</script>")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# RateLimiter
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
 class TestRateLimiter:
     @pytest.mark.asyncio
     async def test_allows_requests_within_limit(self):
@@ -195,7 +166,6 @@ class TestRateLimiter:
         rl = RateLimiter(max_requests=2, window_seconds=60)
         await rl.check_rate_limit(user_id=1)
         await rl.check_rate_limit(user_id=1)
-        # User 1 is at limit, but user 2 should still be allowed
         assert await rl.check_rate_limit(user_id=2) is True
 
     @pytest.mark.asyncio

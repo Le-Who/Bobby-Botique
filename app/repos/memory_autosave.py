@@ -1,4 +1,3 @@
-# /app/repos/memory_autosave.py
 """Auto-save hooks for memory subsystem — MemPalace Safety Layer.
 
 Ensures state persistence through three mechanisms:
@@ -20,12 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Heartbeat Configuration ─────────────────────────────────────────────────
-HEARTBEAT_INTERVAL = 10  # Flush chat_state every N messages
+HEARTBEAT_INTERVAL = 10
 
-# ── In-flight tracking ──────────────────────────────────────────────────────
-# Set of asyncio.Tasks that are currently writing to LTM or extracting graph.
-# Populated by _store_memory_in_background via register_memory_task().
 _inflight_memory_tasks: set[asyncio.Task] = set()
 _inflight_memory_tasks_by_user: dict[int, set[asyncio.Task]] = {}
 
@@ -108,8 +103,6 @@ async def heartbeat_save(
 async def _cancel_and_await(tasks: list[asyncio.Task], *, cancellation: asyncio.CancelledError | None = None) -> None:
     """Retain caller ownership while children finish asynchronous cleanup."""
     for task in tasks:
-        # Another owner may already be awaiting this child's finalizer.
-        # A second cancellation would interrupt its asynchronous cleanup.
         if not task.done() and task.cancelling() == 0:
             task.cancel()
     completion = asyncio.gather(*tasks, return_exceptions=True)
@@ -117,8 +110,6 @@ async def _cancel_and_await(tasks: list[asyncio.Task], *, cancellation: asyncio.
         try:
             await asyncio.shield(completion)
         except asyncio.CancelledError as error:
-            # Further caller cancellation must not interrupt rollback/release
-            # in a child's finally. Propagate it after all children are done.
             cancellation = cancellation or error
     completion.result()
     if cancellation is not None:
@@ -157,7 +148,6 @@ async def pre_shutdown_compact(timeout: float = 8.0) -> int:
                 from app.repos.keys import get_available_gemini_key
                 from app.repos.memory_config import EMBEDDING_MODEL
 
-                # ⚡ maybe_consolidate fetches memories once for both check + consolidation
                 key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
                 if key_data:
                     result = await maybe_consolidate(uid, key_data["api_key"])

@@ -90,9 +90,6 @@ def test_request_id_is_not_inherited_by_new_thread():
     assert result["request_id"] is None
 
 
-# ── user context tests ──────────────────────────────────────────────────
-
-
 def test_set_user_context_stores_values():
     set_user_context(user_id=42, chat_id=100)
 

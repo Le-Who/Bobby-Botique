@@ -120,8 +120,6 @@ async def test_sdk_deadline_is_cooled_down_before_recovery(provider, monkeypatch
         return SimpleNamespace(text='{"ok":true}')
 
     provider.install(generate)
-    # Leave room for Windows timer resolution and captured logging after the
-    # first SDK call times out; this test checks recovery, not sub-100-ms latency.
     assert await daily_ai.generate_daily_text("prompt", "gemini-test", timeout=1.0) == '{"ok":true}'
     assert cancelled.is_set()
     assert provider.health.suspend_key.await_args.args[2] == "transient"
@@ -249,9 +247,6 @@ async def test_real_sdk_sends_one_http_request_per_reserved_attempt(provider, mo
 
     from app.providers import gemini
 
-    # Unlike Interactions, the pinned Models transport's retry_options=None
-    # means one HTTP attempt. Exercise the actual cached-client configuration:
-    # changing it to SDK retries would silently bypass per-dispatch admission.
     monkeypatch.setattr(gemini, "_gemini_clients_cache", {})
     monkeypatch.setattr(daily_ai, "_TEXT_RETRY_DELAY_S", 0.001)
     real_client = genai.Client

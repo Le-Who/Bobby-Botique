@@ -1,4 +1,3 @@
-/* Owner-emitted timing samples and process load; never infer missing values as 0. */
 (() => {
   'use strict';
   const byId = id => document.getElementById(id);

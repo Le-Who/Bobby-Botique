@@ -53,7 +53,6 @@
   --violet: #b9a5db;
 }
 
-/* Keep the page readable before the script runs, and if scripting is disabled. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-natal-theme]) {
     color-scheme: dark;

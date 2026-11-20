@@ -32,7 +32,6 @@ from app.utils.media_download import (
 
 logger = logging.getLogger(__name__)
 
-# FTA image models that can be selected by the user.
 FTA_IMAGE_MODELS: list[str] = [
     "vhr/gpt_image_2",
     "img/gpt-image-2",
@@ -41,7 +40,6 @@ FTA_IMAGE_MODELS: list[str] = [
 ]
 FTA_IMAGE_DEFAULT: str = "vhr/gpt_image_2"
 
-# Human-readable labels for UI
 FTA_IMAGE_MODEL_LABELS: dict[str, str] = {
     "vhr/gpt_image_2": "🎨 GPT Image 2 (vhr)",
     "img/gpt-image-2": "🖼️ GPT Image 2 (img)",
@@ -51,9 +49,8 @@ FTA_IMAGE_MODEL_LABELS: dict[str, str] = {
 
 _FTA_IMAGES_URL = "https://api.freetheai.xyz/v1/images/generations"
 _FTA_EDITS_URL = "https://api.freetheai.xyz/v1/images/edits"
-_FTA_IMAGE_TIMEOUT = 180.0  # generous — image models can be slow
+_FTA_IMAGE_TIMEOUT = 180.0
 
-# In-memory key health (same pattern as freetheai chat)
 _fta_img_key_health: dict[str, datetime] = {}
 _FTA_IMG_COOLDOWN = timedelta(seconds=60)
 
@@ -63,14 +60,13 @@ class FTAImageResult:
     """Result of a FreeTheAI image generation call."""
 
     success: bool
-    images: list[bytes] = field(default_factory=list)  # raw image bytes
+    images: list[bytes] = field(default_factory=list)
     error_message: str = ""
     model_used: str = ""
     key_suffix: str = ""
 
 
 def _suspend_fta_img_key(key_hash: str, cooldown: timedelta | None = None) -> None:
-    # With a single key, suspending it means total unavailability — skip.
     if len(get_freetheai_keys()) <= 1:
         logger.info("FTA Image: single-key mode, skipping suspension for %s…", key_hash[:8])
         return
@@ -94,7 +90,6 @@ def _pick_key() -> tuple[str, str] | None:
         if suspended_until and now < suspended_until:
             continue
         return key, kh
-    # All suspended — clean expired
     expired = [h for h, until in list(_fta_img_key_health.items()) if now >= until]
     for h in expired:
         del _fta_img_key_health[h]
@@ -260,7 +255,6 @@ class FreeTheAIImageProvider:
             items = data.get("data") or []
 
             for item in items:
-                # Response may have b64_json or url
                 b64 = item.get("b64_json")
                 if b64:
                     max_encoded_chars = ((MAX_IMAGE_DOWNLOAD_BYTES + 2) // 3) * 4
@@ -328,7 +322,6 @@ class FreeTheAIImageProvider:
             )
 
 
-# Module-level singleton
 _fta_image_provider: FreeTheAIImageProvider | None = None
 
 

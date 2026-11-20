@@ -35,7 +35,6 @@ from app.utils.image_utils import TaggedImage, save_image_as_bytes
 from app.utils.json_compat import json
 from app.utils.network import NetworkErrorHandler
 
-# Module-level httpx client for OpenRouter
 _openrouter_http_client: httpx.AsyncClient | None = NetworkErrorHandler.create_robust_http_client()
 
 
@@ -301,8 +300,6 @@ class OpenRouterProvider(BaseAIProvider):
             route=route,
         )
 
-    # ── Overridable template methods ─────────────────────────────────────────
-
     def _is_model_access_denied(self, status: int, response_text: str) -> bool:
         """Allow compatible endpoints to distinguish model access from bad auth."""
         return False
@@ -384,7 +381,6 @@ class OpenRouterProvider(BaseAIProvider):
                 transport="chat_completions",
             )
 
-            # Convert Gemini history → OpenAI format
             messages = await self._build_messages(history, system_instruction)
             if not messages:
                 msg = "Failed to create valid messages for OpenRouter API"
@@ -399,7 +395,6 @@ class OpenRouterProvider(BaseAIProvider):
                     model=model_name,
                 )
 
-            # Build request
             url = self._get_url()
             headers = self._get_headers()
             api_model = self._strip_model_prefix(model_name)
@@ -413,7 +408,6 @@ class OpenRouterProvider(BaseAIProvider):
                 api_model,
             )
 
-            # httpx has a 30s read timeout; this is a safety net
             try:
                 if _openrouter_http_client is None:
                     raise RuntimeError("OpenRouter HTTP client not initialized")
@@ -458,7 +452,6 @@ class OpenRouterProvider(BaseAIProvider):
                     model=model_name,
                 )
 
-            # Validate response structure
             if not response_data or "choices" not in response_data or not response_data["choices"]:
                 msg = "OpenRouter API returned invalid response"
                 logging.error(msg)
@@ -508,7 +501,6 @@ class OpenRouterProvider(BaseAIProvider):
                     token_count,
                 )
 
-            # Log success
             if start_time is not None:
                 api_logger.log_response(
                     "openrouter",
@@ -548,7 +540,6 @@ class OpenRouterProvider(BaseAIProvider):
             if content:
                 messages.append({"role": "system", "content": content})
 
-        # Pass 1: Collect tasks for concurrent processing
         image_tasks = []
         for item in history:
             if not isinstance(item, dict):
@@ -566,12 +557,10 @@ class OpenRouterProvider(BaseAIProvider):
                     image_data = bytes(part) if isinstance(part, bytearray) else part
                     image_tasks.append(save_image_as_bytes(image_data))
 
-        # Execute concurrently
         processed_images = []
         if image_tasks:
             processed_images = await asyncio.gather(*image_tasks, return_exceptions=True)
 
-        # Pass 2: Build actual objects
         img_idx = 0
         for item in history:
             if not isinstance(item, dict):
@@ -597,7 +586,7 @@ class OpenRouterProvider(BaseAIProvider):
                         img_bytes = res if not isinstance(res, BaseException) else None
 
                     if img_bytes:
-                        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
+                        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]
                         content_parts.append(
                             {
                                 "type": "image_url",
@@ -609,7 +598,7 @@ class OpenRouterProvider(BaseAIProvider):
                     img_idx += 1
                     img_bytes = res if not isinstance(res, BaseException) else None
                     if img_bytes:
-                        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
+                        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]
                         content_parts.append(
                             {
                                 "type": "image_url",
@@ -623,9 +612,9 @@ class OpenRouterProvider(BaseAIProvider):
 
             if content_parts:
                 if len(content_parts) == 1 and content_parts[0].get("type") == "text":
-                    messages.append({"role": role, "content": content_parts[0]["text"]})  # type: ignore[dict-item]  # content is str|list
+                    messages.append({"role": role, "content": content_parts[0]["text"]})  # type: ignore[dict-item]
                 else:
-                    messages.append({"role": role, "content": content_parts})  # type: ignore[dict-item]  # content is str|list
+                    messages.append({"role": role, "content": content_parts})  # type: ignore[dict-item]
 
         return messages
 

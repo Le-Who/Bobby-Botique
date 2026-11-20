@@ -1,4 +1,3 @@
-# /app/intent_router.py
 """Intent-based Direct Routing — bypass LLM for simple, deterministic queries.
 
 Detects weather and currency intents from user messages and routes them
@@ -21,8 +20,6 @@ import httpx
 from app.metrics import metrics_collector
 from app.observability.workload_events import start_workload_attempt
 from app.runtime_settings.additional_prompts import render_additional_prompt
-
-# ── Constants ────────────────────────────────────────────────────────────────
 
 _WEATHER_PATTERNS = re.compile(
     r"(?:погод[аеуыю]|temperature|weather|прогноз\s*погод)"
@@ -79,8 +76,6 @@ _DATE_POSLEZAVTRA_RE = re.compile(r"\b(?:послезавтра)\b", re.IGNORECA
 _DATE_VCHERA_RE = re.compile(r"\b(?:вчера|yesterday)\b", re.IGNORECASE)
 _NEXT_THREE_DAYS_RE = re.compile(r"следующ.*(три|3)\s*дн", re.IGNORECASE)
 
-# Colloquial/implicit weather queries — ONLY used when message is ≤12 words.
-# City extraction in _handle_weather acts as a second guard (no city → None → LLM).
 _WEATHER_COLLOQUIAL_RE = re.compile(
     r"(?:жарко|холодн[оа]?|тепло|морозн[оа]?|дождь|дождит|осадк[иа]|снегопад"
     r"|облачно|ясно|солнечн|туман"
@@ -97,24 +92,16 @@ _CURRENCY_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# Colloquial/conversational currency queries — gated by ≤12 words.
-# Exchange verbs REQUIRE a currency noun immediately after to avoid
-# false positives like "поменяй язык", "обменяй файлы".
-# _extract_currency_pair acts as second guard: no pair found → None → LLM.
 _CURRENCY_NOUNS = r"(?:доллар|евро|рубл|тенге|биткоин|bitcoin|btc|eth|sol|ton|usd|eur|rub|gbp|jpy|cny|валют)"
 _CURRENCY_COLLOQUIAL_RE = re.compile(
-    # Exchange verbs + mandatory currency noun
     r"(?:(?:конвертир(?:уй|овать)?|обменя[йт]|поменя[йт])\s+(?:\d+\s+)?" + _CURRENCY_NOUNS + r")"
-    # "перевод валют" — already specific
     r"|\bперевод\s+валют"
-    # Conversational "как там доллар?", "что с биткоином?"
     r"|\bкак\s+(?:там\s+)?(?:доллар|евро|рубл|биткоин)"
     r"|\bчто\s+(?:там\s+)?(?:с\s+)?(?:доллар|евро|биткоин|рубл)",
     re.IGNORECASE,
 )
 _CURRENCY_COLLOQUIAL_MAX_WORDS = 12
 
-# Crypto tickers / aliases — if any of these appear, route to CoinGecko
 _CRYPTO_ALIASES: dict[str, str] = {
     "биткоин": "bitcoin",
     "bitcoin": "bitcoin",
@@ -129,8 +116,6 @@ _CRYPTO_ALIASES: dict[str, str] = {
     "ton": "the-open-network",
 }
 
-# Performance: human-readable names for CoinGecko IDs — hoisted to module level
-# so the dict is never re-constructed on every _handle_crypto() call.
 _COIN_NAMES: dict[str, str] = {
     "bitcoin": "Bitcoin",
     "ethereum": "Ethereum",
@@ -138,7 +123,6 @@ _COIN_NAMES: dict[str, str] = {
     "the-open-network": "TON",
 }
 
-# CoinGecko vs_currencies we support
 _COINGECKO_FIAT_MAP: dict[str, str] = {
     "USD": "usd",
     "RUB": "rub",
@@ -148,7 +132,6 @@ _COINGECKO_FIAT_MAP: dict[str, str] = {
 }
 
 _CURRENCY_CODES = {
-    # Russian aliases → ISO 4217
     "доллар": "USD",
     "доллара": "USD",
     "доллару": "USD",
@@ -201,7 +184,6 @@ _CURRENCY_CODES = {
     "сомов": "KGS",
     "сум": "UZS",
     "сумов": "UZS",
-    # ISO codes (pass-through)
     "usd": "USD",
     "eur": "EUR",
     "rub": "RUB",
@@ -216,9 +198,6 @@ _CURRENCY_CODES = {
     "chf": "CHF",
 }
 
-# Performance: pre-sort aliases longest-first once at module load.
-# _extract_currency_pair() previously called sorted(..., key=len, reverse=True)
-# on every fiat query. With ~22 keys that's O(n log n) redundant work per call.
 _SORTED_CURRENCY_ALIASES: list[tuple[str, str]] = sorted(
     _CURRENCY_CODES.items(), key=lambda kv: len(kv[0]), reverse=True
 )
@@ -227,22 +206,15 @@ _CURRENCY_ALIAS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 _CURRENCY_AMOUNT_RE = re.compile(r"(?<!\w)(\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?)(?!\w)")
 
-# Performance: pre-compiled at module level — _handle_weather is called on every
-# weather intent match (per-message). Inline re.search() inside the function body
-# would re-compile this pattern on every call (2–4 µs/compile + cache lookup overhead).
-# Hoisting eliminates that entirely.
 _WEATHER_FUTURE_RE = re.compile(
     r"(завтра|послезавтра|недел|дней|дня|выходны|tomorrow|week|days"
     r"|вечер|утр[ао]|ноч[ью]|час|hour|night|evening|morning)",
     re.IGNORECASE,
 )
 
-# Pattern to extract a city candidate from weather queries.
 _CITY_EXTRACT_PATTERN = re.compile(
-    # Branch A: "погода [сегодня|завтра|сейчас] [в] <город>" — preposition is optional here
     r"(?:погод[ауеыя]\s+(?:(?:сейчас|сегодня|завтра)\s+)?(?:в\s+|во\s+)?"
     r"|weather\s+(?:(?:today|tomorrow|now)\s+)?(?:in\s+|for\s+)?"
-    # Branch B: bare "в/во" preposition anywhere in the sentence
     r"|(?<![а-яёa-z])в\s+|(?<![а-яёa-z])во\s+)"
     r"([А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*(?:\s[А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*)?)(?=[,?!.\s]|$)",
     re.IGNORECASE,
@@ -267,10 +239,6 @@ _TRAILING_TEMPORAL_WORDS = frozenset(
     }
 )
 
-# Performance: hoisted from _is_complex_query() body — eliminates a list allocation
-# on every call (fired for every message that enters intent routing).
-# frozenset membership test is O(1) vs list's O(n); the allocation savings alone
-# are the primary win since any() short-circuits on the first match anyway.
 _COMPLEX_PHRASES: frozenset[str] = frozenset(
     {
         "как одеться",
@@ -284,10 +252,6 @@ _COMPLEX_PHRASES: frozenset[str] = frozenset(
     }
 )
 
-# A card is safe only for an affirmative, standalone request. Conservative
-# fallback leaves negation, quoted material and additional authored tasks to chat.
-# Single quote pairs need word boundaries: Ukrainian word-internal apostrophes
-# (including two in one sentence) do not delimit quoted command data.
 _NON_DIRECT_REQUEST_RE = re.compile(
     r"\b(?:не|not|don't|do\s+not)\b|[«»\"“”`]|(?:^|\n)\s*>"
     r"|(?<!\w)'[^\n]*?'(?!\w)|(?<!\w)‘[^\n]*?’(?!\w)",
@@ -307,7 +271,6 @@ def _clean_candidate(raw: str) -> str:
     return " ".join(words)
 
 
-# Shared HTTP client for lightweight API calls
 _http: httpx.AsyncClient | None = None
 
 
@@ -324,9 +287,6 @@ async def close_http_client() -> None:
     if _http is not None and not _http.is_closed:
         await _http.aclose()
         _http = None
-
-
-# ── Public API ───────────────────────────────────────────────────────────────
 
 
 class IntentResult:
@@ -351,17 +311,13 @@ class DirectIntentDecision:
 
 def _is_complex_query(text: str, word_count: int) -> bool:
     """Determine if a query is complex and should NOT short-circuit to API cards."""
-    # 1. Length heuristic (long text or article)
     if word_count > 20:
         return True
 
-    # 2. Multiple sentences/questions
     sentence_enders = text.count("?") + text.count("!") + text.count(".")
     if sentence_enders > 1:
         return True
 
-    # 3. Conversational / advisory keywords — checked against module-level frozenset
-    # to avoid per-call list allocation and enable O(1) per-phrase hash lookup.
     lower_text = text.lower()
     return any(phrase in lower_text for phrase in _COMPLEX_PHRASES)
 
@@ -390,20 +346,16 @@ async def resolve_direct_intent(message_text: str) -> DirectIntentDecision:
             return DirectIntentDecision("llm", "complex_context", res)
         return DirectIntentDecision(route, "direct_resolved", res)
 
-    # Try weather first (more common)
     if _WEATHER_PATTERNS.search(text):
         result = await _handle_weather(text)
         if result:
             return _prepare_result(result, "weather")
 
-    # Colloquial weather — only for short messages to avoid false positives
-    # (e.g. "жарко спорить о политике" has 5 words but no city → falls through safely)
     if word_count <= _WEATHER_COLLOQUIAL_MAX_WORDS and _WEATHER_COLLOQUIAL_RE.search(text):
         result = await _handle_weather(text)
         if result:
             return _prepare_result(result, "weather")
 
-    # Then currency / crypto
     if _CURRENCY_PATTERNS.search(text):
         result = await _handle_currency(text)
         if result:
@@ -411,7 +363,6 @@ async def resolve_direct_intent(message_text: str) -> DirectIntentDecision:
                 result, "crypto" if any(alias in text.lower() for alias in _CRYPTO_ALIASES) else "currency"
             )
 
-    # Colloquial currency — only for short messages; currency-pair extraction is the inner guard
     if word_count <= _CURRENCY_COLLOQUIAL_MAX_WORDS and _CURRENCY_COLLOQUIAL_RE.search(text):
         result = await _handle_currency(text)
         if result:
@@ -419,7 +370,6 @@ async def resolve_direct_intent(message_text: str) -> DirectIntentDecision:
                 result, "crypto" if any(alias in text.lower() for alias in _CRYPTO_ALIASES) else "currency"
             )
 
-    # Horoscope
     if _HOROSCOPE_PATTERNS.search(text):
         result = await _handle_horoscope(text)
         if result:
@@ -435,31 +385,23 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
     return (await resolve_direct_intent(message_text)).result
 
 
-# ── Weather ───────────────────────────────────────────────────────────────────
-
-
 async def _handle_weather(text: str) -> IntentResult | None:
     """Extract city and fetch current weather.
 
     Primary:  WeatherAPI.com (1 request, autogeocode, Russian conditions text)
     Fallback: Open-Meteo (2 requests: geocode + forecast)
     """
-    # Bail out for future/multi-day forecasts — LLM with Grounding handles these better.
-    # PERF: uses module-level _WEATHER_FUTURE_RE (pre-compiled once at import) —
-    # avoids re-compiling on every weather intent call.
     if _WEATHER_FUTURE_RE.search(text):
         return None
 
-    # Extract city candidate
     m = _CITY_EXTRACT_PATTERN.search(text)
     city_candidate = _clean_candidate(m.group(1)) if m else ""
 
     if not city_candidate or len(city_candidate) < 2:
-        return None  # Can't determine city → fall back to LLM
+        return None
 
     from app.repos.provider_keys import get_provider_key
 
-    # ── Primary: WeatherAPI.com ───────────────────────────────────────────────
     weather_key = await get_provider_key("weather")
     if weather_key:
         result = await _fetch_weatherapi(weather_key, city_candidate)
@@ -467,7 +409,6 @@ async def _handle_weather(text: str) -> IntentResult | None:
             return result
         logging.info("WeatherAPI.com failed; trying Open-Meteo fallback")
 
-    # ── Fallback: Open-Meteo (original implementation) ───────────────────────
     return await _fetch_open_meteo(city_candidate)
 
 
@@ -501,7 +442,6 @@ async def _fetch_weatherapi(api_key: str, city: str) -> IntentResult | None:
         feels = cur["feelslike_c"]
         humidity = cur["humidity"]
         wind = cur["wind_kph"]
-        # Pick a single summary emoji from the condition icon code
         is_day = cur.get("is_day", 1)
         code = cur["condition"]["code"]
         emoji = _weatherapi_code_to_emoji(code, is_day)
@@ -644,14 +584,10 @@ def _wmo_to_emoji(code: int) -> str:
     return "🌥 Облачно"
 
 
-# ── Currency & Crypto ─────────────────────────────────────────────────────────
-
-
 async def _handle_currency(text: str) -> IntentResult | None:
     """Route to CoinGecko (crypto) or ExchangeRate-API/Frankfurter (fiat)."""
     lower = text.lower()
 
-    # ── 1. Detect crypto intent first ────────────────────────────────────────
     crypto_id: str | None = None
     for alias, cg_id in _CRYPTO_ALIASES.items():
         if alias in lower:
@@ -661,7 +597,6 @@ async def _handle_currency(text: str) -> IntentResult | None:
     if crypto_id:
         return await _handle_crypto(crypto_id, text)
 
-    # ── 2. Fiat path ──────────────────────────────────────────────────────────
     return await _handle_fiat_currency(text)
 
 
@@ -682,7 +617,7 @@ async def _handle_crypto(coingecko_id: str, text: str) -> IntentResult | None:
         data = resp.json()
     except Exception as exc:
         logging.warning("CoinGecko API failed for %s (%s)", coingecko_id, type(exc).__name__)
-        return None  # Fall back to LLM
+        return None
 
     coin_data = data.get(coingecko_id, {})
     if not coin_data:
@@ -692,7 +627,6 @@ async def _handle_crypto(coingecko_id: str, text: str) -> IntentResult | None:
     rub_price: float = coin_data.get("rub", 0)
     change_24h: float = coin_data.get("usd_24h_change", 0)
 
-    # Performance: _COIN_NAMES is a module-level constant — no dict allocation here.
     coin_name = _COIN_NAMES.get(coingecko_id, coingecko_id.title())
 
     change_sign = "+" if change_24h >= 0 else ""
@@ -723,7 +657,6 @@ async def _handle_fiat_currency(text: str) -> IntentResult | None:
 
     from app.repos.provider_keys import get_provider_key
 
-    # ── Primary: ExchangeRate-API ─────────────────────────────────────────────
     exchange_key = await get_provider_key("exchange")
     if exchange_key:
         result = await _fetch_exchangerate_api(exchange_key, base, target, amount)
@@ -731,10 +664,9 @@ async def _handle_fiat_currency(text: str) -> IntentResult | None:
             return result
         logging.info("ExchangeRate-API failed for %s→%s, trying Frankfurter", base, target)
 
-    # ── Fallback: Frankfurter (no RUB) ────────────────────────────────────────
     unsupported = {"RUB", "KZT", "UAH", "KGS", "UZS"}
     if base in unsupported or target in unsupported:
-        return None  # Frankfurter doesn't support these — let LLM handle via Grounding
+        return None
 
     return await _fetch_frankfurter(base, target, amount)
 
@@ -859,8 +791,6 @@ def _extract_currency_pair(text: str) -> tuple[str | None, str | None]:
     lower = text.lower()
     first_position_by_code: dict[str, int] = {}
 
-    # Alias length prevents overlapping aliases, but conversion direction must
-    # follow the sentence rather than the alias table's iteration order.
     for pattern, code in _CURRENCY_ALIAS_PATTERNS:
         match = pattern.search(lower)
         if match is not None:
@@ -873,7 +803,6 @@ def _extract_currency_pair(text: str) -> tuple[str | None, str | None]:
     if len(found) >= 2:
         return found[0], found[1]
     if len(found) == 1:
-        # Single currency mentioned — default to USD base or RUB target
         single = found[0]
         if single == "USD" or single == "RUB":
             return "USD", "RUB"
@@ -930,13 +859,11 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     """Detect zodiac sign and target day, then generate an astrology-informed response."""
     lower_text = text.lower()
 
-    # 1. Detect zodiac signs
     detected_signs = []
     for sign, pattern in _ZODIAC_MAPPING.items():
         if pattern.search(lower_text):
             detected_signs.append(sign)
 
-    # 2. Parse target day
     if _NEXT_THREE_DAYS_RE.search(lower_text):
         day_ru = "на следующие три дня"
     elif _DATE_POSLEZAVTRA_RE.search(lower_text):
@@ -960,7 +887,6 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
 
     from app.astro import get_astro_context
 
-    # Calculate target date for ephemeris based on day_ru
     dt = datetime.now(UTC)
     if day_ru == "завтра":
         dt += timedelta(days=1)
@@ -969,7 +895,6 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     elif day_ru == "вчера":
         dt -= timedelta(days=1)
     elif day_ru == "на следующие три дня":
-        # Let's base the transit context on tomorrow as the midpoint
         dt += timedelta(days=1)
 
     astro_context = get_astro_context(dt)

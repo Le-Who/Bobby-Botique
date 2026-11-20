@@ -20,7 +20,6 @@ _publish_telegraph = service._try_publish_telegraph
 @pytest.fixture
 def queued_natal(monkeypatch):
     privacy = install_natal_privacy_database(monkeypatch)
-    # Boundary tests need report shape, never personal birth values.
     birth = SimpleNamespace(report_type=ReportType.NATAL, language="ru", focus="general")
     chart = ChartData(
         input_quality=InputQuality(

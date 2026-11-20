@@ -52,11 +52,7 @@ from app.providers.typed_payloads import gemini_contents
 from app.utils.api_logger import api_logger
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
 
-# Global cache for genai.Client instances to reuse connection pools (TLS/TCP)
-# Key: API Key (string), Value: genai.Client
 _gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
-# Eviction must not close a client still borrowed by an active request. Keep
-# weak shutdown ownership without extending that client's normal SDK lifetime.
 _gemini_clients_by_id: WeakValueDictionary[int, genai.Client] = WeakValueDictionary()
 
 
@@ -126,15 +122,10 @@ def get_cached_genai_client(api_key: str, *, single_attempt: bool = False) -> ge
         client_kwargs: dict[str, Any] = {"api_key": api_key}
         http_opts: dict[str, Any] = {"timeout": 90_000}
         if single_attempt:
-            # Interactions otherwise retries 429/5xx below caller-owned quota
-            # admission and key rotation. Each TTS reservation buys one HTTP call.
             http_opts["retry_options"] = types.HttpRetryOptions(attempts=1)
         client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]
         client = genai.Client(**client_kwargs)  # type: ignore[arg-type]
         if single_attempt:
-            # The pinned SDK normalizes attempts=0 to1 during construction,
-            # then Interactions interprets 1 as one *retry*. Configure its
-            # generated transport explicitly; real-SDK tests cover this seam.
             client.aio.interactions.sdk_configuration.retry_config = None
         _gemini_clients_by_id[id(client)] = client
         _gemini_clients_cache[cache_key] = client
@@ -263,7 +254,6 @@ def get_live_api_client() -> genai.Client | None:
     return get_cached_genai_client(keys[0])
 
 
-# Vertex AI Express singleton — None if not configured or init failed.
 _vertex_client: genai.Client | None = None
 _vertex_client_initialized: bool = False
 _vertex_live_client: genai.Client | None = None
@@ -298,8 +288,6 @@ def get_vertex_client() -> genai.Client | None:
     log = logging.getLogger(__name__)
     try:
         http_opts: dict[str, Any] = {"timeout": 90_000}
-        # Express key carries its own project and location. Passing those
-        # settings alongside the key switches the SDK back to ADC mode.
         _vertex_client = genai.Client(
             vertexai=True,
             api_key=api_key,
@@ -400,9 +388,7 @@ class GeminiProvider(BaseAIProvider):
     provider_name = "gemini"
 
     def __init__(self, api_key: str):
-        # We call super() first to validate the key type
         super().__init__(api_key)
-        # Reuse cached client via shared factory
         self._client = get_cached_genai_client(api_key)
         self._client_api_key: str = api_key
 
@@ -448,7 +434,6 @@ class GeminiProvider(BaseAIProvider):
         text_buffer = VisibleTextBuffer()
 
         try:
-            # Count only attempts that reach the SDK, including cancelled race lanes.
             await metrics_collector.record_api_call(self.provider_name, model_name)
             response_stream = await asyncio.wait_for(
                 self._client.aio.models.generate_content_stream(
@@ -530,8 +515,6 @@ class GeminiProvider(BaseAIProvider):
 
             retry_after = extract_retry_after_seconds(message)
             retry_hint = f"retry_after={retry_after}s; " if retry_after is not None else ""
-            # Key-health storage retains only the first 200 characters. Parse
-            # RetryInfo before truncating potentially long Google error bodies.
             diagnostic = f"{retry_hint}{type(exc).__name__}: {message}"[:500]
             if isinstance(exc, APIError) and _optional_int_attribute(exc, "code") == 429:
                 diagnostic = f"{retry_hint}Gemini HTTP 429 ({code.value})"
@@ -581,7 +564,6 @@ class GeminiProvider(BaseAIProvider):
         start_time = None
 
         try:
-            # Compute metrics
             try:
                 prompt_length = sum(
                     len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
@@ -599,7 +581,6 @@ class GeminiProvider(BaseAIProvider):
 
             client = self._client
 
-            # Convert history → types.Content
             contents = await self._build_contents(history)
             if contents is None:
                 return self._error_response(
@@ -610,12 +591,10 @@ class GeminiProvider(BaseAIProvider):
                     chat_id,
                 )
 
-            config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
-            # Apply Google Search Grounding if requested
+            config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
             if enable_web_search:
                 config.tools = [types.Tool(google_search=types.GoogleSearch())]
 
-            # Apply thinking config if user requested a specific level
             tc = _build_thinking_config(model_name, thinking_level)
             if tc:
                 config.thinking_config = tc
@@ -625,7 +604,6 @@ class GeminiProvider(BaseAIProvider):
                 except (TypeError, ValueError) as e:
                     logging.warning("Failed to set system_instruction: %s", e)
 
-            # Local content/config validation does not consume a provider attempt.
             await metrics_collector.record_api_call(self.provider_name, model_name)
             start_time = api_logger.log_request(
                 "gemini",
@@ -634,7 +612,6 @@ class GeminiProvider(BaseAIProvider):
                 prompt_length=prompt_length,
                 has_images=has_images,
             )
-            # Native async call — properly supports CancelledError
             response = await asyncio.wait_for(
                 client.aio.models.generate_content(
                     model=model_name,
@@ -644,8 +621,6 @@ class GeminiProvider(BaseAIProvider):
                 timeout=timeout,
             )
 
-            # Extract token count from response metadata (free, no extra API call).
-            # Falls back to 0 if usage_metadata is unavailable.
             try:
                 usage = getattr(response, "usage_metadata", None)
                 token_count = getattr(usage, "total_token_count", 0) or getattr(usage, "candidates_token_count", 0) or 0
@@ -653,7 +628,6 @@ class GeminiProvider(BaseAIProvider):
                 logging.debug("Token count from usage_metadata failed: %s", e)
                 token_count = 0
 
-            # Validate response
             if not response or not hasattr(response, "text"):
                 return self._error_response(
                     "Gemini API returned invalid response object",
@@ -665,7 +639,6 @@ class GeminiProvider(BaseAIProvider):
 
             response_text = response.text if response.text else ""
             if not response_text:
-                # Inspect WHY the response is empty — safety block, prompt block, etc.
                 block_reason = self._diagnose_empty_response(response)
                 return self._error_response(
                     block_reason,
@@ -675,7 +648,6 @@ class GeminiProvider(BaseAIProvider):
                     chat_id,
                 )
 
-            # Log success
             if start_time is not None:
                 api_logger.log_response(
                     "gemini",
@@ -762,7 +734,7 @@ class GeminiProvider(BaseAIProvider):
                 or "deadline_exceeded" in err_lower
             ):
                 await metrics_collector.record_error("gemini_overloaded", str(e))
-                raise  # Trigger retry in BaseAIProvider
+                raise
             elif error_code is ErrorCode.INVALID_KEY or "api key" in err_lower or "api_key_invalid" in err_lower:
                 await metrics_collector.record_error("gemini_invalid_key", str(e))
                 text = tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
@@ -813,7 +785,6 @@ class GeminiProvider(BaseAIProvider):
         """Convert history dicts → list[types.Content]. Returns None on total failure."""
         contents = []
         try:
-            # Pass 1: Collect tasks for concurrent processing
             image_tasks = []
             for item in history:
                 if not isinstance(item, dict):
@@ -831,12 +802,10 @@ class GeminiProvider(BaseAIProvider):
                         image_data = bytes(part) if isinstance(part, bytearray) else part
                         image_tasks.append(save_image_as_bytes(image_data))
 
-            # Execute concurrently
             processed_images = []
             if image_tasks:
                 processed_images = await asyncio.gather(*image_tasks, return_exceptions=True)
 
-            # Pass 2: Build actual objects
             img_idx = 0
             for item in history:
                 if not isinstance(item, dict):
@@ -903,7 +872,6 @@ class GeminiProvider(BaseAIProvider):
 
     def _diagnose_empty_response(self, response) -> str:
         """Inspect Gemini response to determine why text is empty."""
-        # 1. Check prompt-level block (input was blocked)
         try:
             pf = getattr(response, "prompt_feedback", None)
             if pf:
@@ -918,7 +886,6 @@ class GeminiProvider(BaseAIProvider):
         except Exception as e:
             logging.debug("prompt_feedback inspection error: %s", e)
 
-        # 2. Check candidate-level finish reason
         try:
             candidates = getattr(response, "candidates", None)
             if candidates:
@@ -982,9 +949,7 @@ class GeminiProvider(BaseAIProvider):
             )
 
 
-# ── Vertex AI Provider ────────────────────────────────────────────────────────
-
-_VERTEX_PLACEHOLDER_KEY = "vertex"  # Sentinel api_key for VertexGeminiProvider
+_VERTEX_PLACEHOLDER_KEY = "vertex"
 
 
 class VertexGeminiProvider(GeminiProvider):
@@ -1001,7 +966,6 @@ class VertexGeminiProvider(GeminiProvider):
     provider_name = "gemini-vertex"
 
     def __init__(self) -> None:
-        # BaseAIProvider.__init__ requires a non-empty string; use sentinel.
         super().__init__(_VERTEX_PLACEHOLDER_KEY)
         vertex_client = get_vertex_client()
         if vertex_client is None:

@@ -99,8 +99,6 @@ async def _transaction(conn=None) -> AsyncIterator[Any]:
 
 
 async def _locked_puzzle(conn, puzzle_date: date, *, for_player: bool = False) -> Daily2048Puzzle | None:
-    # Shared player locks fence both admin mutations and deletion, while
-    # independent players can write distinct result rows concurrently.
     query = (
         "SELECT * FROM public.daily_2048_puzzles WHERE puzzle_date = $1 FOR SHARE"
         if for_player
@@ -425,8 +423,6 @@ async def upsert_puzzle(
         solution_moves,
     )
     async with _transaction(conn) as acquired:
-        # A missing row cannot be locked. Conditional insert arbitrates creators;
-        # the following read locks whichever complete row won the unique key.
         if expected_revision == 0:
             created = await acquired.fetchrow(
                 """
@@ -581,7 +577,6 @@ async def start_puzzle(user_id: int, puzzle: Daily2048Puzzle, *, conn=None) -> t
                     conn=acquired,
                 )
             except DailyPuzzleConflict:
-                # Another creator may have won the missing-row race.
                 pass
             current = await _locked_puzzle(acquired, puzzle.puzzle_date, for_player=True)
             if current is None:

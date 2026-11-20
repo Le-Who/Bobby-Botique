@@ -71,7 +71,7 @@ async def ping_safe() -> bool:
         return False
     try:
         async with asyncio.timeout(2):
-            return bool(await redis_client.ping())  # type: ignore[misc]  # always async in our setup
+            return bool(await redis_client.ping())  # type: ignore[misc]
     except Exception:
         return False
 
@@ -92,8 +92,6 @@ async def shutdown_redis() -> None:
 def _generate_cache_key(query: str, search_type: str, *, max_results: int = 5) -> str:
     """Generates a cache key for the request."""
     normalized_query = " ".join(query.lower().split())
-    # Result limits are part of the request: a cached one-row search cannot
-    # satisfy a later five-row search. Keep the existing qna identity.
     key_data = (
         f"{search_type}:max_results={max_results}:{normalized_query}"
         if search_type == "search"
@@ -105,11 +103,11 @@ def _generate_cache_key(query: str, search_type: str, *, max_results: int = 5) -
 def _get_ttl(search_type: str) -> int:
     """Returns the TTL for the search type."""
     if search_type == "qna":
-        return 7200  # 2 hours
+        return 7200
     elif search_type == "search":
-        return 1800  # 30 minutes
+        return 1800
     else:
-        return 3600  # 1 hour
+        return 3600
 
 
 def _safe_decode_redis_response(
@@ -127,7 +125,7 @@ def _safe_decode_redis_response(
             logging.warning("Redis search cache payload is not an object")
             return None
         else:
-            logging.warning("Unexpected Redis response type: %s", type(data))  # type: ignore[unreachable]  # defensive
+            logging.warning("Unexpected Redis response type: %s", type(data))  # type: ignore[unreachable]
             return None
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
         logging.error("Failed to decode Redis response: %s", e, exc_info=True)
@@ -144,7 +142,6 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
     started = asyncio.get_running_loop().time()
     for attempt in range(max_retries):
         try:
-            # Execute async Redis operation directly
             result = await operation(*args, **kwargs)
             emit(
                 "cache.backend_operation_finished",
@@ -161,7 +158,7 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
         except (ConnectionError, TimeoutError) as e:
             last_error = e
             if attempt < max_retries - 1:
-                wait_time = (2**attempt) * 0.1  # Exponential backoff: 0.1s, 0.2s, 0.4s
+                wait_time = (2**attempt) * 0.1
                 emit(
                     "cache.backend_retry_scheduled",
                     level="warning",
@@ -188,7 +185,6 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
                 raise RedisConnectionError(f"Redis operation failed: {e}") from e
 
         except RedisError as e:
-            # Other Redis errors don't require retry
             record_exception(
                 "cache.backend_operation_failed",
                 e,
@@ -242,10 +238,8 @@ async def get_cache_stats() -> dict[str, Any]:
         return {"error": "Redis client not configured"}
 
     try:
-        # Use retry logic for Redis operations
         info = await _redis_operation_with_retry(redis_client.info)
 
-        # redis-py .info() returns a dict — access keys directly
         selected_db = redis_client.connection_pool.connection_kwargs.get("db", 0)
         db_info = info.get(f"db{selected_db}", {})
         total_keys = db_info.get("keys", 0) if isinstance(db_info, dict) else 0
@@ -276,9 +270,6 @@ async def clear_cache() -> None:
                     cursor, keys = await _redis_operation_with_retry(
                         redis_client.scan, cursor=cursor, match=f"{namespace}:*", count=200
                     )
-                    # These are the exact namespaces/key shape written by the
-                    # search cache. Redis also stores queues, locks and Reader
-                    # content; flushing its database destroys live bot state.
                     cache_keys = [
                         key
                         for key in keys
@@ -303,22 +294,15 @@ async def clear_cache() -> None:
             memory_cache.clear()
 
 
-# Multi-layer caching implementation
 class MultiLayerCache:
     """Multi-layer caching system: Memory -> Redis -> Database"""
 
     def __init__(self):
         from cachetools import TTLCache
 
-        # Separate TTLCaches for exact expiration tracking based on search type constraints
         self.qna_cache = TTLCache(maxsize=500, ttl=7200)
         self.search_cache = TTLCache(maxsize=500, ttl=1800)
         self.default_cache = TTLCache(maxsize=200, ttl=3600)
-        # Performance: no asyncio.Lock needed — asyncio is single-threaded, so
-        # TTLCache.__contains__ / __getitem__ / __setitem__ (all pure synchronous ops)
-        # can never interleave between coroutines. The lock was adding a useless
-        # async context-switch cost on every cache read — the hottest path here.
-        # Identical fix was previously applied to app/queue.py for the same reason.
 
     def _get_cache(self, search_type: str):
         if search_type == "qna":
@@ -331,7 +315,6 @@ class MultiLayerCache:
     async def get(self, key: str, search_type: str) -> dict[str, Any] | None:
         """Gets value from multi-layer cache"""
         cache_dict = self._get_cache(search_type)
-        # Try memory cache first — direct access, no lock needed (see __init__).
         if key in cache_dict:
             result = cache_dict[key]
             await metrics_collector.record_cache_hit()
@@ -346,19 +329,15 @@ class MultiLayerCache:
             )
             return result
 
-        # Try Redis cache
         if redis_client:
             try:
                 redis_key = f"{search_type}:{key}"
-                # Use retry logic for Redis operations
                 cached_data = await _redis_operation_with_retry(redis_client.get, redis_key)
 
                 if cached_data:
-                    # Safely decode the response
                     result = _safe_decode_redis_response(cached_data)
 
                     if result:
-                        # Populate L1 memory cache from Redis hit — no lock needed.
                         cache_dict[key] = result
 
                         await metrics_collector.record_cache_hit()
@@ -405,17 +384,14 @@ class MultiLayerCache:
         """Sets value in multi-layer cache"""
         ttl = _get_ttl(search_type)
 
-        # Store in memory cache — direct write, no lock needed (see __init__).
         cache_dict = self._get_cache(search_type)
         cache_dict[key] = value
 
-        # Store in Redis cache
         if redis_client:
             try:
                 redis_key = f"{search_type}:{key}"
                 json_data = json.dumps_bytes(value)
 
-                # Use retry logic for Redis operations
                 await _redis_operation_with_retry(redis_client.setex, redis_key, ttl, json_data)
                 emit(
                     "cache.write_finished",
@@ -444,7 +420,6 @@ class MultiLayerCache:
         }
 
 
-# Global multi-layer cache instance
 multi_layer_cache = MultiLayerCache()
 
 
@@ -472,13 +447,8 @@ async def get_multi_layer_cache_stats() -> dict[str, Any]:
     }
 
 
-# ── Long Read Storage ─────────────────────────────────────────────────────────
-# Stores long AI responses in Redis for the Mini App reader.
-# Primary key:  long_msg:<uid>          — markdown text, TTL 24h
-# Fallback key: long_msg:<uid>:tg_url   — telegraph URL, no TTL (persist)
-
 _LONG_MSG_PREFIX = "long_msg:"
-_LONG_MSG_TTL = 86_400  # 24 hours
+_LONG_MSG_TTL = 86_400
 
 
 async def store_long_message(uid: str, markdown: str, ttl: int = _LONG_MSG_TTL) -> bool:
@@ -520,7 +490,7 @@ async def store_telegraph_url(uid: str, url: str) -> bool:
         return False
     try:
         key = f"{_LONG_MSG_PREFIX}{uid}:tg_url"
-        await redis_client.set(key, url.encode("utf-8"))  # No TTL — persist forever
+        await redis_client.set(key, url.encode("utf-8"))
         logging.debug(
             "Stored Telegraph fallback reference",
             extra={
@@ -550,10 +520,9 @@ async def get_telegraph_url(uid: str) -> str | None:
         return None
 
 
-# ── Inline Context Store (for DM and current-chat inline continuation) ───────
 _INLINE_CTX_PREFIX = "inline_ctx:"
 _INLINE_CTX_ZSET_PREFIX = "inline_ctx_zset:"
-_INLINE_CTX_TTL = 86_400  # 24 hours
+_INLINE_CTX_TTL = 86_400
 _INLINE_CTX_MAX_PER_USER = 10
 
 
@@ -574,29 +543,22 @@ async def store_inline_context(token: str, payload: dict, user_id: int | None = 
 
             if user_id:
                 zset_key = f"{_INLINE_CTX_ZSET_PREFIX}{user_id}"
-                # Add current token to user's history zset, scored by timestamp
                 pipe.zadd(zset_key, {token: now})
-                # Get the number of elements
                 pipe.zcard(zset_key)
-                # Keep the zset from lingering forever if the user stops using the bot
                 pipe.expire(zset_key, _INLINE_CTX_TTL)
 
             results = await pipe.execute()
 
-            # If user_id is provided, check if we need to evict old items
             if user_id:
                 cardinality = results[2]
                 if cardinality > _INLINE_CTX_MAX_PER_USER:
                     num_to_remove = cardinality - _INLINE_CTX_MAX_PER_USER
                     zset_key = f"{_INLINE_CTX_ZSET_PREFIX}{user_id}"
-                    # Retrieve the oldest N tokens
                     oldest_tokens = await redis_client.zrange(zset_key, 0, num_to_remove - 1)
                     if oldest_tokens:
-                        # Decode bytes if necessary
                         tokens_str = [t.decode("utf-8") if isinstance(t, bytes) else t for t in oldest_tokens]
                         keys_to_del = [f"{_INLINE_CTX_PREFIX}{t}" for t in tokens_str]
 
-                        # Pipeline deletion of old keys and removing them from the zset
                         async with redis_client.pipeline(transaction=True) as del_pipe:
                             del_pipe.delete(*keys_to_del)
                             del_pipe.zrem(zset_key, *oldest_tokens)

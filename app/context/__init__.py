@@ -6,14 +6,10 @@ Re-exports everything for backward compatibility with::
     from app.context_assembler import ContextAssembler, get_assembler, ...
 """
 
-# --- Data structures & constants ---
-# --- Core assembler ---
 from app.context.assembler import (  # noqa: F401
     ContextAssembler,
     get_assembler,
 )
-
-# --- Summarizer ---
 from app.context.summarizer import (  # noqa: F401
     schedule_llm_summarization,
     split_into_chunks,

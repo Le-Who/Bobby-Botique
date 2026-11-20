@@ -318,8 +318,6 @@ async def test_chat_after_first_split_obeys_history_effects_and_releases_request
             assert message.visible[501]["reply_markup"] is None
             assert len(message.sends) == 1
             assert effects == []
-            # The current implementation retains the assembled user turn in
-            # process memory, but appends/persists no model turn without a receipt.
             assert chat.history == [{"role": "user", "parts": [question]}]
             assert chat.token_count == 9
         assert chat.context_summary == "request-local summary"

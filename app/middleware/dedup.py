@@ -18,13 +18,10 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-# {user_id: {request_hash: timestamp}}
 _recent_requests: dict[int, dict[str, float]] = defaultdict(dict)
 
-# Dedup window in seconds — requests with the same hash within this window are duplicates
 DEDUP_WINDOW_SECONDS: float = 3.0
 
-# Max tracked hashes per user (prevent unbounded growth)
 _MAX_TRACKED_PER_USER: int = 20
 
 
@@ -54,26 +51,20 @@ async def is_duplicate_request(
     if not message_text or not message_text.strip():
         return False
 
-    # Different physical messages can legitimately contain identical source
-    # fragments. Telegram's identity, when available, detects only redelivery.
     request_hash = f"message:{chat_id}:{message_id}" if message_id is not None else _hash_request(message_text.strip())
     now = time.monotonic()
 
-    # Cleanup old entries periodically
     _cleanup_stale(user_id)
 
     user_hashes = _recent_requests[user_id]
 
-    # Check for duplicate
     last_seen = user_hashes.get(request_hash)
     if last_seen is not None and (now - last_seen) < DEDUP_WINDOW_SECONDS:
         logger.info("Dedup: blocked duplicate request from user %s (hash=%s)", user_id, request_hash)
         return True
 
-    # Record this request
     user_hashes[request_hash] = now
 
-    # Evict oldest if too many tracked
     if len(user_hashes) > _MAX_TRACKED_PER_USER:
         oldest_hash = min(user_hashes, key=user_hashes.get)  # type: ignore[arg-type]
         del user_hashes[oldest_hash]
@@ -90,9 +81,7 @@ def clear_user_dedup(user_id: int) -> None:
     clear_user_speech_collection(user_id)
 
 
-# --- Voice-specific dedup (extended window) ---
-
-VOICE_DEDUP_WINDOW: float = 30.0  # Reduced to 30s so manual retries work
+VOICE_DEDUP_WINDOW: float = 30.0
 
 _recent_voice_ids: dict[int, dict[str, float]] = defaultdict(dict)
 
@@ -105,7 +94,6 @@ async def is_duplicate_voice(user_id: int, file_unique_id: str) -> bool:
     """
     now = time.monotonic()
 
-    # Cleanup stale entries
     user_ids = _recent_voice_ids.get(user_id)
     if user_ids:
         expired = [fid for fid, ts in user_ids.items() if now - ts > VOICE_DEDUP_WINDOW * 2]

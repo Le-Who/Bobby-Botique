@@ -19,9 +19,8 @@ import asyncpg
 import pypdf
 from docx import Document as DocxDocument
 
-# Submodule imports
 from app.documents.parsers import (
-    MAX_DOCUMENT_TEXT_LENGTH,  # noqa: F401 — re-exported
+    MAX_DOCUMENT_TEXT_LENGTH,  # noqa: F401
     calculate_file_hash_sync,
 )
 from app.documents.repository import check_duplicate_file, save_document_content
@@ -61,7 +60,7 @@ class DocumentProcessor:
 
     def __init__(self):
         self.supported_formats = [".pdf", ".docx", ".doc"]
-        self.max_file_size = 10 * 1024 * 1024  # 10MB for free tier
+        self.max_file_size = 10 * 1024 * 1024
         self.max_pages = 50
 
     async def process_document(
@@ -71,7 +70,6 @@ class DocumentProcessor:
         stage = "validation"
         write_started = False
         try:
-            # Check file size
             if is_path:
                 import os
 
@@ -86,7 +84,6 @@ class DocumentProcessor:
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-            # Hash + duplicate check
             loop = asyncio.get_running_loop()
             file_hash = await loop.run_in_executor(None, calculate_file_hash_sync, file_data)
             stage = "duplicate_lookup"
@@ -99,7 +96,6 @@ class DocumentProcessor:
             if duplicate:
                 return _duplicate_result(filename, duplicate)
 
-            # Dispatch to format-specific parser
             stage = "parsing"
             if file_ext == ".pdf":
                 result = await self._process_pdf_unified(file_data, filename, is_path=is_path)
@@ -113,8 +109,6 @@ class DocumentProcessor:
             if guard is not None:
                 await guard.checkpoint()
             stage = "storage_write"
-            # The repository owns the transaction. Once entered, a failed commit
-            # reply cannot establish whether persistence took effect.
             write_started = True
             duplicate = await save_document_content(
                 user_id,
@@ -145,8 +139,6 @@ class DocumentProcessor:
                 "retryable": False,
             }
 
-    # ── Synchronous parsing helpers (run via run_in_executor) ─────────────
-
     @staticmethod
     def _process_pdf_sync(input_data: str | io.BytesIO, max_pages: int) -> dict[str, Any]:
         """Synchronous PDF text extraction — runs in a thread executor."""
@@ -159,7 +151,7 @@ class DocumentProcessor:
                 should_close = True
                 stream = pdf_file
             else:
-                stream = input_data  # type: ignore[assignment]  # BytesIO is compatible with PdfReader
+                stream = input_data  # type: ignore[assignment]
 
             pdf_reader = pypdf.PdfReader(stream)
 
@@ -255,8 +247,6 @@ class DocumentProcessor:
         except Exception as e:
             return {"error": str(e)}
 
-    # ── PDF parsing ──────────────────────────────────────────────────────────
-
     async def _process_pdf_unified(
         self,
         file_data,
@@ -297,8 +287,6 @@ class DocumentProcessor:
             await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
 
-    # ── Word parsing ─────────────────────────────────────────────────────────
-
     async def _process_word_unified(
         self,
         file_data,
@@ -327,8 +315,6 @@ class DocumentProcessor:
             logging.error("Error processing Word document %s: %s", filename, e, exc_info=True)
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
-
-    # ── Repository methods used by handlers and scheduled maintenance ──────
 
     async def get_document_by_id(self, document_id, user_id):
         from app.documents.repository import get_document_by_id
@@ -371,13 +357,7 @@ class DocumentProcessor:
         return await get_user_document_stats(user_id)
 
 
-# Singleton
 document_processor = DocumentProcessor()
-
-
-# ============================================================================
-# FACADE FUNCTIONS
-# ============================================================================
 
 
 async def process_uploaded_document(

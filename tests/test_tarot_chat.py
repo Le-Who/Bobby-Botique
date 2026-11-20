@@ -308,7 +308,7 @@ async def test_long_tarot_response_delivers_all_chunks_with_keyboard_on_last():
     ):
         await tarot_chat.handle_tarot_message(update, DummyContext())
 
-    chunks = delivered[1:]  # The first reply is the waiting status.
+    chunks = delivered[1:]
     received_text = "".join(strip_formatting(text) for text, _kwargs in chunks)
     expected = "Совет карты\n" + "Сохраняйте спокойствие и обдумайте следующий шаг.\n" * 160
     assert "".join(received_text.split()) == "".join(expected.split())

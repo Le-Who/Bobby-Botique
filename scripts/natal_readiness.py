@@ -82,7 +82,6 @@ async def _main(
     if exit_code:
         return exit_code
 
-    # Initialize DB pool only for real storage/smoke checks, after cheap gates have passed.
     if (check_storage and _uses_real_storage_check()) or (run_smoke and _uses_real_smoke_check()):
         await db_manager.create_pool()
 

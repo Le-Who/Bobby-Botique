@@ -43,7 +43,6 @@ async def publish(prefix, *, expected_revision=0, conn=None):
 
 @pytest.mark.parametrize("existing", [False, True], ids=["absent-day", "existing-day"])
 async def test_concurrent_publish_has_one_complete_revision(contract_pool, db_conn, existing):
-    # Omitting row-lock/revision validation permits two winners or eight partial occurrences.
     if existing:
         await publish("seed")
     barrier = asyncio.Barrier(2)
@@ -98,7 +97,6 @@ async def test_existing_main_and_super_results_keep_original_snapshot(db_conn):
 
 
 async def test_publication_failure_rolls_back_bank_and_projection(db_conn):
-    # A real trigger fails after bank inserts, before final projection update.
     first = await publish("original")
     await db_conn.execute("""
         CREATE FUNCTION reject_contract_publication() RETURNS trigger LANGUAGE plpgsql AS $$

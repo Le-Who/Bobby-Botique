@@ -1,4 +1,3 @@
-# /app/context/compression.py
 """AAAK-style Tiered Memory Compression — MemPalace Integration.
 
 Implements a 4-layer memory stack inspired by AAAK (lossless shorthand):
@@ -92,8 +91,6 @@ async def build_l0_facts(user_id: int, api_key: str) -> str:
         if not rows:
             return ""
 
-        # Preserve the subject for every relation.  Grouping solely by
-        # predicate silently merged facts about different entities.
         facts: list[dict[str, str]] = []
         for row in rows:
             candidate = {
@@ -131,7 +128,6 @@ async def build_l1_context(
     """
     parts: list[str] = []
 
-    # 1. Recent consolidated facts
     try:
         from app.database import db_manager, db_query
         from app.repos.db_helpers import clear_user_context, set_user_context
@@ -160,14 +156,13 @@ async def build_l1_context(
     except Exception as exc:
         logger.debug("L1 consolidated facts failed: %s", exc)
 
-    # 2. Role diary entries
     if role_id:
         try:
             from app.state import get_role_diary
 
             diary = get_role_diary(user_id, role_id)
             if diary:
-                diary_text = " | ".join(diary[-5:])  # last 5 entries
+                diary_text = " | ".join(diary[-5:])
                 parts.append(f"[Diary:{role_id}] {diary_text}")
         except Exception as exc:
             logger.debug("L1 role diary failed: %s", exc)
@@ -177,7 +172,6 @@ async def build_l1_context(
 
     context = "\n".join(parts)
 
-    # Trim to L1 budget
     if estimate_tokens_cyrillic(context) > L1_MAX_TOKENS:
         context = truncate_to_token_budget(context, L1_MAX_TOKENS)
 
@@ -249,15 +243,12 @@ async def inject_memory_layers(
         "l2_graph_triples": 0,
     }
 
-    # ── L0: Core Facts (always injected) ──────────────────────────────────
     l0 = await build_l0_facts(user_id, api_key)
     stats["l0_tokens"] = estimate_tokens_cyrillic(l0) if l0 else 0
 
-    # ── L1: Active Context ────────────────────────────────────────────────
     l1 = await build_l1_context(user_id, api_key, role_id=role_id)
     stats["l1_tokens"] = estimate_tokens_cyrillic(l1) if l1 else 0
 
-    # ── L2: Semantic Recall ───────────────────────────────────────────────
     l2_memories_xml = ""
     l2_graph_xml = ""
 
@@ -279,7 +270,6 @@ async def inject_memory_layers(
                 stats["l2_memories"] = len(memories)
 
             if graph_triples:
-                # Separate current and superseded triples
                 current = [t for t in graph_triples if not t.startswith("[SUPERSEDED")]
                 temporal = [t for t in graph_triples if t.startswith("[SUPERSEDED")]
 
@@ -287,8 +277,6 @@ async def inject_memory_layers(
                 for triple in current:
                     safe_triple = html.escape(triple, quote=False)
                     graph_parts.append(f"  {safe_triple}")
-                    # ── Edge Provenance: inject source passage for top-K edges ──
-                    # Strip core/hop labels to match the triple key
                     _bare = triple.replace(" ★", "").replace(" (indirect)", "")
                     if _bare in source_passages:
                         safe_source = html.escape(source_passages[_bare], quote=False)
@@ -308,7 +296,6 @@ async def inject_memory_layers(
                 stats["l2_graph_triples"] = len(graph_triples)
 
             if not memories and not graph_triples:
-                # ── LLM-as-judge fallback (RF-Mem "recollection path") ──
                 try:
                     from app.repos.memory import search_memories_with_llm_judge
 
@@ -328,7 +315,6 @@ async def inject_memory_layers(
         except Exception as mem_err:
             logger.warning("L2 memory recall failed for user %d: %s", user_id, mem_err)
 
-    # ── Compose final block ───────────────────────────────────────────────
     compressed = format_compressed_context(l0, l1, l2_memories_xml, l2_graph_xml)
 
     if compressed:

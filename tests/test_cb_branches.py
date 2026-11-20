@@ -88,7 +88,6 @@ class TestBranchCreateCallback:
             await branch_create_callback(update, MagicMock())
 
         query.answer.assert_awaited()
-        # Should show alert about already being in a branch
         alert_calls = [c for c in query.answer.call_args_list if c.kwargs.get("show_alert")]
         assert len(alert_calls) >= 1
 
