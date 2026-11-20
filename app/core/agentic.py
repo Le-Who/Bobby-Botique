@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import gc
 import hashlib
 import logging
 import time
@@ -1022,4 +1021,3 @@ class AgenticSearch:
 
         finally:
             contents.clear()
-            await asyncio.to_thread(gc.collect, 1)

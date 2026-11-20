@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.handlers import scheduled_horoscopes
+from app.horoscope_signs import HOROSCOPE_SIGN_LABELS
 
 
 @pytest.mark.asyncio
@@ -24,16 +25,18 @@ async def test_scheduler_respects_admin_horoscope_delivery_switch(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_deliver_horoscope_includes_manage_and_stop_actions(monkeypatch):
-    monkeypatch.setattr(
-        "app.intent_router._handle_horoscope",
-        AsyncMock(return_value=SimpleNamespace(text="**Фокус дня**\n\nВыберите главное.")),
-    )
+@pytest.mark.parametrize(("sign", "label"), [*HOROSCOPE_SIGN_LABELS.items(), ("unknown-sign", "Unknown-sign")])
+async def test_deliver_horoscope_includes_sign_and_manage_and_stop_actions(monkeypatch, sign, label):
+    generate = AsyncMock(return_value=SimpleNamespace(text="**Фокус дня**\n\nВыберите главное."))
+    monkeypatch.setattr("app.intent_router._handle_horoscope", generate)
     bot = SimpleNamespace(send_message=AsyncMock())
 
-    sent = await scheduled_horoscopes._deliver_horoscope(bot, 42, "aries", "today")
+    sent = await scheduled_horoscopes._deliver_horoscope(bot, 42, sign, "today")
 
     assert sent is True
-    keyboard = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    generate.assert_awaited_once_with(f"{label} на сегодня")
+    message = bot.send_message.await_args.kwargs
+    assert message["text"].startswith(f"🌅 <b>Ваш гороскоп на сегодня</b> ({label}):\n\n")
+    keyboard = message["reply_markup"].inline_keyboard
     labels = [button.text for row in keyboard for button in row]
     assert labels == ["⚙️ Настройки", "Отключить"]

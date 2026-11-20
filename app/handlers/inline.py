@@ -1744,8 +1744,7 @@ async def _generate_and_edit_inline(
             formatted = t("inline.timeout_error", lang) if _gen_timed_out else t("inline.generation_error", lang)
 
     reply_markup_out: InlineKeyboardMarkup | None = None
-    is_failure = not (final_answer and final_answer.strip()) or bool(final_answer and is_error_message(final_answer))
-    if is_failure:
+    if not final_answer or not final_answer.strip() or is_error_message(final_answer):
         retry_id = _store_retry_params(
             user_query=user_query,
             tone_id=tone_id,

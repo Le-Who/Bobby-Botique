@@ -51,6 +51,9 @@ def probe_case(monkeypatch, tmp_path):
         created=[],
         inspections=[],
         removals=[],
+        archived=[],
+        recovery_operations=[],
+        replay_on_restart=False,
         failure=None,
         validation_fault=True,
         remaining_at_validation=None,
@@ -58,6 +61,25 @@ def probe_case(monkeypatch, tmp_path):
     )
 
     def docker(*args, check=True):
+        if args[0] == "compose":
+            assert args[1:3] == ("--project-name", "gemaibot-observability-probe-42-1")
+            assert args[-3:] == ("ps", "-q", "docker-proxy")
+            return subprocess.CompletedProcess(args, 0, stdout="a" * 64 + "\n")
+        if args[0] == "restart":
+            assert args[1:] == ("--time", "1", "a" * 64)
+            case.recovery_operations.append("proxy restart")
+            if case.replay_on_restart:
+                for container in case.containers.values():
+                    if container["collect"]:
+                        container["lines"].extend(list(container["lines"]))
+            return subprocess.CompletedProcess(args, 0)
+        if args[0] == "exec":
+            container = case.containers[args[1]]
+            assert container["name"] == "tg-bot"
+            assert json.loads(args[-1])["probe_phase"] == "reconnect"
+            container["lines"].append(args[-1])
+            case.recovery_operations.append("original container stdout")
+            return subprocess.CompletedProcess(args, 0)
         if args[0] == "run":
             container_id = f"controlled-{len(case.created) + 1}"
             labels = [args[index + 1] for index, arg in enumerate(args) if arg == "--label"]
@@ -71,6 +93,12 @@ def probe_case(monkeypatch, tmp_path):
                 "collect": "com.gemaibot.logs=true" in labels,
                 "lines": Path(source).read_text(encoding="utf-8").splitlines(),
             }
+            if any(
+                json.loads(line).get("probe_phase") == "replacement"
+                for line in case.containers[container_id]["lines"]
+                if line.startswith("{")
+            ):
+                case.recovery_operations.append("replacement container stdout")
             return subprocess.CompletedProcess(args, 0, stdout=container_id + "\n")
         if args[0] == "inspect" and "--format" not in args:
             assert check is False
@@ -88,7 +116,7 @@ def probe_case(monkeypatch, tmp_path):
         case.removals.append(container_id)
         if container_id == "controlled-2" and case.failure == "rm":
             raise subprocess.CalledProcessError(1, args, stderr="synthetic remove failure")
-        case.containers.pop(container_id)
+        case.archived.append(case.containers.pop(container_id))
         return subprocess.CompletedProcess(args, 0, stdout=container_id)
 
     def request(self, path, *, authenticated=True):
@@ -111,7 +139,7 @@ def probe_case(monkeypatch, tmp_path):
         if end > int(datetime.now(UTC).timestamp() * 1_000_000_000) - 7 * 86400 * 1_000_000_000:
             service = "ytdlbot" if 'service_name="ytdlbot"' in parameters["query"][0] else "gemaibotv2"
             name = "ytdlbot-bot-1" if service == "ytdlbot" else "tg-bot"
-            for container in case.containers.values():
+            for container in [*case.archived, *case.containers.values()]:
                 if container["name"] != name or not container["collect"]:
                     continue
                 for line in container["lines"]:
@@ -128,13 +156,14 @@ def probe_case(monkeypatch, tmp_path):
     monkeypatch.setattr(stack.StackProbe, "request", request)
     monkeypatch.setattr(stack, "time", SimpleNamespace(sleep=lambda seconds: None, monotonic=lambda: 0))
 
-    def run():
+    def run(recovery_project=None):
         return stack.run_probe(
             base_url="http://127.0.0.1:3000",
             password_file=password,
             compose_file=stack.ROOT / "ops/observability/compose.yml",
             private_event_file=private,
             output=case.output,
+            recovery_project=recovery_project,
         )
 
     case.run = run
@@ -187,6 +216,31 @@ def test_successful_probe_removes_only_its_owned_ids_and_keeps_manifest(probe_ca
         "gemaibotv2": 121,
         "ytdlbot": 7,
     }
+
+
+def test_recovery_restarts_only_the_isolated_proxy_and_replaces_owned_bot(probe_case):
+    probe_case.validation_fault = False
+    probe_case.replay_on_restart = True
+    result = probe_case.run("gemaibot-observability-probe-42-1")
+
+    assert result["events"] == 130
+    assert probe_case.recovery_operations == [
+        "proxy restart",
+        "original container stdout",
+        "replacement container stdout",
+    ]
+    assert probe_case.removals == ["controlled-1", "controlled-3", "controlled-2", "controlled-4", "controlled-5"]
+    assert probe_case.containers == {}
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    assert set(manifest["recovery"]) == {"reconnect", "replacement"}
+    assert len(set(manifest["recovery"].values())) == 2
+
+
+def test_recovery_refuses_the_production_compose_project(probe_case):
+    with pytest.raises(ValueError, match="requires an isolated"):
+        probe_case.run("gemaibot-observability")
+    assert not probe_case.created
+    assert not probe_case.recovery_operations
 
 
 def test_current_probe_events_are_read_after_more_than_500_historical_events(monkeypatch, tmp_path):

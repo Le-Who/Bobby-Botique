@@ -161,10 +161,13 @@ async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     query = getattr(update, "callback_query", None)
     if query:
         await query.answer()
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
     from app.handlers.compatibility import clear_compatibility_input
 
-    clear_compatibility_input(context.user_data)
-    clear_natal_user_data(context.user_data)
+    clear_compatibility_input(user_data)
+    clear_natal_user_data(user_data)
     if not _natal_reports_enabled_for_handler():
         await message.reply_text("Натальные карты временно недоступны.")
         return ConversationHandler.END
@@ -172,7 +175,7 @@ async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if epoch is None:
         await message.reply_text("Не удалось начать разбор. Попробуйте /natal ещё раз.")
         return ConversationHandler.END
-    context.user_data["natal_memory_epoch"] = epoch
+    user_data["natal_memory_epoch"] = epoch
     flow_message = await message.reply_text(
         "Натальная карта и матрица судьбы — это не приговор, а бережная навигация по вашим акцентам, "
         "ритмам и повторяющимся темам.\n\n"
@@ -181,7 +184,7 @@ async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         "я соберу разбор без домов и асцендента и явно отмечу ограничения.",
         reply_markup=_mode_keyboard(),
     )
-    context.user_data["natal_flow_message"] = flow_message
+    user_data["natal_flow_message"] = flow_message
     return NATAL_MODE
 
 
@@ -190,20 +193,23 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | s
     if not query:
         return NATAL_MODE
     await query.answer()
+    user_data = context.user_data
     mode = query.data.replace("natal_mode:", "")
     if mode == "cancel":
-        clear_natal_user_data(context.user_data)
+        clear_natal_user_data(user_data)
         await query.edit_message_text("Отменено.")
         return ConversationHandler.END
-    if "natal_memory_epoch" not in (context.user_data or {}):
+    if user_data is None:
+        return ConversationHandler.END
+    if "natal_memory_epoch" not in user_data:
         epoch = await capture_natal_epoch(update.effective_user.id)
         if epoch is None:
             await _show_flow_prompt(update, context, "Не удалось начать разбор. Попробуйте /natal ещё раз.")
             return ConversationHandler.END
-        context.user_data["natal_memory_epoch"] = epoch
-    context.user_data["natal_mode"] = mode
+        user_data["natal_memory_epoch"] = epoch
+    user_data["natal_mode"] = mode
     if mode == "table":
-        context.user_data["natal_report_type"] = ReportType.NATAL
+        user_data["natal_report_type"] = ReportType.NATAL
         await _show_flow_prompt(
             update,
             context,
@@ -218,9 +224,9 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | s
         )
         return NATAL_TABLE
     if mode == "matrix":
-        context.user_data["natal_report_type"] = ReportType.DESTINY_MATRIX
+        user_data["natal_report_type"] = ReportType.DESTINY_MATRIX
     else:
-        context.user_data["natal_report_type"] = ReportType.NATAL
+        user_data["natal_report_type"] = ReportType.NATAL
     await _show_date_picker(update, context)
     return NATAL_DATE
 
@@ -228,6 +234,9 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | s
 async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return NATAL_TABLE
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
     raw_text = update.message.text
     await _delete_user_message(update)
     try:
@@ -239,7 +248,7 @@ async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if local_birth_input is None:
         await _show_flow_prompt(update, context, "Город не найден в выбранной стране. Введите ближайший крупный город.")
         return NATAL_TABLE
-    context.user_data["natal_birth_input"] = local_birth_input  # type: ignore[index]
+    user_data["natal_birth_input"] = local_birth_input
     await _show_flow_prompt(update, context, _confirmation_text(local_birth_input), reply_markup=_confirm_keyboard())
     return NATAL_CONFIRM
 
@@ -247,9 +256,12 @@ async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def on_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return NATAL_DATE
-    context.user_data["natal_date"] = update.message.text.strip()
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+    user_data["natal_date"] = update.message.text.strip()
     await _delete_user_message(update)
-    if _is_matrix_only_flow(context.user_data):
+    if _is_matrix_only_flow(user_data):
         await _show_flow_prompt(update, context, "Выберите фокус матрицы судьбы.", reply_markup=_focus_keyboard())
         return NATAL_FOCUS
     await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
@@ -260,19 +272,23 @@ async def on_date_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = getattr(update, "callback_query", None)
     if not query:
         return NATAL_DATE
+    user_data = context.user_data
+    if user_data is None:
+        await query.answer()
+        return ConversationHandler.END
     data = str(query.data or "")
     parts = data.split(":")
     action = parts[1] if len(parts) > 1 else ""
 
     if action == "done":
-        selected = _selected_date_from_picker(context.user_data)
+        selected = _selected_date_from_picker(user_data)
         if selected is None:
             await query.answer("Выберите день, месяц и год.")
             await _show_date_picker(update, context)
             return NATAL_DATE
         await query.answer()
-        context.user_data["natal_date"] = selected.isoformat()
-        if _is_matrix_only_flow(context.user_data):
+        user_data["natal_date"] = selected.isoformat()
+        if _is_matrix_only_flow(user_data):
             await _show_flow_prompt(update, context, "Выберите фокус матрицы судьбы.", reply_markup=_focus_keyboard())
             return NATAL_FOCUS
         await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
@@ -283,27 +299,32 @@ async def on_date_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _show_date_picker(update, context)
         return NATAL_DATE
     if action == "view" and len(parts) >= 3:
-        context.user_data["natal_date_picker_view"] = parts[2]
+        user_data["natal_date_picker_view"] = parts[2]
     elif action == "day" and len(parts) >= 3:
-        context.user_data["natal_date_day"] = _safe_int(parts[2])
-        context.user_data["natal_date_picker_view"] = "month"
+        user_data["natal_date_day"] = _safe_int(parts[2])
+        user_data["natal_date_picker_view"] = "month"
     elif action == "month" and len(parts) >= 3:
-        context.user_data["natal_date_month"] = _safe_int(parts[2])
-        _drop_invalid_selected_day(context.user_data)
-        context.user_data["natal_date_picker_view"] = "year"
+        user_data["natal_date_month"] = _safe_int(parts[2])
+        _drop_invalid_selected_day(user_data)
+        user_data["natal_date_picker_view"] = "year"
     elif action == "year" and len(parts) >= 3:
-        context.user_data["natal_date_year"] = _safe_int(parts[2])
-        _drop_invalid_selected_day(context.user_data)
-        context.user_data["natal_date_picker_view"] = _next_missing_date_part(context.user_data)
+        user_data["natal_date_year"] = _safe_int(parts[2])
+        _drop_invalid_selected_day(user_data)
+        user_data["natal_date_picker_view"] = _next_missing_date_part(user_data)
     elif action == "year_page" and len(parts) >= 3:
-        context.user_data["natal_date_year_page"] = _safe_int(parts[2])
-        context.user_data["natal_date_picker_view"] = "year"
+        user_data["natal_date_year_page"] = _safe_int(parts[2])
+        user_data["natal_date_picker_view"] = "year"
     await _show_date_picker(update, context)
     return NATAL_DATE
 
 
 async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = getattr(update, "callback_query", None)
+    user_data = context.user_data
+    if user_data is None:
+        if query:
+            await query.answer()
+        return ConversationHandler.END
     if query:
         await query.answer()
         raw = query.data.replace("natal_time_precision:", "")
@@ -327,10 +348,10 @@ async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return NATAL_TIME_PRECISION
     if precision == TimePrecision.UNKNOWN:
-        context.user_data["natal_time_precision"] = TimePrecision.UNKNOWN
+        user_data["natal_time_precision"] = TimePrecision.UNKNOWN
         await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_country_entry_keyboard())
         return NATAL_COUNTRY
-    context.user_data["natal_time_precision"] = precision
+    user_data["natal_time_precision"] = precision
     await _show_time_picker(update, context)
     return NATAL_TIME_VALUE
 
@@ -339,18 +360,22 @@ async def on_time_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = getattr(update, "callback_query", None)
     if not query:
         return NATAL_TIME_VALUE
+    user_data = context.user_data
+    if user_data is None:
+        await query.answer()
+        return ConversationHandler.END
     data = str(query.data or "")
     parts = data.split(":")
     action = parts[1] if len(parts) > 1 else ""
 
     if action == "done":
-        time_value = _selected_time_value_from_picker(context.user_data)
+        time_value = _selected_time_value_from_picker(user_data)
         if not time_value:
             await query.answer("Выберите время.")
             await _show_time_picker(update, context)
             return NATAL_TIME_VALUE
         await query.answer()
-        context.user_data["natal_time_value"] = time_value
+        user_data["natal_time_value"] = time_value
         await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_country_entry_keyboard())
         return NATAL_COUNTRY
 
@@ -359,15 +384,15 @@ async def on_time_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _show_time_picker(update, context)
         return NATAL_TIME_VALUE
     if action == "view" and len(parts) >= 3:
-        context.user_data["natal_time_picker_view"] = parts[2]
+        user_data["natal_time_picker_view"] = parts[2]
     elif action == "target" and len(parts) >= 3:
-        context.user_data["natal_time_range_target"] = parts[2]
+        user_data["natal_time_range_target"] = parts[2]
     elif action == "minute_page" and len(parts) >= 3:
-        context.user_data["natal_time_minute_page"] = _safe_int(parts[2])
-        context.user_data["natal_time_picker_view"] = "minute"
+        user_data["natal_time_minute_page"] = _safe_int(parts[2])
+        user_data["natal_time_picker_view"] = "minute"
     elif action in {"hour", "minute"} and len(parts) >= 3:
-        _set_time_picker_part(context.user_data, action, _safe_int(parts[2]))
-        context.user_data["natal_time_picker_view"] = "minute" if action == "hour" else "hour"
+        _set_time_picker_part(user_data, action, _safe_int(parts[2]))
+        user_data["natal_time_picker_view"] = "minute" if action == "hour" else "hour"
     await _show_time_picker(update, context)
     return NATAL_TIME_VALUE
 
@@ -375,7 +400,10 @@ async def on_time_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def on_time_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return NATAL_TIME_VALUE
-    context.user_data["natal_time_value"] = update.message.text.strip()
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+    user_data["natal_time_value"] = update.message.text.strip()
     await _delete_user_message(update)
     await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_country_entry_keyboard())
     return NATAL_COUNTRY
@@ -406,11 +434,14 @@ async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not query:
         return NATAL_COUNTRY
     await query.answer()
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
     country_code = query.data.replace("natal_country:", "")
     country = search_countries(country_code, limit=1)
     country_display = country[0].display_name if country else country_code
-    context.user_data["natal_country_code"] = country_code
-    context.user_data["natal_country"] = country_display
+    user_data["natal_country_code"] = country_code
+    user_data["natal_country"] = country_display
     await _show_flow_prompt(
         update,
         context,
@@ -423,9 +454,12 @@ async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return NATAL_PLACE
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
     query = update.message.text.strip()
     await _delete_user_message(update)
-    country_code = context.user_data.get("natal_country_code")
+    country_code = user_data.get("natal_country_code")
     if not isinstance(country_code, str) or not country_code:
         await _show_flow_prompt(
             update, context, "Сначала выберите страну рождения.", reply_markup=_input_keyboard("country")
@@ -454,6 +488,9 @@ async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not query:
         return NATAL_PLACE
     await query.answer()
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
     geoname_id = query.data.replace("natal_place:", "")
     city = find_city_by_id(geoname_id)
     if city is None:
@@ -461,7 +498,7 @@ async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             update, context, "Город не найден. Введите место рождения еще раз.", reply_markup=_input_keyboard("city")
         )
         return NATAL_PLACE
-    country_code = context.user_data.get("natal_country_code")
+    country_code = user_data.get("natal_country_code")
     if not isinstance(country_code, str) or not country_code:
         await _show_flow_prompt(
             update, context, "Сначала выберите страну рождения.", reply_markup=_input_keyboard("country")
@@ -475,8 +512,8 @@ async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             reply_markup=_input_keyboard("city"),
         )
         return NATAL_PLACE
-    context.user_data["natal_place"] = city.display_name
-    context.user_data["natal_place_data"] = _city_payload(city)
+    user_data["natal_place"] = city.display_name
+    user_data["natal_place_data"] = _city_payload(city)
     await _show_flow_prompt(
         update,
         context,
@@ -491,35 +528,43 @@ async def on_place_missing(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not query:
         return NATAL_PLACE
     await query.answer()
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
     await _show_flow_prompt(
         update,
         context,
         "Если вашего города нет в списке, введите ближайший крупный город рядом с местом рождения. "
         "Для натальной карты важны координаты и часовой пояс.",
-        reply_markup=_place_entry_keyboard(context.user_data.get("natal_country_code")),
+        reply_markup=_place_entry_keyboard(user_data.get("natal_country_code")),
     )
     return NATAL_PLACE
 
 
 async def on_focus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = getattr(update, "callback_query", None)
+    user_data = context.user_data
+    if user_data is None:
+        if query:
+            await query.answer()
+        return ConversationHandler.END
     if query:
         await query.answer()
         focus_key = query.data.replace("natal_focus:", "")
-        context.user_data["natal_focus"] = _FOCUS_LABELS.get(focus_key, "общий")
+        user_data["natal_focus"] = _FOCUS_LABELS.get(focus_key, "общий")
     else:
         if not update.message or not update.message.text:
             return NATAL_FOCUS
-        context.user_data["natal_focus"] = update.message.text.strip() or "общий"
+        user_data["natal_focus"] = update.message.text.strip() or "общий"
         await _delete_user_message(update)
     try:
-        birth_input = _birth_input_from_steps(context.user_data)
+        birth_input = _birth_input_from_steps(user_data)
     except BirthInputParseError as exc:
         await _show_flow_prompt(update, context, f"Не удалось разобрать данные: {exc}")
         if "врем" in str(exc).lower():
             return NATAL_TIME_VALUE
         return NATAL_DATE
-    context.user_data["natal_birth_input"] = birth_input
+    user_data["natal_birth_input"] = birth_input
     await _show_flow_prompt(update, context, _confirmation_text(birth_input), reply_markup=_confirm_keyboard())
     return NATAL_CONFIRM
 
@@ -529,18 +574,19 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
     if not query:
         return NATAL_CONFIRM
     await query.answer()
+    user_data = context.user_data
     action = query.data.replace("natal_confirm:", "")
     if action == "cancel":
-        clear_natal_user_data(context.user_data)
+        clear_natal_user_data(user_data)
         await query.edit_message_text("Отменено.")
         return ConversationHandler.END
-    birth_input = context.user_data.get("natal_birth_input")
-    if not isinstance(birth_input, BirthInput):
+    birth_input = user_data.get("natal_birth_input") if user_data is not None else None
+    if user_data is None or not isinstance(birth_input, BirthInput):
         await query.edit_message_text("Данные не найдены. Запустите /natal заново.")
         return ConversationHandler.END
-    epoch = context.user_data.get("natal_memory_epoch")
+    epoch = user_data.get("natal_memory_epoch")
     if type(epoch) is not int:
-        clear_natal_user_data(context.user_data)
+        clear_natal_user_data(user_data)
         await query.edit_message_text("Данные устарели. Запустите /natal заново.")
         return ConversationHandler.END
     await _show_flow_prompt(update, context, "Считаю карту...")
@@ -567,7 +613,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
         logger.warning("Natal report failed type=%s", type(exc).__name__)
         await _show_flow_prompt(update, context, "Не удалось построить карту. Запустите /natal и попробуйте ещё раз.")
     finally:
-        clear_natal_user_data(context.user_data)
+        clear_natal_user_data(user_data)
     return ConversationHandler.END
 
 
@@ -599,21 +645,24 @@ async def _show_flow_prompt(
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
-    text = _format_flow_prompt(context.user_data, text)
+    user_data = context.user_data
+    text = _format_flow_prompt(user_data, text)
     query = getattr(update, "callback_query", None)
     if query:
         await query.edit_message_text(text, reply_markup=reply_markup)
-        if query.message and "natal_flow_message" not in context.user_data:  # type: ignore[operator]
-            context.user_data["natal_flow_message"] = query.message  # type: ignore[index]
+        if query.message and user_data is not None and "natal_flow_message" not in user_data:
+            user_data["natal_flow_message"] = query.message
         return
 
-    flow_message = context.user_data.get("natal_flow_message")
+    flow_message = user_data.get("natal_flow_message") if user_data is not None else None
     if flow_message is not None and hasattr(flow_message, "edit_text"):
         await flow_message.edit_text(text, reply_markup=reply_markup)
         return
 
     if update.message:
-        context.user_data["natal_flow_message"] = await update.message.reply_text(text, reply_markup=reply_markup)
+        flow_message = await update.message.reply_text(text, reply_markup=reply_markup)
+        if user_data is not None:
+            user_data["natal_flow_message"] = flow_message
 
 
 async def _delete_user_message(update: Update) -> None:
@@ -763,8 +812,8 @@ def _is_safe_button_url(value: str) -> bool:
     return normalized.startswith(("https://", "http://localhost", "http://127.0.0.1"))
 
 
-def _format_flow_prompt(user_data: dict, text: str) -> str:
-    if _is_terminal_flow_text(text):
+def _format_flow_prompt(user_data: dict | None, text: str) -> str:
+    if user_data is None or _is_terminal_flow_text(text):
         return text
     summary = "\n".join(_draft_lines(user_data))
     return f"{text}\n\nЧерновик:\n{summary}\n\nСообщения с датой, временем и местом я удаляю из чата после обработки."
@@ -930,7 +979,9 @@ async def on_compatibility_during_natal(update: Update, context: ContextTypes.DE
     return None
 
 
-def clear_natal_user_data(user_data: dict) -> None:
+def clear_natal_user_data(user_data: dict | None) -> None:
+    if user_data is None:
+        return
     for key in list(user_data):
         if key in _NATAL_KEYS:
             user_data.pop(key, None)
@@ -1000,11 +1051,14 @@ def _time_precision_keyboard() -> InlineKeyboardMarkup:
 
 
 async def _show_time_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_data = context.user_data
+    if user_data is None:
+        return
     await _show_flow_prompt(
         update,
         context,
         "Время рождения: выберите час и минуты кнопками.",
-        reply_markup=_time_picker_keyboard(context.user_data),
+        reply_markup=_time_picker_keyboard(user_data),
     )
 
 
@@ -1165,11 +1219,14 @@ def _focus_keyboard() -> InlineKeyboardMarkup:
 
 
 async def _show_date_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_data = context.user_data
+    if user_data is None:
+        return
     await _show_flow_prompt(
         update,
         context,
         "Дата рождения: выберите день, месяц и год кнопками.",
-        reply_markup=_date_picker_keyboard(context.user_data),
+        reply_markup=_date_picker_keyboard(user_data),
     )
 
 

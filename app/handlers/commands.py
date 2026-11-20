@@ -187,7 +187,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if payload.startswith("subscribe_horoscope_"):
         from app.handlers.horoscope_subscription import start_subscribe_horoscope
 
-        context.user_data["horo_payload"] = payload
+        user_data = context.user_data
+        if user_data is None:
+            return
+        user_data["horo_payload"] = payload
         await start_subscribe_horoscope(update, context)
         return
 
@@ -207,7 +210,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     logging.info("Help command from user %s", user_id)
 
     lang = language_from_telegram(getattr(update.effective_user, "language_code", None))
-    context.user_data["help_lang"] = lang
+    if context.user_data is not None:
+        context.user_data["help_lang"] = lang
     if update.callback_query:
         await update.callback_query.answer()
 

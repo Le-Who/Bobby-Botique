@@ -150,10 +150,12 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
 
 @safe_handler("Не удалось открыть Daily Trivia")
 async def daily_trivia_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.effective_user or not update.effective_message:
+    user = update.effective_user
+    message = update.effective_message
+    if user is None or message is None:
         return
 
-    user_id = update.effective_user.id
+    user_id = user.id
     today = today_puzzle_date(datetime.now(tz=UTC))
     await prepare_daily_puzzle(today)
     pref = await daily_delivery_repo.get_preference(user_id)
@@ -168,25 +170,32 @@ async def daily_trivia_command(update: Update, context: ContextTypes.DEFAULT_TYP
         from app.games import cover_photo as _cover_photo
 
         cover = await _cover_photo.get_cover_photo("dailytrivia")
-        send_kwargs = {
-            "chat_id": user_id,
-            "parse_mode": ParseMode.HTML,
-            "reply_markup": keyboard,
-        }
-        if update.effective_message.message_id:
-            send_kwargs["reply_to_message_id"] = update.effective_message.message_id
+        reply_to_message_id = message.message_id or None
 
         sent_message = None
         if cover:
             try:
-                sent_message = await context.bot.send_photo(photo=cover, caption=text, **send_kwargs)
+                sent_message = await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=cover,
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                    reply_to_message_id=reply_to_message_id,
+                )
                 await _cover_photo.remember_cover_file_id("dailytrivia", sent_message)
             except Exception as exc:
                 logger.warning("daily trivia result photo failed user=%s: %s", user_id, exc)
                 sent_message = None
         if sent_message is None:
             try:
-                sent_message = await context.bot.send_message(text=text, **send_kwargs)
+                sent_message = await context.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                    reply_to_message_id=reply_to_message_id,
+                )
             except Exception as exc:
                 logger.warning("daily trivia result text failed user=%s: %s", user_id, exc)
 
@@ -207,7 +216,7 @@ async def daily_trivia_command(update: Update, context: ContextTypes.DEFAULT_TYP
         user_id,
         today,
         include_subscribe=not is_subscribed,
-        reply_to_message_id=update.effective_message.message_id,
+        reply_to_message_id=message.message_id,
         mark_delivered=False,
     )
 

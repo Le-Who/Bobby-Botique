@@ -483,8 +483,7 @@ async def check_and_deliver_reminders(context: ContextTypes.DEFAULT_TYPE) -> Non
                         ctx = json.loads(ctx)
                     except json.JSONDecodeError, TypeError:
                         ctx = None
-                is_ai = isinstance(ctx, dict) and bool(ctx.get("is_ai"))
-                if is_ai:
+                if isinstance(ctx, dict) and ctx.get("is_ai"):
                     task = try_submit_task(
                         _execute_ai_reminder(
                             context.bot,

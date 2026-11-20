@@ -47,8 +47,8 @@ import math
 import re
 from contextlib import suppress
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ChatAction
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
+from telegram.constants import ChatAction, MessageLimit
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
@@ -601,15 +601,9 @@ async def _run_generation(
 
     if image_bytes:
         model_label = _model_label(model)
-        display_prompt = api_prompt if translated else prompt
-
-        safe_limit = 400
-        short = display_prompt[:safe_limit].strip() + ("..." if len(display_prompt) > safe_limit else "")
-
-        caption = f"🎨 *{_escape_md(short)}*\n_{model_label} · {aspect_ratio}_"
-        if translated:
-            original_short = prompt[:400].strip() + ("…" if len(prompt) > 400 else "")
-            caption += f"\n_🌐 Переведено: {_escape_md(original_short)}_"
+        caption, caption_entities = _draw_caption(
+            api_prompt, model_label, aspect_ratio, original=prompt if translated else None
+        )
 
         try:
             from app.utils.ux_improvements import EFFECT_FIRE
@@ -617,7 +611,8 @@ async def _run_generation(
             sent = await message.reply_photo(
                 photo=image_bytes,
                 caption=caption,
-                parse_mode="Markdown",
+                parse_mode=None,
+                caption_entities=caption_entities,
                 reply_markup=keyboard,
                 message_effect_id=EFFECT_FIRE,
             )
@@ -639,9 +634,7 @@ async def _run_generation(
         except Exception as send_err:
             logger.error("Failed to send generated image: %s", send_err)
             try:
-                await placeholder.edit_text(
-                    "❌ Изображение создано, но не удалось отправить (возможно, слишком длинный текст). Попробуйте снова."
-                )
+                await placeholder.edit_text("❌ Изображение создано, но не удалось отправить. Попробуйте снова.")
             except Exception:
                 pass
         from app.utils.metrics_middleware import mark_operation_failed
@@ -715,6 +708,51 @@ def _escape_md(text: str) -> str:
     return text
 
 
+def _shorten_caption_text(text: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _caption_entity(kind: str, prefix: str, text: str) -> MessageEntity:
+    return MessageEntity(kind, len(prefix.encode("utf-16-le")) // 2, len(text.encode("utf-16-le")) // 2)
+
+
+def _draw_caption(
+    prompt: str, model_label: str, aspect_ratio: str, *, original: str | None = None
+) -> tuple[str, tuple[MessageEntity, ...]]:
+    limit = MessageLimit.CAPTION_LENGTH
+    metadata_limit = limit // 4
+    ratio = _shorten_caption_text(aspect_ratio, metadata_limit // 4)
+    separator = f" · {ratio}"
+    model = _shorten_caption_text(model_label, metadata_limit - len(separator))
+    metadata = model + separator
+    prefix = "🎨 "
+    translation_label = "🌐 Переведено: "
+    remaining = limit - len(prefix + "\n" + metadata)
+    prompt = prompt.strip()
+
+    if original is not None:
+        original = original.strip()
+        remaining -= len("\n" + translation_label)
+        prompt_limit = remaining - min(len(original), remaining // 2)
+    else:
+        prompt_limit = remaining
+
+    shortened = _shorten_caption_text(prompt, prompt_limit)
+    caption = prefix + shortened + "\n" + metadata
+    entities = [_caption_entity(MessageEntity.ITALIC, prefix + shortened + "\n", metadata)]
+    if shortened:
+        entities.insert(0, _caption_entity(MessageEntity.BOLD, prefix, shortened))
+    if original is not None:
+        original_text = _shorten_caption_text(original, remaining - len(shortened))
+        translation = translation_label + original_text
+        entities.append(_caption_entity(MessageEntity.ITALIC, caption + "\n", translation))
+        caption += "\n" + translation
+
+    return caption, tuple(entities)
+
+
 async def handle_draw_prompt_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     Check if the user is in 'awaiting_prompt' mode for the draw command.
@@ -751,16 +789,15 @@ async def handle_draw_prompt_input(update: Update, context: ContextTypes.DEFAULT
         pass
 
     if last_photo_id:
-        safe_limit = 400
-        short = new_prompt[:safe_limit].strip() + ("..." if len(new_prompt) > safe_limit else "")
-        caption = f"🎨 *{_escape_md(short)}*\n_{_model_label(state['model'])} · {state['aspect_ratio']}_"
+        caption, caption_entities = _draw_caption(new_prompt, _model_label(state["model"]), state["aspect_ratio"])
         try:
             bot = message.get_bot()
             await bot.edit_message_caption(
                 chat_id=chat_id,
                 message_id=last_photo_id,
                 caption=caption,
-                parse_mode="Markdown",
+                parse_mode=None,
+                caption_entities=caption_entities,
                 reply_markup=keyboard,
             )
             return True

@@ -375,12 +375,15 @@ async def generate_custom_role(
                 if not await interaction_current(owner):
                     return
                 history = [{"role": "user", "parts": [message_text]}]
+                prompt_engineer = get_registry().get("prompt_engineer")
+                if prompt_engineer is None:
+                    raise LookupError("The prompt_engineer prompt is unavailable")
                 if policy.explicit:
                     response_text, _ = await execute_text_process(
                         "roles.generate",
                         (model_for_role,),
                         history,
-                        system_instruction=get_registry().get("prompt_engineer").text,
+                        system_instruction=prompt_engineer.text,
                         user_id=user_id,
                         chat_id=chat_id,
                     )
@@ -390,7 +393,7 @@ async def generate_custom_role(
                         key_data["api_key"],
                         history,
                         model_used,
-                        system_instruction=get_registry().get("prompt_engineer").text,
+                        system_instruction=prompt_engineer.text,
                         user_id=user_id,
                         chat_id=chat_id,
                     )

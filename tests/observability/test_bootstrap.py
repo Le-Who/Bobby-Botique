@@ -78,6 +78,24 @@ def test_repeated_setup_has_one_owned_root_handler_and_no_named_hidden_sinks():
     assert application_records[0]["logger"] == "api_logger"
 
 
+def test_httpx_and_httpcore_keep_warning_threshold_during_debug_logging():
+    _run_probe(
+        """
+        import logging
+        from app.utils.logging_config import setup_detailed_logging, shutdown_detailed_logging
+
+        setup_detailed_logging(log_level="DEBUG", enable_structured_logging=True)
+        try:
+            assert logging.getLogger().level == logging.DEBUG
+            for name in ("httpx", "httpcore"):
+                logger = logging.getLogger(name)
+                assert logger.level >= logging.WARNING, (name, logger.level)
+        finally:
+            shutdown_detailed_logging()
+        """
+    )
+
+
 def test_shutdown_is_idempotent_and_drains_accepted_events():
     events = _run_probe(
         """

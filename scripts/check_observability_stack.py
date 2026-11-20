@@ -135,8 +135,10 @@ class StackProbe:
                 else "scripts/smoke_log_viewer.py"
             )
             assert event["source"]["file"] == expected_source
-            assert event["event_id"] not in actual, "one stdout event was ingested more than once"
-            actual[event["event_id"]] = line
+            event_id = event["event_id"]
+            if event_id in actual:
+                assert "recovery" in self.manifest and actual[event_id] == line, "duplicate or conflicting stdout event"
+            actual[event_id] = line
         expected = set(self.manifest["expected"][service])
         assert set(actual) == expected, (
             f"{service}: missing={len(expected - set(actual))}, extra={len(set(actual) - expected)}"
@@ -155,9 +157,10 @@ class StackProbe:
                 for labels, line in rows
                 if line == f"synthetic-invalid-{service}-{self.manifest['run_id']}"
             ]
-            assert len(invalid) == 1
-            assert invalid[0][0]["parse_status"] == "invalid"
-            assert invalid[0][0]["service_name"] == service
+            assert invalid and (len(invalid) == 1 or "recovery" in self.manifest)
+            for labels, _ in invalid:
+                assert labels["parse_status"] == "invalid"
+                assert labels["service_name"] == service
             for _, line in rows:
                 if self.manifest["run_id"] in line:
                     assert len(line.encode("utf-8")) <= MAX_EVENT_BYTES
@@ -189,7 +192,8 @@ class StackProbe:
                 and event.get("smoke_run_id") == self.manifest["run_id"]
             ):
                 selected.append(event)
-        assert len(selected) == 1
+        assert selected
+        assert len(selected) == 1 or ("recovery" in self.manifest and all(event == selected[0] for event in selected))
         event = selected[0]
         expected = self.manifest["privacy"]
         assert event["message"] == "Controlled provider echo [redacted]"
@@ -211,9 +215,17 @@ def docker(*arguments: str, check: bool = True) -> subprocess.CompletedProcess:
 
 
 def run_probe(
-    *, base_url: str, password_file: Path, compose_file: Path, private_event_file: Path, output: Path
+    *,
+    base_url: str,
+    password_file: Path,
+    compose_file: Path,
+    private_event_file: Path,
+    output: Path,
+    recovery_project: str | None = None,
 ) -> dict:
     base_url = loopback_url(base_url)
+    if recovery_project is not None and not re.fullmatch(r"gemaibot-observability-probe-\d+-\d+", recovery_project):
+        raise ValueError("recovery requires an isolated gemaibot-observability-probe-<run>-<attempt> Compose project")
     names = ("tg-bot", "ytdlbot-bot-1")
     for name in names:
         result = docker("inspect", name, check=False)
@@ -243,7 +255,7 @@ def run_probe(
     def workload(name: str, data: bytes, *, collect: bool):
         path = output / (name + ".ndjson")
         path.write_bytes(data)
-        arguments = ["run", "-d", "--name", name, "--label", f"{OWNER_LABEL}={run_id}"]
+        arguments = ["run", "-d", "--name", name, "--log-driver", "local", "--label", f"{OWNER_LABEL}={run_id}"]
         if collect:
             arguments.extend(["--label", "com.gemaibot.logs=true"])
         arguments.extend(
@@ -261,6 +273,29 @@ def run_probe(
         owned.append(container_id)
         return container_id
 
+    def wait_for_events(phase: str):
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                probe.check_events("gemaibotv2")
+                probe.check_events("ytdlbot")
+                return
+            except AssertionError as error:
+                if time.monotonic() >= deadline:
+                    error.add_note(f"Collector probe phase: {phase}")
+                    raise
+                time.sleep(2)
+
+    def recovery_event(phase: str) -> bytes:
+        event = json.loads(next(iter(generate_events(count=1, run_id=run_id))))
+        event["event_id"] = uuid4().hex
+        event["request_id"] = uuid4().hex
+        event["probe_phase"] = phase
+        manifest.setdefault("recovery", {})[phase] = event["event_id"]
+        manifest["expected"]["gemaibotv2"].append(event["event_id"])
+        manifest["requests"][event["event_id"]] = event["request_id"]
+        return json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
     try:
         excluded_unlabelled = "synthetic-private-unlabelled-" + run_id
         excluded_other = "synthetic-private-other-project-" + run_id
@@ -269,6 +304,7 @@ def run_probe(
         workload("other-project-" + run_id, (excluded_other + "\n").encode(), collect=True)
         time.sleep(17)
         remove(unlabelled_id)
+        workloads = {}
         for service, name, count in (("gemaibotv2", "tg-bot", 120), ("ytdlbot", "ytdlbot-bot-1", 7)):
             lines = []
             expected = []
@@ -287,24 +323,42 @@ def run_probe(
                 manifest["requests"][private_event["event_id"]] = private_event["request_id"]
                 lines.append(json.dumps(private_event, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
             lines.append(f"synthetic-invalid-{service}-{run_id}".encode())
-            workload(name, b"\n".join(lines) + b"\n", collect=True)
+            workloads[service] = workload(name, b"\n".join(lines) + b"\n", collect=True)
+        wait_for_events("initial stdout")
+        if recovery_project is not None:
+            proxy = docker(
+                "compose", "--project-name", recovery_project, "-f", str(compose_file), "ps", "-q", "docker-proxy"
+            ).stdout.strip()
+            if not re.fullmatch(r"[0-9a-f]{12,64}", proxy):
+                raise RuntimeError("the isolated Compose project must have exactly one running Docker API proxy")
+            docker("restart", "--time", "1", proxy)
+            bot_id = workloads["gemaibotv2"]
+            docker(
+                "exec",
+                bot_id,
+                "/bin/sh",
+                "-c",
+                'printf "%s\\n" "$1" > /proc/1/fd/1',
+                "probe",
+                recovery_event("reconnect").decode("utf-8"),
+            )
+            wait_for_events("proxy reconnect")
+            remove(bot_id)
+            replacement_id = workload("tg-bot", recovery_event("replacement") + b"\n", collect=True)
+            assert replacement_id != bot_id, "synthetic replacement must have a new Docker container ID"
+            wait_for_events("container replacement")
         manifest_file = output / "manifest.json"
         manifest_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        deadline = time.monotonic() + 60
-        while True:
-            try:
-                probe.check_events("gemaibotv2")
-                probe.check_events("ytdlbot")
-                break
-            except AssertionError:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(2)
         probe.check_auth()
         probe.check_source_filters_and_fallback()
         probe.check_query_limits()
         probe.check_privacy()
-        return {"events": 128, "invalid_lines": 2, "excluded_sources": 2, "manifest": str(manifest_file)}
+        return {
+            "events": sum(map(len, manifest["expected"].values())),
+            "invalid_lines": 2,
+            "excluded_sources": 2,
+            "manifest": str(manifest_file),
+        }
     finally:
         validation_error = sys.exception()
         cleanup_errors = []
@@ -329,6 +383,9 @@ def main() -> int:
     parser.add_argument("--private-event-file", type=Path, required=True)
     parser.add_argument("--compose-file", type=Path, default=ROOT / "ops/observability/compose.yml")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--recovery-project", help="Isolated Compose project for the proxy reconnect and replacement checks"
+    )
     args = parser.parse_args()
     if not args.ephemeral:
         parser.error("--ephemeral is required; this probe creates named synthetic workload containers")
@@ -338,6 +395,7 @@ def main() -> int:
         compose_file=args.compose_file,
         private_event_file=args.private_event_file,
         output=args.output,
+        recovery_project=args.recovery_project,
     )
     print(json.dumps(result))
     return 0

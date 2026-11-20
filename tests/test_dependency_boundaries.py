@@ -51,6 +51,8 @@ def test_telegram_application_and_polling_contract() -> None:
 
 
 def test_structlog_processor_formatter_contract() -> None:
+    was_configured = structlog.is_configured()
+    previous_config = structlog.get_config()
     try:
         formatter = configure_structlog_pipeline(enable_structured=True, enable_pretty=False)
         record = logging.LogRecord(
@@ -67,7 +69,10 @@ def test_structlog_processor_formatter_contract() -> None:
         assert event["event"] == "legacy.log"
         assert event["message"] == "hello world"
     finally:
-        structlog.reset_defaults()
+        if was_configured:
+            structlog.configure(**previous_config)
+        else:
+            structlog.reset_defaults()
 
 
 @pytest.mark.asyncio

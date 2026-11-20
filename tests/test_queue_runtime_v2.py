@@ -170,13 +170,10 @@ async def test_malformed_payload_is_metadata_quarantined_counted_and_never_execu
         await queue.stop()
 
 
-async def test_ten_thousand_mixed_admissions_outage_and_drain_stay_bounded(monkeypatch, caplog):
-    import logging
-
+async def test_ten_thousand_mixed_admissions_outage_and_drain_stay_bounded(monkeypatch):
     from app.queue_store import RedisQueueStore
     from tests.test_redis_queue import WireRedis
 
-    caplog.set_level(logging.WARNING, logger="app.observability")
     redis = WireRedis()
     redis.fail_after.add("admit")
     monkeypatch.setattr("app.queue._get_redis", lambda: redis)

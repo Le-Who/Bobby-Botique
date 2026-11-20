@@ -1,10 +1,20 @@
 import html
 import re
+from collections import deque
+from collections.abc import Iterator
+from dataclasses import dataclass
+
+from telegram.constants import MessageLimit
 
 MAX_MESSAGE_LENGTH = 4096
+_MAX_FORMATTING_ENTITIES = MessageLimit.MESSAGE_ENTITIES
 
-_TAG_RE = re.compile(r"<(/?)(pre|code|b|i|a|u|s|em|strong|blockquote)(\s[^>]*)?>")
-_EMPTY_TAG_RE = re.compile(r"<(pre|code|b|i|a|u|s|em|strong|blockquote)(?:\s[^>]*)?>(?:</\1>)")
+_TAG_NAMES = r"pre|code|b|i|a|u|s|em|strong|blockquote|ins|strike|del|span|tg-spoiler|tg-emoji"
+_TAG_ATTRIBUTES = r"""(?:\s(?:"[^"]*"|'[^']*'|[^<>'"])*)?"""
+_TAG_RE = re.compile(rf"<(/?)({_TAG_NAMES}){_TAG_ATTRIBUTES}>", re.IGNORECASE)
+_EMPTY_TAG_RE = re.compile(rf"<({_TAG_NAMES}){_TAG_ATTRIBUTES}></\1>", re.IGNORECASE)
+_ENTITY_PATTERN = r"&(?:[a-zA-Z][a-zA-Z0-9]{0,31}|#(?:[0-9]+|[xX][a-fA-F0-9]+));"
+_HTML_TOKEN_RE = re.compile(rf"{_TAG_RE.pattern}|{_ENTITY_PATTERN}|[^<>&]+|[<>&]", re.IGNORECASE)
 
 _CODE_BLOCK_RE = re.compile(r"(```(?:.|\n)*?```)")
 _ESCAPE_CLEANUP_RE = re.compile(r"\\([.\-()!=[\]{}|#+])")
@@ -30,8 +40,32 @@ _ITALIC_STAR_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
 _ITALIC_SINGLE_UNDER_RE = re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)")
 _STRIKETHROUGH_RE = re.compile(r"~~(.+?)~~")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-_TAG_FIND_RE = re.compile(r"<(/?)(\w+)[^>]*>")
 _STRIP_HTML_RE = re.compile(r"<[^>]+>")
+
+
+def _decode_entity(entity: str) -> str:
+    if entity.startswith("&#"):
+        prefix_length = 3 if entity[2:3] in {"x", "X"} else 2
+        digits = entity[prefix_length:-1].lstrip("0")
+        if len(digits) > 8:
+            return "\ufffd"
+        entity = f"{entity[:prefix_length]}{digits or '0'};"
+    return html.unescape(entity)
+
+
+def fits_telegram_html(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> bool:
+    """Check raw and rendered code-point budgets and explicit formatting count."""
+    if len(text) > max_length:
+        return False
+    if (
+        text.count("<") > _MAX_FORMATTING_ENTITIES
+        and sum(not match[1] for match in _TAG_RE.finditer(text)) > _MAX_FORMATTING_ENTITIES
+    ):
+        return False
+    if len(text) <= MAX_MESSAGE_LENGTH:
+        return True
+    visible = re.sub(_ENTITY_PATTERN, lambda match: _decode_entity(match[0]), _TAG_RE.sub("", text))
+    return len(visible) <= MAX_MESSAGE_LENGTH
 
 
 def format_text(text: str, parse_mode: str = "HTML") -> tuple[str, str]:
@@ -160,94 +194,156 @@ def markdown_to_html(text: str) -> str:
     return "".join(html_parts)
 
 
+@dataclass(frozen=True, slots=True)
+class _Markup:
+    tags: tuple[tuple[str, str], ...] = ()
+    closing: str = ""
+    width: int = 0
+
+    @classmethod
+    def from_tags(cls, tags: tuple[tuple[str, str], ...]) -> _Markup:
+        closing = "".join(f"</{name}>" for name, _ in reversed(tags))
+        return cls(tags, closing, len(closing) + sum(len(opening) for _, opening in tags))
+
+    def from_previous(self, previous: _Markup) -> tuple[str, int]:
+        if self is previous:
+            return "", 0
+        shared = 0
+        for old, new in zip(previous.tags, self.tags, strict=False):
+            if old is not new:
+                break
+            shared += 1
+        return (
+            "".join(f"</{name}>" for name, _ in reversed(previous.tags[shared:]))
+            + "".join(opening for _, opening in self.tags[shared:]),
+            len(self.tags) - shared,
+        )
+
+    def fit(self, limit: int) -> _Markup:
+        if self.width <= limit and len(self.tags) <= _MAX_FORMATTING_ENTITIES:
+            return self
+        tags = tuple(tag for tag in self.tags if len(tag[0]) + 3 + len(tag[1]) <= limit)[:_MAX_FORMATTING_ENTITIES]
+        end = len(tags)
+        width = sum(len(name) + 3 + len(opening) for name, opening in tags)
+        while width > limit:
+            end -= 1
+            name, opening = tags[end]
+            width -= len(opening) + len(name) + 3
+        return _Markup.from_tags(tags[:end])
+
+
+@dataclass(frozen=True, slots=True)
+class _HtmlAtom:
+    encoded: str
+    visible_length: int
+    whitespace: bool
+    markup: _Markup
+
+
+_NO_MARKUP = _Markup()
+_ESCAPED_TEXT = {"&": "&amp;", "<": "&lt;", ">": "&gt;"}
+_NAMED_TELEGRAM_ENTITIES = frozenset({"&amp;", "&lt;", "&gt;", "&quot;"})
+
+
+def _html_atoms(text: str, max_length: int) -> Iterator[_HtmlAtom]:
+    tags: list[tuple[str, str]] = []
+    markup = _NO_MARKUP
+    markup_changed = False
+    by_encoded_length: dict[int, _Markup] = {}
+
+    def fitting_markup(encoded_length: int) -> _Markup:
+        if encoded_length > max_length:
+            raise ValueError("Telegram HTML budget cannot fit one escaped character")
+        if encoded_length not in by_encoded_length:
+            by_encoded_length[encoded_length] = markup.fit(max_length - encoded_length)
+        return by_encoded_length[encoded_length]
+
+    for match in _HTML_TOKEN_RE.finditer(text):
+        token = match[0]
+        if match[2]:
+            name = match[2].lower()
+            if not match[1]:
+                tags.append((name, token))
+            else:
+                for index in range(len(tags) - 1, -1, -1):
+                    if tags[index][0] == name:
+                        del tags[index]
+                        break
+            markup_changed = True
+            continue
+        if markup_changed:
+            markup = _Markup.from_tags(tuple(tags)) if tags else _NO_MARKUP
+            markup_changed = False
+            by_encoded_length.clear()
+        if token.startswith("&") and token.endswith(";"):
+            visible = _decode_entity(token)
+            if visible and len(token) <= max_length and (token in _NAMED_TELEGRAM_ENTITIES or token.startswith("&#")):
+                yield _HtmlAtom(token, len(visible), visible.isspace(), fitting_markup(len(token)))
+                continue
+            token = visible
+        for char in token:
+            encoded = _ESCAPED_TEXT.get(char, char)
+            yield _HtmlAtom(encoded, 1, char.isspace(), fitting_markup(len(encoded)))
+
+
 def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[str]:
+    """Split Telegram HTML while preserving text and the markup that fits around it.
+
+    ``max_length`` bounds raw Python code points including reopened and closed
+    tags. Telegram separately limits visible code points and formatting count.
+    If the full formatting cannot fit, keep the visible text and fit as many
+    of the surrounding tags as the budgets permit. Raise if even one escaped
+    character cannot fit by itself.
     """
-    Splits text into chunks safe for Telegram, respecting HTML structure.
-    Tries to split by newlines, then spaces, avoiding splitting inside tags.
-    """
-    if len(text) <= max_length:
+    if max_length < 1:
+        raise ValueError("Telegram HTML chunks need a positive budget")
+    if fits_telegram_html(text, max_length):
         return [text]
 
-    chunks = []
-    for _guard in range(200):
-        if not text:
-            break
-        if len(text) <= max_length:
-            chunks.append(text)
-            break
+    chunks: list[str] = []
+    atoms = iter(_html_atoms(text, max_length))
+    pending: deque[_HtmlAtom] = deque()
+    while (atom := pending.popleft() if pending else next(atoms, None)) is not None:
+        pieces: list[str] = []
+        chunk_atoms: list[_HtmlAtom] = []
+        active = _NO_MARKUP
+        raw_length = visible_length = formatting_count = 0
+        preferred: tuple[int, str] | None = None
 
-        limit = max_length
-        cut_point = -1
+        while atom is not None:
+            markup = atom.markup
+            transition, opened_tags = markup.from_previous(active)
+            piece = transition + atom.encoded
+            proposed_length = raw_length + len(piece)
+            if (
+                proposed_length + len(markup.closing) > max_length
+                or visible_length + atom.visible_length > MAX_MESSAGE_LENGTH
+                or formatting_count + opened_tags > _MAX_FORMATTING_ENTITIES
+            ):
+                if preferred is not None:
+                    cut, closing = preferred
+                    pending.extendleft(reversed([*chunk_atoms[cut:], atom]))
+                    chunks.append("".join(pieces[:cut]) + closing)
+                else:
+                    pending.appendleft(atom)
+                    chunks.append("".join(pieces) + active.closing)
+                break
 
-        candidates = [
-            text.rfind("</pre>", 0, limit),
-            text.rfind("\n\n", 0, limit),
-            text.rfind("\n", 0, limit),
-            text.rfind(". ", 0, limit),
-        ]
-
-        valid_candidates = [c for c in candidates if c != -1]
-
-        if valid_candidates:
-            cut_point = max(valid_candidates)
-
-            if cut_point == candidates[0]:
-                cut_point += 6
-            elif cut_point == candidates[1]:
-                cut_point += 2
-            elif cut_point == candidates[2]:
-                cut_point += 1
-
+            pieces.append(piece)
+            chunk_atoms.append(atom)
+            active = markup
+            raw_length = proposed_length
+            visible_length += atom.visible_length
+            formatting_count += opened_tags
+            if atom.whitespace and (
+                raw_length + len(markup.closing) >= max_length // 2
+                or visible_length >= MAX_MESSAGE_LENGTH // 2
+                or formatting_count >= _MAX_FORMATTING_ENTITIES // 2
+            ):
+                preferred = len(pieces), markup.closing
+            atom = pending.popleft() if pending else next(atoms, None)
         else:
-            cut_point = text.rfind(" ", 0, limit)
-
-        if cut_point == -1 or cut_point == 0:
-            cut_point = limit
-
-        last_open_angle = text.rfind("<", 0, cut_point)
-        if last_open_angle != -1:
-            last_close_angle_after_open = text.find(">", last_open_angle, cut_point)
-            if last_close_angle_after_open == -1:  # noqa: SIM102
-                if last_open_angle > 0:
-                    cut_point = last_open_angle
-
-        chunk = text[:cut_point]
-        remaining = text[cut_point:].lstrip()
-
-        open_tags = []
-        tag_iter = _TAG_FIND_RE.finditer(chunk)
-        for match in tag_iter:
-            is_close = match.group(1) == "/"
-            tag_name = match.group(2)
-            full_match = match.group(0)
-
-            if tag_name in ["br", "img", "hr"]:
-                continue
-            if not is_close:
-                open_tags.append((tag_name, full_match))
-            else:
-                if open_tags and open_tags[-1][0] == tag_name:
-                    open_tags.pop()
-
-        closing_str = ""
-        opening_str = ""
-        for tag_name, full_match in reversed(open_tags):
-            closing_str += f"</{tag_name}>"
-            opening_str = full_match + opening_str
-        chunk += closing_str
-        if remaining:
-            remaining = opening_str + remaining
-
-        if cut_point <= 0 or remaining == text or len(remaining) >= len(text):
-            cut_point = limit
-            chunk = text[:cut_point]
-            remaining = text[cut_point:].lstrip()
-            chunks.append(chunk)
-            text = remaining
-            continue
-
-        chunks.append(chunk)
-        text = remaining
+            chunks.append("".join(pieces) + active.closing)
 
     return chunks
 
@@ -280,7 +376,7 @@ def sanitize_html_tags(html_text: str) -> str:
         last_end = match.end()
 
         is_close = match.group(1) == "/"
-        tag_name = match.group(2)
+        tag_name = match.group(2).lower()
         full_tag = match.group(0)
 
         if not is_close:

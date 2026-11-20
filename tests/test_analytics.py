@@ -1,42 +1,4 @@
-import sys
-from unittest.mock import MagicMock
-
-import pytest
-
-pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
-
-_MOCK_KEYS = ["asyncpg", "app.database"]
-_original_modules: dict = {}
-
-generate_auto_title = None
-streak_badge = None
-
-
-def setup_module(module):
-    global _original_modules, generate_auto_title, streak_badge
-    _original_modules["__app_keys_before__"] = {k for k in sys.modules if k.startswith("app.")}
-    for k in _MOCK_KEYS:
-        if k in sys.modules:
-            _original_modules[k] = sys.modules[k]
-        sys.modules[k] = MagicMock()
-
-    sys.modules.pop("app.repos.analytics", None)
-    from app.repos.analytics import generate_auto_title as _fn1
-    from app.repos.analytics import streak_badge as _fn2
-
-    generate_auto_title = _fn1
-    streak_badge = _fn2
-
-
-def teardown_module(module):
-    app_keys_before = _original_modules.pop("__app_keys_before__", set())
-    for k in _MOCK_KEYS:
-        if k in sys.modules:
-            del sys.modules[k]
-    sys.modules.update(_original_modules)
-    for k in list(sys.modules):
-        if k.startswith("app.") and k not in app_keys_before:
-            del sys.modules[k]
+from app.repos.analytics import generate_auto_title, streak_badge
 
 
 def test_generate_auto_title_simple_content():

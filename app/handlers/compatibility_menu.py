@@ -36,8 +36,10 @@ def _sign_keyboard(lang: str, first: int | None = None) -> InlineKeyboardMarkup:
 async def _clear_other_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from app.state import clear_tarot_session, ensure_state_loaded
 
-    await ensure_state_loaded(update.effective_user.id)
-    clear_tarot_session(update.effective_user.id)
+    user = update.effective_user
+    if user is not None:
+        await ensure_state_loaded(user.id)
+        clear_tarot_session(user.id)
     clear_compatibility_input(context.user_data)
 
 
@@ -45,14 +47,15 @@ async def _clear_other_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 @safe_handler()
 async def compatibility_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool | None:
     """Open compatibility: two sign buttons, a brief reading, then optional details."""
-    lang = language_from_telegram(update.effective_user.language_code)
-    if update.effective_chat.type != "private":
-        await update.effective_message.reply_text(t("compat.private_only", lang))
+    user, chat, message = update.effective_user, update.effective_chat, update.effective_message
+    if user is None or chat is None or message is None:
+        return False
+    lang = language_from_telegram(user.language_code)
+    if chat.type != "private":
+        await message.reply_text(t("compat.private_only", lang))
         return False
     await _clear_other_mode(update, context)
-    await update.effective_message.reply_text(
-        t("compat.pick_first", lang), parse_mode="HTML", reply_markup=_sign_keyboard(lang)
-    )
+    await message.reply_text(t("compat.pick_first", lang), parse_mode="HTML", reply_markup=_sign_keyboard(lang))
     return True
 
 
@@ -60,8 +63,12 @@ async def compatibility_command(update: Update, context: ContextTypes.DEFAULT_TY
 @safe_handler()
 async def compatibility_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool | None:
     query = update.callback_query
+    user_data = context.user_data
+    chat = update.effective_chat
+    if query is None:
+        return False
     await query.answer()
-    if update.effective_chat.type != "private":
+    if chat is None or chat.type != "private" or not query.data or user_data is None:
         return False
     if query.data == "compat_menu":
         return await compatibility_command(update, context)
@@ -81,9 +88,7 @@ async def compatibility_menu_callback(update: Update, context: ContextTypes.DEFA
         return True
     second = int(values[2])
     pair = CompatibilityPair(CompatibilityPartner(first), CompatibilityPartner(second), lang)
-    tarot = compatibility_result_keyboard(
-        context.user_data, build_compatibility_tarot_context(pair, lang=lang), lang=lang
-    )
+    tarot = compatibility_result_keyboard(user_data, build_compatibility_tarot_context(pair, lang=lang), lang=lang)
     await query.edit_message_text(
         build_sign_compatibility_html(pair, lang=lang),
         parse_mode="HTML",

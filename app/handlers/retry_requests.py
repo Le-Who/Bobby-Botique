@@ -87,8 +87,14 @@ def request_is_current(user_id: int, request: RetryRequest, chat_state) -> bool:
 
 
 def begin_request(
-    user_id: int, kind: Literal["chat", "search"], text: str, chat_state, *, search_query=None, retry=None
-):
+    user_id: int,
+    kind: Literal["chat", "search"],
+    text: str,
+    chat_state,
+    *,
+    search_query: str | None = None,
+    retry: RetryRequest | None = None,
+) -> RetryRequest:
     if retry is not None:
         if current_request(user_id) is not retry or not scope_matches(retry, chat_state):
             raise StaleRetryRequest("Retry scope changed")
@@ -139,7 +145,7 @@ def bind_response(request: RetryRequest, outcome) -> None:
 
 
 def legacy_request(user_id: int, text: str, chat_state) -> RetryRequest:
-    kind = "search" if text.startswith("?") and not text.startswith("??") else "chat"
+    kind: Literal["chat", "search"] = "search" if text.startswith("?") and not text.startswith("??") else "chat"
     query = text[1:].strip() if kind == "search" else None
     request = begin_request(user_id, kind, query if query is not None else text, chat_state, search_query=query)
     history = chat_state.history

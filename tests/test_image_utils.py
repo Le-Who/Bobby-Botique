@@ -1,5 +1,8 @@
+import subprocess
+import sys
+import textwrap
 import unittest
-from importlib import reload
+from pathlib import Path
 from unittest.mock import patch
 
 from PIL import Image
@@ -61,12 +64,23 @@ class TestImageUtils(unittest.TestCase):
         self.assertTrue(kwargs.get("exc_info"))
 
     def test_import_does_not_create_process_pool(self):
-        tagged_image_class = image_utils.TaggedImage
-        try:
-            with patch("concurrent.futures.ProcessPoolExecutor", side_effect=AssertionError("pool should stay lazy")):
-                reload(image_utils)
-        finally:
-            image_utils.TaggedImage = tagged_image_class
+        probe = textwrap.dedent("""
+            from unittest.mock import patch
+
+            with patch("concurrent.futures.ProcessPoolExecutor") as executor:
+                import app.utils.image_utils
+
+            executor.assert_not_called()
+            """)
+        result = subprocess.run(
+            [sys.executable, "-X", "utf8", "-c", probe],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_get_image_process_pool_is_lazy_and_singleton(self):
         sentinel_pool = object()

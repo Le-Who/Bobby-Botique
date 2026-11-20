@@ -363,7 +363,7 @@ async def _handle_research_agent_leased_impl(
             _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
             GEMINI_PRIMARY_MODEL,
         )
-        if is_gemini_chat_model_id(model)
+        if model is not None and is_gemini_chat_model_id(model)
     )
     from app.model_selector import _get_tier
     from app.process_policies import resolve_process
@@ -671,7 +671,10 @@ async def _handle_complex_agent_search_leased_impl(
     search_prefix: str,
     chat_state: ChatState,
 ) -> None:
-    user_id = int(original_message.from_user.id)
+    user = original_message.from_user
+    if user is None:
+        return
+    user_id = user.id
 
     try:
         await placeholder_message.edit_text("🖼️ Анализирую изображение...")
@@ -689,7 +692,10 @@ async def _handle_complex_agent_search_leased_impl(
 
     img = Image.open(io.BytesIO(photo_data))
 
-    analysis_prompt = get_registry().get("image_analysis").text
+    analysis_template = get_registry().get("image_analysis")
+    if analysis_template is None:
+        raise LookupError("The image_analysis prompt is unavailable")
+    analysis_prompt = analysis_template.text
 
     parts = [analysis_prompt, img] if img else [analysis_prompt]
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None

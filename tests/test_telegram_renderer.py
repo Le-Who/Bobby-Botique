@@ -65,6 +65,23 @@ async def test_short_final_response_is_authoritative_and_contains_actions():
 
 
 @pytest.mark.asyncio
+async def test_final_response_splits_when_only_its_formatting_limit_is_exceeded():
+    transport = RecordingTransport()
+    renderer = TelegramRenderer(transport, private_content=True)
+    actions = _actions()
+
+    receipt = await renderer.open().finalize(displayed_text="**🧪** " * 101, title="Answer", actions=actions)
+
+    assert receipt.kind is DeliveryKind.SPLIT
+    assert len(transport.edits) == 1 and len(transport.sends) == 1
+    assert transport.edits[0]["reply_markup"] is None
+    assert transport.sends[0]["reply_markup"] == actions
+    chunks = [transport.edits[0]["text"], transport.sends[0]["text"]]
+    assert sum(chunk.count("<b>🧪</b>") for chunk in chunks) == 101
+    assert all(chunk.count("<b>") <= 100 for chunk in chunks)
+
+
+@pytest.mark.asyncio
 async def test_reader_storage_success_does_not_publish_public_copy_by_default():
     transport = RecordingTransport()
     actions = _actions()

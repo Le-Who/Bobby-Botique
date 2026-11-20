@@ -370,6 +370,9 @@ class OpenRouterProvider(BaseAIProvider):
         chat_id: int | None,
         timeout: float,
         thinking_level: str | None = None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> AIResponse:
         start_time = None
 
@@ -400,6 +403,10 @@ class OpenRouterProvider(BaseAIProvider):
             api_model = self._strip_model_prefix(model_name)
             payload: dict = {"model": api_model, "messages": messages}
             payload.update(self._extra_payload_params(model_name, thinking_level))
+            if tools:
+                payload["tools"] = tools
+                if tool_choice:
+                    payload["tool_choice"] = tool_choice
             logging.debug(
                 "%s: sending %d messages to %s (api_model=%s)",
                 self.provider_name,

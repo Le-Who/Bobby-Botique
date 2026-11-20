@@ -735,7 +735,7 @@ async def _complete_regular_chat_response(
     reply_with_voice: bool,
     memory_context_used: bool,
     assembled: Any,
-    pending_llm_summary: tuple[list[dict[str, Any]], str] | None,
+    pending_llm_summary: tuple[list[dict[str, Any]], str | None] | None,
     capture_text_memory: bool,
     user_message: str,
     placeholder_message: Message,

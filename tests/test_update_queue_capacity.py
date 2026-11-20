@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from types import MappingProxyType, SimpleNamespace
@@ -77,10 +76,8 @@ async def _until(predicate):
     await asyncio.wait_for(wait(), 2)
 
 
-async def test_real_ptb_fetcher_cannot_turn_polling_backlog_into_unbounded_wrappers(application, caplog):
+async def test_real_ptb_fetcher_cannot_turn_polling_backlog_into_unbounded_wrappers(application):
     """Ten thousand updates cannot bypass the bound after PTB fetches them."""
-    caplog.set_level(logging.WARNING, logger="app.observability")
-    caplog.set_level(logging.WARNING, logger="telegram.ext.Application")
     queue = application.update_queue
     release = asyncio.Event()
     handled = []

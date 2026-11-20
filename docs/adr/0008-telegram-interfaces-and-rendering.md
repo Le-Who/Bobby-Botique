@@ -137,11 +137,23 @@ toggle. The code language annotation supports browser downloads. The plain
 text path strips tags before unescaping entities so decoded angle brackets
 remain text. Highlighting runs after paint so it cannot block first content.
 The Telegram formatter handles legacy underscore emphasis while preserving
-Python dunder names. It guards zero-progress splits because carrying the open
-tags forward can make the remaining input the same length as the initial input.
-The [splitter follow-up](https://github.com/Le-Who/Bobby-Botique/issues/677)
-tracks the separate length-accounting problem. See [Reader helpers](../../app/utils/reader_utils.py),
-[Reader template](../../app/templates/reader.html) and [Telegram formatting](../../app/utils/text_format.py).
+Python dunder names. The callers' source-length limit counts raw HTML code
+points, including tags inserted at chunk boundaries. The splitter separately
+bounds rendered code points and explicit markup entities for each Telegram
+message. It keeps escaped characters atomic, carries formatting across chunks
+when it fits, and omits oversized markup to preserve visible text. The default
+source budget is 4,096 code points for long messages, compatibility, and Tarot
+chat. Scheduled Tarot and horoscope sends use 3,900. The renderer uses its
+configured source limit for draft and final delivery decisions, and for chunks. See
+[Reader helpers](../../app/utils/reader_utils.py), [Telegram formatting](../../app/utils/text_format.py),
+and [the renderer](../../app/response_delivery/renderer.py).
+
+Canvas captions budget the assembled visible text, including both prompts and
+metadata, against the 1,024-code-point photo caption limit. The caption sends
+literal text and explicit formatting entities, with entity offsets and lengths
+converted to UTF-16 after assembly. This keeps punctuation literal and leaves
+room for both prompts even when the configured model label is long. See
+[Canvas](../../app/handlers/cmd_image.py) and [the Telegram Bot API](https://core.telegram.org/bots/api#sendphoto).
 
 The settings Mini App uses the current hover capability for destructive reset
 because hybrid devices can change pointer type mid-session. Delete controls

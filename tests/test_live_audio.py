@@ -780,16 +780,12 @@ class TestVertexLiveClientBootstrap:
         monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/run/secrets/vertex-live-sa.json")
         import app.providers.gemini as gemini_provider
 
-        gemini_provider._vertex_live_client = None
-        gemini_provider._vertex_live_client_initialized = False
+        monkeypatch.setattr(gemini_provider, "_vertex_live_client", None)
+        monkeypatch.setattr(gemini_provider, "_vertex_live_client_initialized", False)
         monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_PROJECT", "vertex-project", raising=False)
         monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_LOCATION", "us-central1", raising=False)
         monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_KEY", "vertex-key", raising=False)
         monkeypatch.setattr(gemini_provider.os.path, "exists", lambda _path: True)
         monkeypatch.setattr(gemini_provider.os, "access", lambda _path, _mode: False)
 
-        try:
-            assert gemini_provider.get_vertex_live_client() is None
-        finally:
-            gemini_provider._vertex_live_client = None
-            gemini_provider._vertex_live_client_initialized = False
+        assert gemini_provider.get_vertex_live_client() is None

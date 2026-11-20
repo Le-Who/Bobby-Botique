@@ -79,7 +79,7 @@ def test_split_text_safe_code_block():
     code = 'def foo():\n    return "bar"\n'
     text = f'<pre><code class="python">{code}</code></pre>'
 
-    chunks = split_text_safe(text, max_length=30)
+    chunks = split_text_safe(text, max_length=48)
 
     assert len(chunks) > 1
 
@@ -97,6 +97,60 @@ def test_split_text_safe_code_block():
     content_stripped = content.replace(" ", "")
     assert "deffoo" in content_stripped
     assert "return" in content_stripped
+
+
+def test_html_split_reserves_space_for_reopened_tags_and_entities():
+    visible = "first\n  🧪 & last " * 4
+    source = f"<b><i>{html.escape(visible)}</i></b>"
+
+    chunks = split_text_safe(source, max_length=31)
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 31 for chunk in chunks)
+    assert all(chunk.startswith("<b><i>") and chunk.endswith("</i></b>") for chunk in chunks)
+    assert all("&" not in chunk.replace("&amp;", "") for chunk in chunks)
+    assert "".join(html.unescape(strip_tags(chunk)) for chunk in chunks) == visible
+
+
+def test_html_split_separates_raw_budget_from_visible_code_points():
+    visible = "🧪" * 4200
+    source = f"<b>{visible}</b>"
+
+    chunks = split_text_safe(source, max_length=5000)
+
+    assert len(source) < 5000 and len(chunks) == 2
+    assert len(chunks[0]) == 4096 + len("<b></b>")
+    assert len(strip_tags(chunks[0])) == 4096
+    assert "".join(strip_tags(chunk) for chunk in chunks) == visible
+
+
+def test_html_split_preserves_formatting_beyond_one_messages_entity_budget():
+    source = "<b>🧪</b> " * 205
+
+    chunks = split_text_safe(source)
+
+    assert len(source) < 4096 and len(chunks) == 3
+    assert sum(chunk.count("<b>") for chunk in chunks) == 205
+    assert all(chunk.count("<b>") == chunk.count("</b>") <= 100 for chunk in chunks)
+    assert "".join(chunks) == source
+
+
+def test_html_split_drops_oversized_markup_and_recodes_oversized_entities():
+    source = f'<a href="https://example.invalid/{"x" * 80}"><b>one&#{"0" * 6000}65; two</b></a>'
+
+    chunks = split_text_safe(source, max_length=12)
+
+    assert all(len(chunk) <= 12 for chunk in chunks)
+    assert all(chunk.startswith("<b>") and chunk.endswith("</b>") for chunk in chunks)
+    assert "".join(html.unescape(strip_tags(chunk)) for chunk in chunks) == "oneA two"
+
+
+def test_html_split_does_not_stop_at_a_fixed_chunk_count():
+    source = "<i>" + "x" * 201 + "</i>"
+
+    chunks = split_text_safe(source, max_length=8)
+
+    assert chunks == ["<i>x</i>"] * 201
 
 
 def test_split_text_safe_hard_split():

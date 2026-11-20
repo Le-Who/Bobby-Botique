@@ -1,15 +1,24 @@
 import asyncio
 import inspect
+from collections import defaultdict
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.handlers import messages
+from app.middleware import dedup
 
 
 @pytest.fixture(autouse=True)
 def _offline_state_hydration(monkeypatch):
     monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_message_dedup(monkeypatch):
+    monkeypatch.setattr(dedup, "_recent_requests", defaultdict(dict))
+    monkeypatch.setattr(dedup, "_recent_voice_ids", defaultdict(dict))
 
 
 class MockUser:
@@ -301,8 +310,9 @@ async def test_handle_request_text_message_happy_path(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handle_request_text_message_happy_path_with_task_execution():
-    """Test handle_request ensuring the background task is executed."""
+async def test_handle_request_text_message_happy_path_with_task_execution(monkeypatch):
+    """A repeated update runs the background worker only once."""
+    monkeypatch.setattr(dedup, "time", SimpleNamespace(monotonic=lambda: 100.0))
     user = MockUser(user_id=123)
     chat = MockChat(chat_id=456)
     message = MockMessage(text="Hello AI", user=user, chat=chat)
@@ -312,14 +322,14 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
     submitted_tasks = []
 
     def capture_submit(coro, *args, **kwargs):
+        loop = asyncio.get_running_loop()
         if coro.cr_code.co_name == "show_long_wait_retry":
             coro.close()
+            notice = loop.create_future()
+            notice.set_result(None)
+            return notice
 
-            async def completed_notice():
-                pass
-
-            coro = completed_notice()
-        task = asyncio.get_running_loop().create_task(coro)
+        task = loop.create_task(coro)
         submitted_tasks.append(task)
         return task
 
@@ -350,7 +360,6 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         patch("app.handlers.messages.submit_task", side_effect=capture_submit),
         patch("app.handlers.messages.try_submit_task", side_effect=capture_submit),
         patch("app.handlers.messages.metrics_collector", AsyncMock()),
-        patch("app.middleware.dedup.is_duplicate_request", new_callable=AsyncMock, return_value=False),
         patch("app.middleware.debounce.debounce_message", side_effect=_debounce_passthrough),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -361,16 +370,16 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         mock_lock.return_value.__aexit__.return_value = None
         mock_lock.return_value.locked.return_value = False
 
-        await messages.handle_request(update, context)
+        try:
+            await messages.handle_request(update, context)
+            await messages.handle_request(update, context)
+        finally:
+            for call_args in mock_create_task.call_args_list:
+                coro = call_args[0][0]
+                coro.close()
+            await asyncio.gather(*submitted_tasks)
 
-        message.reply_text.assert_awaited_with("🤔 Думаю...")
-
-        for call_args in mock_create_task.call_args_list:
-            coro = call_args[0][0]
-            coro.close()
-
-        await asyncio.gather(*submitted_tasks)
-
+        message.reply_text.assert_awaited_once_with("🤔 Думаю...")
         mock_agent_process.assert_awaited_once()
         args, _ = mock_agent_process.await_args
         assert args[1] == update

@@ -66,6 +66,8 @@ jobs:
     name: Validate Log Viewer Configuration
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      COMPOSE_PROJECT_NAME: gemaibot-observability-probe-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -92,7 +94,7 @@ jobs:
 
           docker run --rm \
             -v "$PWD/ops/observability/config.alloy:/etc/alloy/config.alloy:ro" \
-            grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308 \
+            grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189 \
             validate --stability.level=experimental /etc/alloy/config.alloy
 
           docker run --rm \
@@ -133,6 +135,7 @@ jobs:
             --output .pytest_tmp/observability-private-event.json
           uv run --locked python scripts/check_observability_stack.py \
             --ephemeral --grafana-url http://127.0.0.1:3000 \
+            --recovery-project "$COMPOSE_PROJECT_NAME" \
             --password-file ops/observability/secrets/grafana_admin_password \
             --private-event-file .pytest_tmp/observability-private-event.json \
             --output .pytest_tmp/observability-probe

@@ -1,0 +1,20 @@
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Final
+
+HOROSCOPE_SIGN_LABELS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "aries": "♈ Овен",
+        "taurus": "♉ Телец",
+        "gemini": "♊ Близнецы",
+        "cancer": "♋ Рак",
+        "leo": "♌ Лев",
+        "virgo": "♍ Дева",
+        "libra": "♎ Весы",
+        "scorpio": "♏ Скорпион",
+        "sagittarius": "♐ Стрелец",
+        "capricorn": "♑ Козерог",
+        "aquarius": "♒ Водолей",
+        "pisces": "♓ Рыбы",
+    }
+)

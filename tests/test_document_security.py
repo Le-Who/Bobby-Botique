@@ -1,61 +1,10 @@
-import os
-import sys
-from unittest.mock import MagicMock
-
 import pytest
 
-pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
-
-_mock_keys = ["app.database"]
-_original_modules = {}
-_original_env: dict[str, str | None] = {}
-
-_ENV_OVERRIDES = {
-    "TELEGRAM_BOT_TOKEN": "123:test",
-    "ADMIN_ID": "123456",
-    "DATABASE_URL": "postgresql://user:pass@localhost/db",
-    "GEMINI_API_KEYS": "key1",
-    "TAVILY_API_KEYS": "key1",
-    "PORT": "10000",
-}
-
-
-def setup_module(module):
-    global _original_modules, _original_env
-
-    _original_env.clear()
-    for k, v in _ENV_OVERRIDES.items():
-        _original_env[k] = os.environ.get(k)
-        os.environ[k] = v
-
-    _original_modules["__app_keys_before__"] = {k for k in sys.modules if k.startswith("app.")}
-    for k in _mock_keys:
-        if k in sys.modules:
-            _original_modules[k] = sys.modules[k]
-        sys.modules[k] = MagicMock()
-
-
-def teardown_module(module):
-    for k, orig in _original_env.items():
-        if orig is None:
-            os.environ.pop(k, None)
-        else:
-            os.environ[k] = orig
-
-    app_keys_before = _original_modules.pop("__app_keys_before__", set())
-    for k in _mock_keys:
-        if k in sys.modules:
-            del sys.modules[k]
-    sys.modules.update(_original_modules)
-    for k in list(sys.modules):
-        if k.startswith("app.") and k not in app_keys_before:
-            del sys.modules[k]
+from app.document_processor import DocumentProcessor
 
 
 @pytest.mark.asyncio
 async def test_docx_magic_bytes_validation():
-    from app.document_processor import DocumentProcessor
-
     processor = DocumentProcessor()
 
     invalid_content = b"this is not a zip file"

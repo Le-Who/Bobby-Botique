@@ -169,6 +169,8 @@ async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     from app.state import get_user_state
 
     owner = get_user_state(query.from_user.id).interaction
+    if owner is None:
+        return
     bind_context_text_input(owner, context.user_data)
     token = owner.token
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_create_cancel:{token}")]])
@@ -788,6 +790,8 @@ async def role_create_manual_callback(update: Update, context: ContextTypes.DEFA
     from app.state import get_user_state
 
     owner = get_user_state(user_id).interaction
+    if owner is None:
+        return
     bind_context_text_input(owner, context.user_data)
     token = owner.token
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_manual_cancel:{token}")]])

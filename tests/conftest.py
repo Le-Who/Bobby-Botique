@@ -5,8 +5,6 @@ module is imported. The production ``.env`` must never enter a unit-test process
 
 import asyncio
 import os
-import sys
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -39,71 +37,6 @@ _original_database_url = os.environ.get("DATABASE_URL", "")
 if _original_database_url:
     os.environ["GEMAIBOT_TEST_ORIGINAL_DATABASE_URL"] = _original_database_url
 os.environ.update(_SAFE_TEST_ENV)
-
-
-try:
-    from app.config import settings as _canonical_settings
-except Exception:
-    _canonical_settings = None  # type: ignore[assignment]
-
-
-def _propagate_real_settings():
-    """Ensure every loaded ``app.*`` module uses the canonical Settings object.
-
-    Handles two contamination modes:
-    1. MagicMock bindings left by setup_module/teardown_module sys.modules mutations
-    2. Duplicate Settings instances created when app.config is purged from
-       sys.modules and reimported with mutated os.environ
-    """
-    if _canonical_settings is None:
-        return
-
-    repaired = []
-
-    config_mod = sys.modules.get("app.config")
-    if config_mod is not None and not isinstance(config_mod, MagicMock):
-        current = getattr(config_mod, "settings", None)
-        if current is not _canonical_settings:
-            setattr(config_mod, "settings", _canonical_settings)
-            repaired.append("app.config")
-
-    for mod_name in list(sys.modules):
-        if not mod_name.startswith("app."):
-            continue
-        mod = sys.modules.get(mod_name)
-        if mod is None or isinstance(mod, MagicMock):
-            continue
-        current_settings = getattr(mod, "settings", _SENTINEL)
-        if current_settings is _SENTINEL:
-            continue
-        if current_settings is not _canonical_settings:
-            setattr(mod, "settings", _canonical_settings)
-            repaired.append(mod_name)
-
-    if repaired:
-        import logging
-
-        logging.getLogger(__name__).debug(
-            "Decontaminated settings in %d modules: %s",
-            len(repaired),
-            repaired,
-        )
-
-
-_SENTINEL = object()
-
-
-@pytest.fixture(autouse=True)
-def _decontaminate_settings():
-    """Auto-heal stale MagicMock settings bindings between test modules and functions.
-
-    Runs BEFORE the first test in each test and AFTER the last test,
-    ensuring that any sys.modules mutations
-    don't leak MagicMock references into subsequent tests.
-    """
-    _propagate_real_settings()
-    yield
-    _propagate_real_settings()
 
 
 @pytest.fixture(autouse=True, scope="session")

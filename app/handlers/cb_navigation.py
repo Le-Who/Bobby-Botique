@@ -51,9 +51,10 @@ def _help_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, explicit: str
     if explicit in {"ru", "en"}:
         lang = explicit
     else:
-        saved = user_data.get("help_lang")
+        saved = user_data.get("help_lang") if user_data is not None else None
         lang = saved if saved in {"ru", "en"} else _lang(update)
-    user_data["help_lang"] = lang
+    if user_data is not None:
+        user_data["help_lang"] = lang
     return lang
 
 

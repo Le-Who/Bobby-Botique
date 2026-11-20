@@ -113,7 +113,35 @@ disable_error_code = ["no-any-return", "import-untyped"]
 
 [[tool.mypy.overrides]]
 module = [
-    "app.handlers.*",
+    "app.handlers.agent",
+    "app.handlers.ai_photo",
+    "app.handlers.callbacks",
+    "app.handlers.cb_ai_actions",
+    "app.handlers.cb_branches",
+    "app.handlers.cb_conversations",
+    "app.handlers.cb_feedback",
+    "app.handlers.cb_fwd_save",
+    "app.handlers.cb_image",
+    "app.handlers.cb_models",
+    "app.handlers.cb_navigation",
+    "app.handlers.cb_roles",
+    "app.handlers.cb_voice",
+    "app.handlers.cmd_admin",
+    "app.handlers.cmd_asr_test",
+    "app.handlers.cmd_conversations",
+    "app.handlers.cmd_image",
+    "app.handlers.cmd_keys",
+    "app.handlers.cmd_models",
+    "app.handlers.cmd_reminders",
+    "app.handlers.cmd_tarot",
+    "app.handlers.commands",
+    "app.handlers.daily_crocodile",
+    "app.handlers.horoscope_subscription",
+    "app.handlers.memory_commands",
+    "app.handlers.messages",
+    "app.handlers.msg_roles",
+    "app.handlers.msg_voice",
+    "app.handlers.natal_chart",
 ]
-disable_error_code = ["union-attr", "has-type", "index", "arg-type"]
+disable_error_code = ["union-attr"]
 

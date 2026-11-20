@@ -13,6 +13,7 @@ from uuid import uuid4
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    MaybeInaccessibleMessage,
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -88,12 +89,15 @@ async def _finish_tarot_session(update: Update, user_id: int) -> None:
     await ensure_state_loaded(user_id)
     clear_tarot_session(user_id)
     await cancel_interaction(user_id)
-    await update.message.reply_text(
-        "Сеанс Таро завершен. Возвращаюсь в обычный режим.", reply_markup=ReplyKeyboardRemove()
-    )
+    if message := update.message:
+        await message.reply_text(
+            "Сеанс Таро завершен. Возвращаюсь в обычный режим.", reply_markup=ReplyKeyboardRemove()
+        )
 
 
-async def leave_tarot_for_chat(user_id: int, message: Message, *, input_intent: object | None = None) -> None:
+async def leave_tarot_for_chat(
+    user_id: int, message: MaybeInaccessibleMessage | None, *, input_intent: object | None = None
+) -> None:
     """End a persisted Tarot session when an ordinary-chat action succeeds."""
     await ensure_state_loaded(user_id)
     from app.state import get_user_state
@@ -108,10 +112,12 @@ async def leave_tarot_for_chat(user_id: int, message: Message, *, input_intent: 
     await cancel_interaction(user_id, input_intent=input_intent)
     if input_intent is not None and get_user_state(user_id).text_input_intent is not input_intent:
         return
-    await message.reply_text("Сеанс Таро завершен. Возвращаюсь в обычный режим.", reply_markup=ReplyKeyboardRemove())
+    reply_text = getattr(message, "reply_text", None)
+    if reply_text is not None:
+        await reply_text("Сеанс Таро завершен. Возвращаюсь в обычный режим.", reply_markup=ReplyKeyboardRemove())
 
 
-async def _send_idle_route_choice(update: Update, user_id: int, session: dict, text: str) -> None:
+async def _send_idle_route_choice(message: Message, user_id: int, session: dict, text: str) -> None:
     session = deepcopy(session)
     session["pending_idle_text"] = text
     session["pending_idle_token"] = uuid4().hex[:16]
@@ -134,14 +140,14 @@ async def _send_idle_route_choice(update: Update, user_id: int, session: dict, t
     prompt = (
         "Сеанс Таро всё ещё активен, но прошло много времени с последнего сообщения.\n\nКак обработать ваш новый текст?"
     )
-    await update.message.reply_text(prompt, reply_markup=keyboard)
+    await message.reply_text(prompt, reply_markup=keyboard)
 
 
 @authorized_only
 @safe_handler("Произошла ошибка при завершении таро-сеанса")
 async def handle_tarot_end_session_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    await _finish_tarot_session(update, user_id)
+    if user := update.effective_user:
+        await _finish_tarot_session(update, user.id)
 
 
 @authorized_only
@@ -150,10 +156,15 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
     from app.handlers.interaction_work import interaction_current, private_interaction, reject_busy_interaction
     from app.state import begin_interaction, cancel_interaction, get_user_state, run_interaction
 
-    user_id = update.effective_user.id
+    message = update.message
+    user = update.effective_user
+    chat = update.effective_chat
+    if message is None or not message.text or user is None or chat is None:
+        return
+    user_id = user.id
     await ensure_state_loaded(user_id)
-    text = update.message.text
-    chat_id = update.effective_chat.id
+    text = message.text
+    chat_id = chat.id
     if is_tarot_end_session_text(text):
         await _finish_tarot_session(update, user_id)
         return
@@ -162,9 +173,7 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
     source_session = get_tarot_session(user_id)
     if source_session is None:
         clear_tarot_session(user_id)
-        await update.message.reply_text(
-            "Сессия не найдена. Начните заново с /tarot", reply_markup=ReplyKeyboardRemove()
-        )
+        await message.reply_text("Сессия не найдена. Начните заново с /tarot", reply_markup=ReplyKeyboardRemove())
         return
 
     if text == "🔄 Новый расклад":
@@ -180,20 +189,20 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
         session.pop("pending_idle_token", None)
         set_tarot_session(user_id, session)
         await cancel_interaction(user_id)
-        await update.message.reply_text(
+        await message.reply_text(
             "🔄 Расклад сброшен. Пожалуйста, задайте ваш новый вопрос, и я вытяну карты.",
             reply_markup=ReplyKeyboardMarkup([[TAROT_END_SESSION_TEXT]], resize_keyboard=True),
         )
         return
 
-    if await reject_busy_interaction(user_id, update.message.reply_text):
+    if await reject_busy_interaction(user_id, message.reply_text):
         return
 
     if state.interaction is not None and state.interaction.task is not None:
-        await update.message.reply_text("⏳ Дождитесь ответа таролога или завершите текущий сеанс.")
+        await message.reply_text("⏳ Дождитесь ответа таролога или завершите текущий сеанс.")
         return
     if _is_tarot_session_idle(source_session):
-        await _send_idle_route_choice(update, user_id, source_session, text)
+        await _send_idle_route_choice(message, user_id, source_session, text)
         return
 
     owner = begin_interaction(user_id, "tarot")
@@ -209,7 +218,7 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
             async with private_interaction(owner) as allowed:
                 if not allowed:
                     if owner.current():
-                        await update.message.reply_text("Запрос устарел. Начните новый сеанс с /tarot.")
+                        await message.reply_text("Запрос устарел. Начните новый сеанс с /tarot.")
                     return
                 if text == "🃏 Достать 1 карту" and not session.get("waiting_for_question"):
                     new_card = draw_cards(1)[0]
@@ -244,7 +253,7 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 if not await interaction_current(owner):
                     return
                 formatted, parse_mode = TelegramFormatter.format_text(status_text)
-                status_msg = await update.message.reply_text(formatted, parse_mode=parse_mode)
+                status_msg = await message.reply_text(formatted, parse_mode=parse_mode)
                 if not await interaction_current(owner):
                     return
                 tarot_ctx = "".join(
@@ -275,7 +284,7 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 for index, chunk in enumerate(chunks):
                     if not await interaction_current(owner):
                         return
-                    await update.message.reply_text(
+                    await message.reply_text(
                         chunk, parse_mode=parse_mode, reply_markup=reply_markup if index == len(chunks) - 1 else None
                     )
                 if not await interaction_current(owner):
@@ -289,7 +298,7 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as exc:
             logging.error("Tarot processing error: %s", exc)
             if await interaction_current(owner):
-                await update.message.reply_text("Извините, карты затуманены. Попробуйте снова.")
+                await message.reply_text("Извините, карты затуманены. Попробуйте снова.")
         finally:
             if status_msg is not None:
                 try:
@@ -306,7 +315,11 @@ async def handle_tarot_idle_choice_callback(update: Update, context: ContextType
     from app.handlers.interaction_work import reject_busy_interaction
 
     query = update.callback_query
-    user_id = update.effective_user.id
+    message = update.effective_message
+    user = update.effective_user
+    if query is None or query.data is None or message is None or user is None:
+        return
+    user_id = user.id
     await ensure_state_loaded(user_id)
     if await reject_busy_interaction(user_id, query.answer):
         return
@@ -337,7 +350,7 @@ async def handle_tarot_idle_choice_callback(update: Update, context: ContextType
             text=pending_text,
             from_user=update.effective_user,
             chat=update.effective_chat,
-            reply_text=query.message.reply_text,
+            reply_text=message.reply_text,
             photo=(),
             document=None,
             voice=None,
@@ -355,11 +368,11 @@ async def handle_tarot_idle_choice_callback(update: Update, context: ContextType
         return
 
     if action == "llm":
-        await leave_tarot_for_chat(user_id, query.message)
+        await leave_tarot_for_chat(user_id, message)
         await query.edit_message_text("🤔 Думаю...")
         from app.handlers.agent import process_long_request
 
-        await process_long_request(query.message, update, context, text_override=pending_text)
+        await process_long_request(message, update, context, text_override=pending_text)
         return
 
     await query.edit_message_text("Неизвестный выбор. Напишите запрос заново.")

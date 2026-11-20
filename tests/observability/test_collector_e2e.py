@@ -44,3 +44,13 @@ def test_server_query_limits_are_enforced_through_authenticated_grafana_proxy(co
 
 def test_collected_synthetic_stream_has_no_forbidden_fields_or_excluded_content(collector):
     collector.check_privacy()
+
+
+def test_stdout_survives_proxy_reconnect_and_container_replacement(collector):
+    recovery = collector.manifest["recovery"]
+    assert set(recovery) == {"reconnect", "replacement"}
+    actual = {}
+    for _, line in collector.rows("gemaibotv2"):
+        if line.startswith("{") and (event := json.loads(line)).get("probe_phase"):
+            actual[event["probe_phase"]] = event["event_id"]
+    assert actual == recovery

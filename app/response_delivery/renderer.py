@@ -19,7 +19,7 @@ from app.observability.request_metrics import observe_transport, record_first_vi
 from app.response_delivery.normalization import strip_hallucinated_tool_trace
 from app.utils.background_tasks import submit_task
 from app.utils.formatting import TelegramFormatter
-from app.utils.text_format import sanitize_html_tags, split_text_safe
+from app.utils.text_format import fits_telegram_html, sanitize_html_tags, split_text_safe
 from app.utils.ux_improvements import wrap_in_expandable_blockquote
 
 
@@ -501,7 +501,7 @@ class TelegramRenderer:
         on_visible_text: Callable[[], None] | None = None,
     ) -> DeliveryReceipt:
         formatted = _formatted_html(displayed_text)
-        if len(formatted) <= self._message_limit:
+        if fits_telegram_html(formatted, self._message_limit):
             ref, _ = await self._replace_or_send(
                 formatted,
                 parse_mode="HTML",
@@ -584,7 +584,7 @@ class TelegramRenderSession:
         if not visible_draft.strip():
             return
         formatted = _formatted_html(visible_draft)
-        if len(formatted) > self._renderer._message_limit:
+        if not fits_telegram_html(formatted, self._renderer._message_limit):
             self._long_read_pending = True
             frozen = self._renderer._summary(visible_draft)
             frozen += "\n\n... 📝 <i>[Текст получается очень длинным, формирую статью]</i>"

@@ -435,6 +435,8 @@ async def test_config_reload_preserves_shared_settings_identity_and_allows_empty
 
     manager = config.ConfigManager()
     manager._settings = old_settings
+    monkeypatch.setattr(config, "_settings_instance", old_settings)
+    monkeypatch.setattr(config, "settings", old_settings)
     watcher = AsyncMock()
     manager.add_watcher(watcher)
     monkeypatch.setattr(config, "load_settings", lambda: new_settings)
@@ -442,6 +444,8 @@ async def test_config_reload_preserves_shared_settings_identity_and_allows_empty
     await manager.force_reload()
 
     assert manager._settings is old_settings
+    assert config.settings is old_settings
+    assert config._settings_instance is old_settings
     assert old_settings.AVAILABLE_MODELS == []
     watcher.assert_awaited_once()
     assert watcher.await_args.args[0].AVAILABLE_MODELS == ["gemini-old"]

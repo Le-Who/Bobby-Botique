@@ -133,16 +133,9 @@ def test_alloy_http_log_streams_are_not_restarted_on_the_discovery_interval():
         alloy,
         re.DOTALL,
     )
-    assert re.search(
-        r'loki\.source\.docker "bot" \{.*?refresh_interval\s*=\s*"24h"',
-        alloy,
-        re.DOTALL,
-    )
-    assert re.search(
-        r'loki\.source\.docker "ytdlbot" \{.*?refresh_interval\s*=\s*"24h"',
-        alloy,
-        re.DOTALL,
-    )
+    sources = dict(re.findall(r'^loki\.source\.docker "(\w+)" \{(.*?)^\}', alloy, re.DOTALL | re.MULTILINE))
+    assert set(sources) == {"bot", "ytdlbot", "redis"}
+    assert all("refresh_interval" not in source for source in sources.values())
 
 
 def test_docker_proxy_has_a_deny_by_default_read_only_allowlist():
@@ -222,6 +215,7 @@ def test_ci_validates_vendor_configs_with_the_same_pinned_images():
     assert "http://127.0.0.1:3000/api/health" in workflow
     assert "http://alloy:12345/-/ready" in workflow
     assert "http://loki:3100/ready" in workflow
+    assert '--recovery-project "$COMPOSE_PROJECT_NAME"' in workflow
     for service_name in ("alloy", "docker-proxy", "loki"):
         assert compose["services"][service_name]["image"] in workflow
 

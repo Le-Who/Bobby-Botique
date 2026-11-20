@@ -361,7 +361,8 @@ async def cancel_long_wait_callback(update: Update, context: ContextTypes.DEFAUL
 
     placeholder_owner = state.get_last_bot_message(user_id)
     if (
-        query.data != expected
+        message_id is None
+        or query.data != expected
         or placeholder_owner != (message_id, chat_id)
         or not is_heartbeat_active(message_id, chat_id=chat_id)
     ):
@@ -616,7 +617,7 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "user_capacity": "⏳ Дождитесь завершения вашей очереди озвучки.",
                 "text_too_large": "❌ Текст слишком длинный для озвучки.",
                 "closed": "⏳ Озвучка временно недоступна. Попробуйте позже.",
-            }.get(enqueue_result.reason_code, "❌ Озвучка недоступна. Обновите ответ и попробуйте снова.")
+            }.get(enqueue_result.reason_code or "", "❌ Озвучка недоступна. Обновите ответ и попробуйте снова.")
         await query.answer(feedback)
     except Exception as e:
         logging.error("TTS reply callback failed: %s", e)

@@ -618,8 +618,11 @@ async def _handle_complex_media_group_search_leased_impl(
             await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения для анализа.")
             return
 
+        analysis_template = get_registry().get("image_analysis")
+        if analysis_template is None:
+            raise LookupError("The image_analysis prompt is unavailable")
         analysis_prompt = render_prompt_text(
-            get_prompt_text("vision.search_group"), image_analysis=get_registry().get("image_analysis").text
+            get_prompt_text("vision.search_group"), image_analysis=analysis_template.text
         )
 
         tagged_images = [

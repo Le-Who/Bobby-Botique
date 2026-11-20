@@ -18,26 +18,12 @@ from datetime import UTC, datetime
 
 from telegram.ext import ContextTypes
 
+from app.horoscope_signs import HOROSCOPE_SIGN_LABELS
 from app.repos.horoscope_subscriptions import (
     get_due_horoscope_subscriptions,
 )
 
 logger = logging.getLogger(__name__)
-
-_SIGN_LABELS: dict[str, str] = {
-    "aries": "♈ Овен",
-    "taurus": "♉ Телец",
-    "gemini": "♊ Близнецы",
-    "cancer": "♋ Рак",
-    "leo": "♌ Лев",
-    "virgo": "♍ Дева",
-    "libra": "♎ Весы",
-    "scorpio": "♏ Скорпион",
-    "sagittarius": "♐ Стрелец",
-    "capricorn": "♑ Козерог",
-    "aquarius": "♒ Водолей",
-    "pisces": "♓ Рыбы",
-}
 
 
 async def _deliver_horoscope(
@@ -50,7 +36,7 @@ async def _deliver_horoscope(
     from app.intent_router import _handle_horoscope
     from app.utils.text_format import markdown_to_html, split_text_safe
 
-    sign_label = _SIGN_LABELS.get(sign, sign.capitalize())
+    sign_label = HOROSCOPE_SIGN_LABELS.get(sign, sign.capitalize())
     day_label = "сегодня" if kind == "today" else "завтра"
     query = f"{sign_label} на {day_label}"
 

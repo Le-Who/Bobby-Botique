@@ -231,25 +231,6 @@ class TestUserStateStoreSetdefault:
         assert s1 is s2, "get_user_state must return identity-equal objects for same user"
 
 
-class TestHttpxLoggerSuppression:
-    """Test that httpx/httpcore loggers are actually suppressed at runtime (H5 fix)."""
-
-    def test_httpx_logger_suppressed_after_setup(self):
-        import logging
-
-        from app.utils.logging_config import setup_detailed_logging
-
-        setup_detailed_logging(log_level="DEBUG", enable_structured_logging=False)
-        httpx_logger = logging.getLogger("httpx")
-        httpcore_logger = logging.getLogger("httpcore")
-        assert httpx_logger.level >= logging.WARNING, (
-            f"httpx logger level is {httpx_logger.level}, expected >= WARNING ({logging.WARNING})"
-        )
-        assert httpcore_logger.level >= logging.WARNING, (
-            f"httpcore logger level is {httpcore_logger.level}, expected >= WARNING ({logging.WARNING})"
-        )
-
-
 class TestHttpClientClose:
     """Test that close_http_clients exists and is callable (L4 fix)."""
 

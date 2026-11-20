@@ -393,24 +393,12 @@ class OpencodeGoProvider(OpenRouterProvider):
         )
 
     def _extra_payload_params(self, model_name: str, thinking_level: str | None) -> dict:
-        """Inject supported reasoning_effort values for DeepSeek V4 models.
-        Also injects tools/tool_choice when set via _pending_tools (from _execute_request
-        or typed stream generation).
-
-        Called by OpenRouterProvider._execute_request and typed streaming
-        to enrich the payload with model-specific thinking parameters.
-        """
+        """Inject supported reasoning_effort values for DeepSeek V4 models."""
         params: dict[str, Any] = {}
         if thinking_level and self._supports_reasoning_effort(model_name):
             effort = self._THINKING_TO_EFFORT.get(thinking_level)
             if effort:
                 params["reasoning_effort"] = effort
-        pending_tools = getattr(self, "_pending_tools", None)
-        if pending_tools:
-            params["tools"] = pending_tools
-            pending_tc = getattr(self, "_pending_tool_choice", None)
-            if pending_tc:
-                params["tool_choice"] = pending_tc
         return params
 
     def _build_http_error_tag(
@@ -486,24 +474,20 @@ class OpencodeGoProvider(OpenRouterProvider):
         timeout: float,
         thinking_level: str | None = None,
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | dict | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> AIResponse:
         if not self._uses_messages_transport(model_name):
-            self._pending_tools = tools if (tools and self._supports_tools(model_name)) else None
-            self._pending_tool_choice = tool_choice if self._pending_tools else None
-            try:
-                return await super()._execute_request(
-                    history=history,
-                    model_name=model_name,
-                    system_instruction=system_instruction,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    timeout=timeout,
-                    thinking_level=thinking_level,
-                )
-            finally:
-                self._pending_tools = None
-                self._pending_tool_choice = None
+            return await super()._execute_request(
+                history=history,
+                model_name=model_name,
+                system_instruction=system_instruction,
+                user_id=user_id,
+                chat_id=chat_id,
+                timeout=timeout,
+                thinking_level=thinking_level,
+                tools=tools if self._supports_tools(model_name) else None,
+                tool_choice=tool_choice,
+            )
 
         start_time = None
         try:

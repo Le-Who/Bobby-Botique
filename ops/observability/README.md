@@ -43,7 +43,9 @@ Deployment gates verify service readiness and login. CI also starts the isolated
 stack, sends synthetic bot stdout through the Docker collector, and requires the
 exact events to be searchable through the authenticated Grafana datasource.
 It checks source filters, bounded payloads, query limits and protected synthetic
-content. This does not establish ingestion or Telegram/provider availability on
+content. The collector probe also restarts its isolated Docker API proxy and
+replaces its synthetic `tg-bot`, checking ingestion after each interruption.
+This does not establish ingestion or Telegram/provider availability on
 the deployed VPS. Alloy health checks the running `/-/ready` endpoint; configuration
 validation remains a separate CI step.
 
@@ -97,12 +99,10 @@ filtering those fields.
   two-hour safety delay; 168 hours is not an exact physical-erasure timestamp.
 - Docker continues to rotate its own local source window. If Loki or Alloy is
   unavailable longer than that window, old entries can be lost.
-- Container discovery remains on a 15-second interval. The separate
-  `loki.source.docker` refresh interval is 24 hours because Alloy v1.18 also
-  applies that value as the total HTTP client timeout when it reads through the
-  restricted Docker API proxy. A short value repeatedly terminates the
-  long-lived `/logs?follow=1` response; it does not make discovery faster.
-  Re-evaluate this workaround when upgrading Alloy.
+- Container discovery runs every 15 seconds. Starting with Alloy v1.21,
+  `loki.source.docker` leaves the Docker log stream open for the lifetime of the
+  connection, and its former `refresh_interval` setting has no effect. The proxy
+  still applies its own connection timeouts. See the [upstream log stream fix](https://github.com/grafana/alloy/pull/7297).
 - Alloy persists source positions and uses its experimental bounded WAL. It can
   reduce gaps but does not provide exactly-once delivery; correlate duplicates
   by `event_id`.
@@ -157,7 +157,7 @@ the Docker proxy, or either bot:
 ```bash
 docker run --rm \
   -v /opt/gemaibot-observability/config.alloy:/etc/alloy/config.alloy:ro \
-  grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308 \
+  grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189 \
   validate --stability.level=experimental /etc/alloy/config.alloy
 docker compose -f /opt/gemaibot-observability/compose.yml \
   up -d --no-deps --force-recreate alloy
@@ -196,7 +196,7 @@ Checked against upstream registries on 2026-09-11:
 
 - Grafana `13.2.1` — `sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283`
 - Loki `3.7.4` — `sha256:87f0a067673756a3cede1bcbf0c74875f7df9b09fddb53e399d0c576f756cfcc`
-- Alloy `v1.18.0` — `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308`
+- Alloy `v1.22.0` — `sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189`
 - HAProxy `3.2.6-alpine` — `sha256:3a819392f5a6af2a9203d1c63ff0feba74f0c940623a558511be06d7d85e361c`
 
 CI validates Compose plus the Alloy, Loki, and HAProxy configurations using these

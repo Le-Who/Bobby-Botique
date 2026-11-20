@@ -34,8 +34,10 @@ _FLOW_TTL = 30 * 60
 _BIRTH_MESSAGE_LIMIT = 64
 
 
-def clear_compatibility_input(user_data: dict) -> None:
+def clear_compatibility_input(user_data: dict | None) -> None:
     """Erase raw input and cancel its owned timer when switching private modes."""
+    if user_data is None:
+        return
     handle = user_data.pop(_EXPIRY_TIMER_KEY, None)
     if handle is not None:
         handle.cancel()
@@ -80,7 +82,8 @@ def compatibility_keyboard(pair: CompatibilityPair, *, bot_username: str | None,
 
 async def start_compatibility(update: Update, context: ContextTypes.DEFAULT_TYPE, payload: str) -> None:
     message = update.effective_message
-    if message is None:
+    user = update.effective_user
+    if message is None or user is None:
         return
     lang = "ru"
     if update.effective_chat is None or update.effective_chat.type != "private":
@@ -97,11 +100,12 @@ async def start_compatibility(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await tarot_command(update, context, question_context=build_compatibility_tarot_context(pair, lang=lang))
         return
-    clear_compatibility_input(context.user_data)
+    user_data = context.user_data
+    clear_compatibility_input(user_data)
     from app.state import clear_tarot_session, ensure_state_loaded
 
-    await ensure_state_loaded(update.effective_user.id)
-    clear_tarot_session(update.effective_user.id)
+    await ensure_state_loaded(user.id)
+    clear_tarot_session(user.id)
     form_url = compatibility_form_url(pair)
     if form_url:
         labels = " + ".join(partner_label(partner, lang=lang) for partner in (pair.first, pair.second))
@@ -113,18 +117,20 @@ async def start_compatibility(update: Update, context: ContextTypes.DEFAULT_TYPE
             ),
         )
         return
+    if user_data is None:
+        return
     flow_id = secrets.token_hex(8)
-    context.user_data[_FLOW_KEY] = {
+    user_data[_FLOW_KEY] = {
         "pair": pair,
         "lang": lang,
         "started_at": time.monotonic(),
         "flow_id": flow_id,
         "message_ids": set(),
     }
-    context.user_data[_EXPIRY_TIMER_KEY] = asyncio.get_running_loop().call_later(
+    user_data[_EXPIRY_TIMER_KEY] = asyncio.get_running_loop().call_later(
         _FLOW_TTL,
         _expire_input,
-        context.user_data,
+        user_data,
         flow_id,
     )
     labels = " + ".join(partner_label(partner, lang=lang) for partner in (pair.first, pair.second))
@@ -182,7 +188,8 @@ class OrphanBirthDateFilter(filters.MessageFilter):
 
 @safe_handler()
 async def handle_orphan_birth_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.effective_message.reply_text(t("compat.orphan_date", "ru"))
+    if message := update.effective_message:
+        await message.reply_text(t("compat.orphan_date", "ru"))
 
 
 async def clear_compatibility_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -196,23 +203,28 @@ async def clear_compatibility_on_command(update: Update, context: ContextTypes.D
 
 @safe_handler()
 async def cancel_compatibility(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    lang = context.user_data.get(_FLOW_KEY, {}).get("lang", "ru")
-    clear_compatibility_input(context.user_data)
-    await update.effective_message.reply_text(t("compat.cancelled", lang))
+    user_data = context.user_data
+    lang = user_data.get(_FLOW_KEY, {}).get("lang", "ru") if user_data is not None else "ru"
+    clear_compatibility_input(user_data)
+    if message := update.effective_message:
+        await message.reply_text(t("compat.cancelled", lang))
 
 
 @safe_handler()
 async def handle_compatibility_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    flow = context.user_data.get(_FLOW_KEY)
-    if update.effective_chat.type != "private":
-        return
+    user_data = context.user_data
+    user = update.effective_user
+    chat = update.effective_chat
     message = update.effective_message
+    if user_data is None or user is None or chat is None or chat.type != "private" or message is None:
+        return
+    flow = user_data.get(_FLOW_KEY)
     edited = update.edited_message is not None
     lang = flow.get("lang", "ru") if isinstance(flow, dict) else "ru"
     if edited and (
         not isinstance(flow, dict)
         or (
-            message.message_id in context.user_data.get(_BIRTH_MESSAGES_KEY, {})
+            message.message_id in user_data.get(_BIRTH_MESSAGES_KEY, {})
             and message.message_id not in flow["message_ids"]
         )
     ):
@@ -220,19 +232,19 @@ async def handle_compatibility_date(update: Update, context: ContextTypes.DEFAUL
         return
     if not isinstance(flow, dict):
         return
-    _remember_birth_message(context.user_data, message.message_id)
+    _remember_birth_message(user_data, message.message_id)
     flow["message_ids"].add(message.message_id)
     from app.repos.users import is_authorized
     from app.request_context import ensure_request_id, set_user_context
 
-    set_user_context(update.effective_user.id, update.effective_chat.id)
-    ensure_request_id(f"tgcompat-{update.effective_chat.id}-{update.update_id}")
-    if not await is_authorized(update.effective_user.id):
-        clear_compatibility_input(context.user_data)
+    set_user_context(user.id, chat.id)
+    ensure_request_id(f"tgcompat-{chat.id}-{update.update_id}")
+    if not await is_authorized(user.id):
+        clear_compatibility_input(user_data)
         await message.reply_text(t("compat.access_required", lang))
         return
     if flow.get("expired") or time.monotonic() - flow["started_at"] > _FLOW_TTL:
-        clear_compatibility_input(context.user_data)
+        clear_compatibility_input(user_data)
         await message.reply_text(t("compat.expired", lang))
         return
     try:
@@ -251,21 +263,21 @@ async def handle_compatibility_date(update: Update, context: ContextTypes.DEFAUL
         )
         return
     first_date = flow.pop("first_date")
-    clear_compatibility_input(context.user_data)
+    clear_compatibility_input(user_data)
     try:
         reading = await asyncio.to_thread(build_birth_date_compatibility, pair, first_date, birth_date, lang=lang)
         from app.natal.compatibility_interpretation import interpret_compatibility
 
         await message.reply_text(t("compat.interpreting", lang))
-        if not await is_authorized(update.effective_user.id):
+        if not await is_authorized(user.id):
             return
-        reading = await interpret_compatibility(reading, user_id=update.effective_user.id, lang=lang)
+        reading = await interpret_compatibility(reading, user_id=user.id, lang=lang)
     except Exception:
         await message.reply_text(t("compat.failed", lang))
         return
-    if not await is_authorized(update.effective_user.id):
+    if not await is_authorized(user.id):
         return
-    keyboard = compatibility_result_keyboard(context.user_data, reading.tarot_context, lang=lang)
+    keyboard = compatibility_result_keyboard(user_data, reading.tarot_context, lang=lang)
     from app.utils.text_format import split_text_safe
 
     chunks = split_text_safe(reading.html)
@@ -315,7 +327,8 @@ def compatibility_form_url(pair: CompatibilityPair) -> str:
 async def clear_compatibility_on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from app.command_aliases import alias_message_input, matches_alias_input
 
-    parsed = alias_message_input(update.effective_message)
+    message = update.effective_message
+    parsed = alias_message_input(message) if message is not None else None
     if parsed is not None and not matches_alias_input("cancel", parsed[0]):
         clear_compatibility_input(context.user_data)
 
@@ -323,26 +336,32 @@ async def clear_compatibility_on_menu(update: Update, context: ContextTypes.DEFA
 @safe_handler()
 async def compatibility_tarot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool | None:
     query = update.callback_query
+    user = update.effective_user
+    chat = update.effective_chat
+    message = update.effective_message
+    user_data = context.user_data
+    if query is None:
+        return False
     await query.answer()
-    if update.effective_chat is None or update.effective_chat.type != "private":
+    if user is None or chat is None or chat.type != "private" or message is None or user_data is None or not query.data:
         return False
     from app.repos.users import is_authorized
     from app.request_context import ensure_request_id, set_user_context
 
-    set_user_context(update.effective_user.id, update.effective_chat.id)
-    ensure_request_id(f"tgcb-{update.effective_user.id}-{query.id}")
-    if not await is_authorized(update.effective_user.id):
-        lang = context.user_data.get(_FLOW_KEY, {}).get("lang", "ru")
-        clear_compatibility_input(context.user_data)
-        await query.message.reply_text(t("compat.access_required", lang))
+    set_user_context(user.id, chat.id)
+    ensure_request_id(f"tgcb-{user.id}-{query.id}")
+    if not await is_authorized(user.id):
+        lang = user_data.get(_FLOW_KEY, {}).get("lang", "ru")
+        clear_compatibility_input(user_data)
+        await message.reply_text(t("compat.access_required", lang))
         return False
     token = query.data.rsplit(":", 1)[-1]
-    contexts = context.user_data.get(_TAROT_KEY, {})
+    contexts = user_data.get(_TAROT_KEY, {})
     stored = contexts.get(token)
     if not isinstance(stored, dict) or time.monotonic() - stored["created_at"] > _FLOW_TTL:
         lang = stored.get("lang", "ru") if isinstance(stored, dict) else "ru"
         contexts.pop(token, None)
-        await query.message.reply_text(t("compat.tarot_expired", lang))
+        await message.reply_text(t("compat.tarot_expired", lang))
         return False
     from app.handlers.cmd_tarot import tarot_command
 

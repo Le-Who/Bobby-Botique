@@ -13,11 +13,13 @@ Coverage:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from app import model_selector
 from app.errors import ErrorCode, extract_error_code
 
 
@@ -492,25 +494,22 @@ class TestMultimodalGuard:
 
 
 class TestModelSelectorOpencodeSkip:
-    def test_no_suggestion_for_opencode_current_model(self):
-        from app.model_selector import select_model
+    @pytest.fixture(autouse=True)
+    def _configure_models(self, monkeypatch):
+        settings = SimpleNamespace(AVAILABLE_MODELS=["gemini-3.1-flash-lite", "gemini-3.5-flash"])
+        monkeypatch.setattr(model_selector, "settings", settings)
 
-        result = select_model(
+    def test_no_suggestion_for_opencode_current_model(self):
+        result = model_selector.select_model(
             "Объясни подробно как работает квантовая механика? " * 5,
             current_model="opencode-go/minimax-m2.7",
         )
         assert result is None, "Should not suggest a different model when current is Opencode"
 
     def test_suggestions_still_work_for_gemini_model(self):
-        from app.config import DEFAULT_GEMINI_MODELS, settings
-        from app.model_selector import select_model
-
-        available = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else DEFAULT_GEMINI_MODELS
-        if len(available) < 2:
-            pytest.skip("Need at least 2 Gemini models for upgrade suggestions")
-        result = select_model(
-            "Создай сложный класс на Python с множественным наследованием и метаклассами",
+        result = model_selector.select_model(
+            "Review this Python function and refactor the loop to preserve the input order.",
             current_model="gemini-3.1-flash-lite",
         )
-        if result is not None:
-            assert "opencode" not in result.model
+        assert result is not None
+        assert result.model == "gemini-3.5-flash"

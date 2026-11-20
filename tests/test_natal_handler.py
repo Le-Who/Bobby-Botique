@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from PIL import Image
 from telegram import CallbackQuery, Chat, Message, Update, User
-from telegram.ext import CallbackQueryHandler
+from telegram.ext import CallbackQueryHandler, ConversationHandler
 
 from app.handlers.natal_chart import (
     _NATAL_COVER_PATH,
@@ -141,6 +141,22 @@ def make_context(bot=None):
     if bot is None:
         bot = SimpleNamespace(send_photo=AsyncMock(), send_message=AsyncMock())
     return SimpleNamespace(user_data={"natal_memory_epoch": 100}, bot=bot)
+
+
+@pytest.mark.asyncio
+async def test_natal_confirmation_without_user_data_does_not_generate(monkeypatch):
+    update = make_callback_update("natal_confirm:yes")
+    context = make_context()
+    context.user_data = None
+    generate = AsyncMock()
+    monkeypatch.setattr("app.handlers.natal_chart.create_natal_report", generate)
+
+    state = await on_confirm(update, context)
+
+    assert state == ConversationHandler.END
+    update.callback_query.answer.assert_awaited_once_with()
+    update.callback_query.edit_message_text.assert_awaited_once_with("Данные не найдены. Запустите /natal заново.")
+    generate.assert_not_awaited()
 
 
 def first_callback_data(update, text_part: str) -> str:

@@ -6,6 +6,7 @@ import pytest
 from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler, MessageHandler
 
 from app.handlers import horoscope_subscription as horoscope
+from app.horoscope_signs import HOROSCOPE_SIGN_LABELS
 
 
 def make_update(entrypoint):
@@ -108,8 +109,27 @@ async def test_new_subscriber_entrypoints_still_open_sign_selection(monkeypatch,
         return
     assert state == horoscope.CHOOSE_SIGN
     buttons = [button for row in messages[0]["reply_markup"].inline_keyboard for button in row]
-    assert len(buttons) == 12
-    assert all(button.callback_data.startswith("horo_sign:") for button in buttons)
+    assert [(button.callback_data, button.text) for button in buttons] == [
+        (f"horo_sign:{sign}", label) for sign, label in HOROSCOPE_SIGN_LABELS.items()
+    ]
+
+
+def test_subscription_sign_order_and_unknown_sign_fallback():
+    assert tuple(HOROSCOPE_SIGN_LABELS) == (
+        "aries",
+        "taurus",
+        "gemini",
+        "cancer",
+        "leo",
+        "virgo",
+        "libra",
+        "scorpio",
+        "sagittarius",
+        "capricorn",
+        "aquarius",
+        "pisces",
+    )
+    assert "Знак: unknown-sign" in horoscope._summary_text("unknown-sign", None, None, 0)
 
 
 @pytest.mark.asyncio

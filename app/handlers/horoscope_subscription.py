@@ -48,6 +48,7 @@ from telegram.ext import (
 
 from app.handlers.conversation import suppress_hybrid_conversation_handler_warning
 from app.handlers.menu_intents import COMPATIBILITY_ENTRY_RE, NATAL_MENU_RE, TAROT_MENU_RE
+from app.horoscope_signs import HOROSCOPE_SIGN_LABELS
 from app.natal.city_catalog import nearest_city_timezone, search_cities
 from app.repos.horoscope_subscriptions import (
     delete_horoscope_subscription,
@@ -64,21 +65,6 @@ CHOOSE_TIME_TOMORROW: Final = "HS_TIME_TOMORROW"
 CHOOSE_TZ: Final = "HS_TZ"
 CONFIRM: Final = "HS_CONFIRM"
 
-SIGNS: dict[str, str] = {
-    "aries": "♈ Овен",
-    "taurus": "♉ Телец",
-    "gemini": "♊ Близнецы",
-    "cancer": "♋ Рак",
-    "leo": "♌ Лев",
-    "virgo": "♍ Дева",
-    "libra": "♎ Весы",
-    "scorpio": "♏ Скорпион",
-    "sagittarius": "♐ Стрелец",
-    "capricorn": "♑ Козерог",
-    "aquarius": "♒ Водолей",
-    "pisces": "♓ Рыбы",
-}
-
 _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 _COMMON_TIMES_MORNING = ["07:00", "08:00", "09:00", "10:00"]
 _COMMON_TIMES_EVENING = ["19:00", "20:00", "21:00", "22:00"]
@@ -86,7 +72,7 @@ _COMMON_TIMES_EVENING = ["19:00", "20:00", "21:00", "22:00"]
 
 def _sign_keyboard() -> InlineKeyboardMarkup:
     rows = []
-    signs = list(SIGNS.items())
+    signs = list(HOROSCOPE_SIGN_LABELS.items())
     for i in range(0, len(signs), 3):
         chunk = signs[i : i + 3]
         rows.append([InlineKeyboardButton(label, callback_data=f"horo_sign:{key}") for key, label in chunk])
@@ -133,14 +119,14 @@ def _location_request_keyboard() -> ReplyKeyboardMarkup:
 
 def _get_utc_offset_from_tz(tz_name: str) -> int:
     try:
-        now = datetime.now(ZoneInfo(tz_name))
-        return int(now.utcoffset().total_seconds() / 3600)
+        offset = datetime.now(ZoneInfo(tz_name)).utcoffset()
+        return int(offset.total_seconds() / 3600) if offset is not None else 0
     except Exception:
         return 0
 
 
 def _summary_text(sign: str, time_today: str | None, time_tomorrow: str | None, utc_offset: int) -> str:
-    sign_label = SIGNS.get(sign, sign)
+    sign_label = HOROSCOPE_SIGN_LABELS.get(sign, sign)
     today_str = f"🌅 Утренний (сегодня): <b>{time_today}</b>" if time_today else "🌅 Утренний: <i>отключён</i>"
     tomorrow_str = f"🌙 Вечерний (завтра): <b>{time_tomorrow}</b>" if time_tomorrow else "🌙 Вечерний: <i>отключён</i>"
     tz_sign = "+" if utc_offset >= 0 else ""
@@ -188,7 +174,13 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
             await _show_subscription_settings(update.effective_message, sub)
             return ConversationHandler.END
 
-    payload: str = context.user_data.get("horo_payload", "")
+    user_data = context.user_data
+    if user_data is None:
+        if update.callback_query:
+            await update.callback_query.answer()
+        return ConversationHandler.END
+
+    payload: str = user_data.get("horo_payload", "")
     sign = payload.replace("subscribe_horoscope_", "").lower().strip()
 
     if update.callback_query:
@@ -196,15 +188,15 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
         if update.callback_query.data == "start_horoscope":
             sign = ""
 
-    if sign not in SIGNS:
+    if sign not in HOROSCOPE_SIGN_LABELS:
         sign = ""
 
-    context.user_data["horo_sign"] = sign
+    user_data["horo_sign"] = sign
 
     if sign:
         text = (
             f"✨ <b>Настройка гороскопа</b>\n\n"
-            f"Выбран знак <b>{SIGNS[sign]}</b>. Дальше настроим утренний и вечерний слот, "
+            f"Выбран знак <b>{HOROSCOPE_SIGN_LABELS[sign]}</b>. Дальше настроим утренний и вечерний слот, "
             f"а также часовой пояс для точной доставки.\n\n"
             f"Подтвердите знак или выберите другой:"
         )
@@ -237,11 +229,15 @@ async def on_sign_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return CHOOSE_SIGN
     await query.answer()
 
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+
     sign = query.data.replace("horo_sign:", "")
-    context.user_data["horo_sign"] = sign
+    user_data["horo_sign"] = sign
 
     await query.edit_message_text(
-        f"<b>{SIGNS[sign]}</b> — отлично!\n\n"
+        f"<b>{HOROSCOPE_SIGN_LABELS[sign]}</b> — отлично!\n\n"
         f"🌅 В какое время отправлять <b>гороскоп на сегодня</b> (утром)?\n"
         f"Укажите или выберите, либо нажмите «Пропустить»:",
         parse_mode="HTML",
@@ -256,8 +252,12 @@ async def on_time_today_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return CHOOSE_TIME_TODAY
     await query.answer()
 
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+
     value = query.data.replace("horo_time_today:", "")
-    context.user_data["horo_time_today"] = None if value == "skip" else value
+    user_data["horo_time_today"] = None if value == "skip" else value
 
     await query.edit_message_text(
         "🌙 В какое время отправлять <b>гороскоп на завтра</b> (вечером)?\n"
@@ -272,6 +272,10 @@ async def on_time_today_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Handle free-text time input like '09:30'."""
     if not update.message or not update.message.text:
         return CHOOSE_TIME_TODAY
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+
     raw = update.message.text.strip()
     if not _TIME_RE.match(raw):
         await update.message.reply_text(
@@ -280,7 +284,7 @@ async def on_time_today_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return CHOOSE_TIME_TODAY
 
-    context.user_data["horo_time_today"] = raw
+    user_data["horo_time_today"] = raw
     await update.message.reply_text(
         "🌙 В какое время отправлять <b>гороскоп на завтра</b> (вечером)?\n"
         "Укажите или выберите, либо нажмите «Пропустить»:",
@@ -296,8 +300,12 @@ async def on_time_tomorrow_btn(update: Update, context: ContextTypes.DEFAULT_TYP
         return CHOOSE_TIME_TOMORROW
     await query.answer()
 
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+
     value = query.data.replace("horo_time_tomorrow:", "")
-    context.user_data["horo_time_tomorrow"] = None if value == "skip" else value
+    user_data["horo_time_tomorrow"] = None if value == "skip" else value
 
     text = (
         "🌍 <b>Настройка часового пояса</b>\n\n"
@@ -318,6 +326,10 @@ async def on_time_tomorrow_btn(update: Update, context: ContextTypes.DEFAULT_TYP
 async def on_time_tomorrow_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return CHOOSE_TIME_TOMORROW
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+
     raw = update.message.text.strip()
     if not _TIME_RE.match(raw):
         await update.message.reply_text(
@@ -326,7 +338,7 @@ async def on_time_tomorrow_text(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return CHOOSE_TIME_TOMORROW
 
-    context.user_data["horo_time_tomorrow"] = raw
+    user_data["horo_time_tomorrow"] = raw
     text = (
         "🌍 <b>Настройка часового пояса</b>\n\n"
         "Напишите <b>название вашего города</b> (например, Москва, Киев) "
@@ -341,11 +353,11 @@ async def on_time_tomorrow_text(update: Update, context: ContextTypes.DEFAULT_TY
     return CHOOSE_TZ
 
 
-async def _show_summary(message, context: ContextTypes.DEFAULT_TYPE) -> str:
-    sign = context.user_data.get("horo_sign", "aries")
-    time_today = context.user_data.get("horo_time_today")
-    time_tomorrow = context.user_data.get("horo_time_tomorrow")
-    utc_offset = context.user_data.get("horo_utc_offset", 3)
+async def _show_summary(message, user_data: dict) -> str:
+    sign = user_data.get("horo_sign", "aries")
+    time_today = user_data.get("horo_time_today")
+    time_tomorrow = user_data.get("horo_time_tomorrow")
+    utc_offset = user_data.get("horo_utc_offset", 3)
 
     dummy = await message.reply_text("⏳", reply_markup=ReplyKeyboardRemove())
     await dummy.delete()
@@ -361,6 +373,10 @@ async def _show_summary(message, context: ContextTypes.DEFAULT_TYPE) -> str:
 async def on_tz_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.location:
         return CHOOSE_TZ
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+
     lat = update.message.location.latitude
     lon = update.message.location.longitude
     tz_name = nearest_city_timezone(lat, lon)
@@ -370,13 +386,17 @@ async def on_tz_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return CHOOSE_TZ
     utc_offset = _get_utc_offset_from_tz(tz_name)
-    context.user_data["horo_utc_offset"] = utc_offset
-    return await _show_summary(update.message, context)
+    user_data["horo_utc_offset"] = utc_offset
+    return await _show_summary(update.message, user_data)
 
 
 async def on_tz_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return CHOOSE_TZ
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+
     query = update.message.text.strip()
     cities = search_cities(query)
     if not cities:
@@ -386,9 +406,9 @@ async def on_tz_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
         return CHOOSE_TZ
     city = cities[0]
     utc_offset = _get_utc_offset_from_tz(city.timezone)
-    context.user_data["horo_utc_offset"] = utc_offset
+    user_data["horo_utc_offset"] = utc_offset
     await update.message.reply_text(f"Определен город: <b>{city.name}</b>", parse_mode="HTML")
-    return await _show_summary(update.message, context)
+    return await _show_summary(update.message, user_data)
 
 
 async def on_tz_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
@@ -404,12 +424,16 @@ async def on_tz_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return CHOOSE_TZ
     await query.answer()
 
-    utc_offset = int(query.data.replace("horo_tz:", ""))
-    context.user_data["horo_utc_offset"] = utc_offset
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
 
-    sign = context.user_data.get("horo_sign", "aries")
-    time_today = context.user_data.get("horo_time_today")
-    time_tomorrow = context.user_data.get("horo_time_tomorrow")
+    utc_offset = int(query.data.replace("horo_tz:", ""))
+    user_data["horo_utc_offset"] = utc_offset
+
+    sign = user_data.get("horo_sign", "aries")
+    time_today = user_data.get("horo_time_today")
+    time_tomorrow = user_data.get("horo_time_tomorrow")
 
     await query.edit_message_text(
         _summary_text(sign, time_today, time_tomorrow, utc_offset),
@@ -425,6 +449,10 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
         return CONFIRM
     await query.answer()
 
+    user_data = context.user_data
+    if user_data is None:
+        return ConversationHandler.END
+
     action = query.data.replace("horo_confirm:", "")
     if action == "edit":
         await query.edit_message_text(
@@ -438,10 +466,10 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
         await query.edit_message_text("❌ Не удалось определить пользователя.")
         return ConversationHandler.END
 
-    sign = context.user_data.get("horo_sign", "aries")
-    time_today = context.user_data.get("horo_time_today")
-    time_tomorrow = context.user_data.get("horo_time_tomorrow")
-    utc_offset = context.user_data.get("horo_utc_offset", 3)
+    sign = user_data.get("horo_sign", "aries")
+    time_today = user_data.get("horo_time_today")
+    time_tomorrow = user_data.get("horo_time_tomorrow")
+    utc_offset = user_data.get("horo_utc_offset", 3)
 
     ok = await upsert_horoscope_subscription(
         user_id=user_id,
@@ -453,7 +481,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
     )
 
     if ok:
-        sign_label = SIGNS.get(sign, sign)
+        sign_label = HOROSCOPE_SIGN_LABELS.get(sign, sign)
         parts = []
         if time_today:
             parts.append(f"🌅 Утренний гороскоп (сегодня): <b>{time_today}</b>")
@@ -473,8 +501,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
     else:
         await query.edit_message_text("❌ Ошибка при сохранении подписки. Попробуйте позже.")
 
-    for key in ("horo_sign", "horo_time_today", "horo_time_tomorrow", "horo_utc_offset", "horo_payload"):
-        context.user_data.pop(key, None)
+    _clear_horoscope_draft(user_data)
 
     return ConversationHandler.END
 
@@ -496,16 +523,16 @@ async def _show_subscription_settings(message, sub: dict | None) -> None:
     if sub:
         sign = sub.get("sign", "aries")
         time_today = sub.get("time_today")
-        if hasattr(time_today, "strftime"):
+        if time_today is not None and hasattr(time_today, "strftime"):
             time_today = time_today.strftime("%H:%M")
         time_tomorrow = sub.get("time_tomorrow")
-        if hasattr(time_tomorrow, "strftime"):
+        if time_tomorrow is not None and hasattr(time_tomorrow, "strftime"):
             time_tomorrow = time_tomorrow.strftime("%H:%M")
         utc_offset = sub.get("utc_offset", 3)
         is_active = sub.get("is_active", True)
 
         status = "✅ Активна" if is_active else "⏸ Приостановлена"
-        sign_label = SIGNS.get(sign, sign)
+        sign_label = HOROSCOPE_SIGN_LABELS.get(sign, sign)
         today_str = f"🌅 Утро: <b>{time_today}</b>" if time_today else "🌅 Утро: <i>отключено</i>"
         tomorrow_str = f"🌙 Вечер: <b>{time_tomorrow}</b>" if time_tomorrow else "🌙 Вечер: <i>отключено</i>"
         tz_sign = "+" if utc_offset >= 0 else ""
@@ -557,26 +584,32 @@ async def horoscope_now_callback(update: Update, context: ContextTypes.DEFAULT_T
     """One-off delivery, independent of subscription state and scheduler bookkeeping."""
     query = update.callback_query
     message = update.effective_message
-    if not query or not update.effective_user or not message:
+    user = update.effective_user
+    if not query or not user or not message:
         return ConversationHandler.END
     parts = (query.data or "").split(":")
     if (
         len(parts) not in (3, 4)
         or parts[:2] != ["horo_settings", "now"]
         or parts[2] not in ("today", "tomorrow")
-        or (len(parts) == 4 and parts[3] not in SIGNS)
+        or (len(parts) == 4 and parts[3] not in HOROSCOPE_SIGN_LABELS)
     ):
         await query.answer("Неизвестный запрос. Откройте /horoscope заново.", show_alert=True)
         return ConversationHandler.END
 
+    user_data = context.user_data
+    if user_data is None:
+        await query.answer()
+        return ConversationHandler.END
+
     await query.answer("Готовлю гороскоп…")
     kind = parts[2]
-    sub = await get_horoscope_subscription(update.effective_user.id)
+    sub = await get_horoscope_subscription(user.id)
     sign = parts[3] if len(parts) == 4 else (sub or {}).get("sign", "")
-    if sign not in SIGNS:
+    if sign not in HOROSCOPE_SIGN_LABELS:
         buttons = [
             InlineKeyboardButton(label, callback_data=f"horo_settings:now:{kind}:{value}")
-            for value, label in SIGNS.items()
+            for value, label in HOROSCOPE_SIGN_LABELS.items()
         ]
         await message.reply_text(
             "Выберите знак для разового прогноза. Подписка не будет создана.",
@@ -584,24 +617,24 @@ async def horoscope_now_callback(update: Update, context: ContextTypes.DEFAULT_T
         )
         return ConversationHandler.END
 
-    if context.user_data.get("horo_now_busy"):
+    if user_data.get("horo_now_busy"):
         await message.reply_text("Гороскоп уже готовится — дождитесь ответа.")
         return ConversationHandler.END
-    last_success = context.user_data.get("horo_now_last_success")
+    last_success = user_data.get("horo_now_last_success")
     if last_success is not None and time.monotonic() - last_success < 10:
         await message.reply_text("Прогноз уже отправлен. Новый запрос будет доступен через несколько секунд.")
         return ConversationHandler.END
 
-    context.user_data["horo_now_busy"] = True
+    user_data["horo_now_busy"] = True
 
     async def deliver_in_background() -> None:
         try:
             from app.handlers.scheduled_horoscopes import _deliver_horoscope
 
             async with asyncio.timeout(60):
-                delivered = await _deliver_horoscope(context.bot, update.effective_user.id, sign, kind)
+                delivered = await _deliver_horoscope(context.bot, user.id, sign, kind)
             if delivered:
-                context.user_data["horo_now_last_success"] = time.monotonic()
+                user_data["horo_now_last_success"] = time.monotonic()
             else:
                 await message.reply_text(
                     "Не удалось получить гороскоп. Попробуйте ещё раз; расписание подписки не изменено."
@@ -610,14 +643,14 @@ async def horoscope_now_callback(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning("On-demand horoscope failed: %s", type(exc).__name__)
             await message.reply_text("Не удалось получить гороскоп. Попробуйте ещё раз чуть позже.")
         finally:
-            context.user_data.pop("horo_now_busy", None)
+            user_data.pop("horo_now_busy", None)
 
     job = deliver_in_background()
     try:
         submit_task(job)
     except Exception:
         job.close()
-        context.user_data.pop("horo_now_busy", None)
+        user_data.pop("horo_now_busy", None)
         await message.reply_text("Не удалось начать генерацию гороскопа. Попробуйте ещё раз.")
     return ConversationHandler.END
 
@@ -636,9 +669,12 @@ async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFA
     action = query.data.replace("horo_settings:", "")
 
     if action == "edit":
+        user_data = context.user_data
+        if user_data is None:
+            return ConversationHandler.END
         sub = await get_horoscope_subscription(user_id)
         if sub:
-            context.user_data["horo_sign"] = sub.get("sign", "aries")
+            user_data["horo_sign"] = sub.get("sign", "aries")
         await query.edit_message_text(
             "✨ Выберите ваш знак зодиака:",
             reply_markup=_sign_keyboard(),
@@ -685,20 +721,25 @@ HOROSCOPE_INTENT_RE = re.compile(
 )
 
 
+def _clear_horoscope_draft(user_data: dict | None) -> None:
+    if user_data is None:
+        return
+    for key in ("horo_sign", "horo_time_today", "horo_time_tomorrow", "horo_utc_offset", "horo_payload"):
+        user_data.pop(key, None)
+
+
 async def on_tarot_during_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
     from app.handlers.cmd_tarot import tarot_command
 
     if await tarot_command(update, context):
-        for key in ("horo_sign", "horo_time_today", "horo_time_tomorrow", "horo_utc_offset", "horo_payload"):
-            context.user_data.pop(key, None)
+        _clear_horoscope_draft(context.user_data)
         return ConversationHandler.END
     return None
 
 
 async def on_natal_during_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Finish this draft; the later handler group opens the natal conversation."""
-    for key in ("horo_sign", "horo_time_today", "horo_time_tomorrow", "horo_utc_offset", "horo_payload"):
-        context.user_data.pop(key, None)
+    _clear_horoscope_draft(context.user_data)
     return ConversationHandler.END
 
 

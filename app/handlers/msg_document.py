@@ -69,23 +69,27 @@ async def handle_document_mode_interaction(update: Update, context: ContextTypes
         logging.info("User %s is in document mode, document_id: %s", user_id, document_id)
         if document_id:
             await handle_document_question(update, context, document_id)
-        else:
-            await update.message.reply_text(t("doc.mode_hint"))
+        elif message := update.message:
+            await message.reply_text(t("doc.mode_hint"))
         return True
     return False
 
 
 async def handle_document_question(update: Update, context: ContextTypes.DEFAULT_TYPE, document_id: int) -> None:
     """Process a user's question about a specific document."""
-    user_id = update.effective_user.id
-    user_message = update.message.text
+    user = update.effective_user
+    message = update.message
+    if user is None or message is None:
+        return
+    user_id = user.id
+    user_message = message.text
 
     try:
         from app.document_processor import get_document_by_id, get_document_content
 
         document = await get_document_by_id(document_id, user_id)
         if not document:
-            await update.message.reply_text(
+            await message.reply_text(
                 t("doc.not_found"),
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton(t("doc.to_documents"), callback_data="open_documents")]]
@@ -98,7 +102,7 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
 
         document_content = await get_document_content(document_id, user_id)
         if not document_content:
-            await update.message.reply_text(
+            await message.reply_text(
                 t("doc.content_unavailable"),
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton(t("doc.to_documents"), callback_data="open_documents")]]
@@ -110,16 +114,16 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
 
         chat_state = await get_user_chat(user_id)
         await _handle_document_question(
-            update.message,
+            message,
             user_id,
             user_message or "",
             chat_state,
             document_id=document_id,
-        )  # type: ignore[arg-type]
+        )
 
     except Exception as e:
         logging.error("Error handling document question: %s", e, exc_info=True)
-        await update.message.reply_text(
+        await message.reply_text(
             t("doc.error_question"),
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton(t("doc.to_documents"), callback_data="open_documents")]]
@@ -129,12 +133,12 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle uploaded documents (PDF, DOCX)."""
-    user_id = update.effective_user.id
-
-    if not update.message.document:
+    user, message = update.effective_user, update.message
+    if user is None or message is None or not message.document:
         return
 
-    document = update.message.document
+    user_id = user.id
+    document = message.document
     pending = _pending_document_upload(context, user_id)
     skip_duplicate_check = bool(
         pending and pending["confirmed"] and pending["file_unique_id"] == document.file_unique_id
@@ -143,17 +147,17 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     _max_file_size = document_processor.max_file_size
     if document.file_size and document.file_size > _max_file_size:
-        await update.message.reply_text(t("doc.file_too_large", max_mb=str(_max_file_size // (1024 * 1024))))
+        await message.reply_text(t("doc.file_too_large", max_mb=str(_max_file_size // (1024 * 1024))))
         return
 
     supported_formats = [".pdf", ".docx", ".doc"]
     file_ext = document.file_name.lower().split(".")[-1] if document.file_name and "." in document.file_name else ""
 
     if f".{file_ext}" not in supported_formats:
-        await update.message.reply_text(t("doc.unsupported_format", ext=file_ext))
+        await message.reply_text(t("doc.unsupported_format", ext=file_ext))
         return
 
-    processing_msg = await update.message.reply_text(t("doc.processing"))
+    processing_msg = await message.reply_text(t("doc.processing"))
 
     try:
         import os

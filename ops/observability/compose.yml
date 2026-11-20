@@ -44,7 +44,7 @@ services:
 
   alloy:
     <<: *service-defaults
-    image: grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
+    image: grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
     user: "473:473"
     command:
       - run

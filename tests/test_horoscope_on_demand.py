@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telegram.ext import CommandHandler, MessageHandler
+from telegram.ext import CommandHandler, ConversationHandler, MessageHandler
 
 from app.handlers import horoscope_subscription as horoscope
 
@@ -32,6 +32,21 @@ def background_jobs(monkeypatch):
 
     monkeypatch.setattr(horoscope, "submit_task", schedule)
     return jobs
+
+
+@pytest.mark.asyncio
+async def test_on_demand_without_user_data_does_not_admit_work(monkeypatch, background_jobs):
+    update, context = request("horo_settings:now:today:leo")
+    context.user_data = None
+    lookup = AsyncMock()
+    monkeypatch.setattr(horoscope, "get_horoscope_subscription", lookup)
+
+    state = await horoscope.horoscope_settings_callback(update, context)
+
+    assert state == ConversationHandler.END
+    update.callback_query.answer.assert_awaited_once_with()
+    lookup.assert_not_awaited()
+    assert background_jobs == []
 
 
 @pytest.mark.asyncio

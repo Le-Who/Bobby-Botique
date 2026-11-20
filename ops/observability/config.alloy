@@ -57,7 +57,6 @@ discovery.relabel "redis" {
 loki.source.docker "redis" {
   host = "http://docker-proxy:2375"
   targets = discovery.relabel.redis.output
-  refresh_interval = "24h"
   labels = {
     environment = "production",
     level = "unknown",
@@ -70,7 +69,6 @@ loki.source.docker "redis" {
 loki.source.docker "bot" {
   host             = "http://docker-proxy:2375"
   targets          = discovery.relabel.bot.output
-  refresh_interval = "24h"
   labels = {
     environment  = "unknown",
     level        = "unknown",
@@ -83,7 +81,6 @@ loki.source.docker "bot" {
 loki.source.docker "ytdlbot" {
   host             = "http://docker-proxy:2375"
   targets          = discovery.relabel.ytdlbot.output
-  refresh_interval = "24h"
   labels = {
     environment  = "unknown",
     level        = "unknown",

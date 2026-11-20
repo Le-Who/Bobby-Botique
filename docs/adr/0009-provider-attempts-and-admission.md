@@ -190,3 +190,40 @@ Clear only the keys owned by search because Redis also stores queues, locks
 and Reader data. A key lookup excludes failed keys even when its cached choice
 would otherwise be fresh. Compress album photos once per immutable Telegram
 file identity, with a typed marker that distinguishes already-compressed input.
+
+## Agentic cleanup
+
+The research loop clears its request-owned conversation on exit. It leaves
+collection to the interpreter. A forced generation-1 collection did not
+release the SDK objects that remained after failed or cancelled requests.
+Avoid waiting for a worker thread to repeat that collection after each exit.
+
+On Windows with Python 3.14.3 and GenAI 2.31.0, the offline harness ran five
+alternating baseline and current pairs with 24 completions, 24 failures and 24
+cancellations per trial. Each run passed three synthetic 15,000-character tool
+results through the real SDK's HTTP serialization. Memory and latency runs
+used separate fresh processes. The benchmark invokes the same application
+research loop and supplies synthetic responses with HTTPX `MockTransport`.
+
+| Measurement | Baseline `8e5f7c35` | Without forced collection |
+| --- | ---: | ---: |
+| Median traced live memory after 72 outcomes | 8.176 MiB | 8.168 MiB |
+| Watched SDK objects remaining before diagnostic full collection | 192 | 192 |
+| Watched SDK objects remaining after diagnostic full collection | 0 | 0 |
+| Generation-1 collections in each untraced trial | 72 | 11 |
+| Concurrent HTTP probe p95, median across trials | 0.404 ms | 0.390 ms |
+| Concurrent HTTP probe p95, range across trials | 0.384–0.629 ms | 0.376–0.594 ms |
+
+Completed requests left no watched objects. Failed and cancelled requests left
+three `Content` objects and one `GenerateContentResponse` each. The HTTP probe
+ranges overlap. A separate Windows timer probe observed higher median wake lag
+without the forced collect (5.9 to 11.4 ms), with overlapping trial ranges.
+The fixture establishes retained-object equivalence for the bounded workload.
+It uses no live provider, and production latency and memory remain unmeasured.
+
+```powershell
+uv run --locked python scripts/measure_agentic_cleanup.py --baseline 8e5f7c35 --runs 24 --trials 5
+```
+
+See [the harness](../../scripts/measure_agentic_cleanup.py) and
+[the cleanup issue](https://github.com/Le-Who/Bobby-Botique/issues/672).

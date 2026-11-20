@@ -340,12 +340,8 @@ async def _enqueue_speech_request(
                 expected_epoch=request.expected_epoch
                 if request.expected_epoch is not None
                 else chat_state.memory_epoch,
-                **({"text_is_clean": True} if shared_cleanup else {}),
-                **(
-                    {"token_receipts": token_receipts[part.reply_to_message_id]}
-                    if part.reply_to_message_id in token_receipts
-                    else {}
-                ),
+                text_is_clean=shared_cleanup,
+                token_receipts=token_receipts.get(part.reply_to_message_id, ()),
             )
             if result.queued or result.deduped:
                 if on_admitted is not None:
@@ -360,7 +356,7 @@ async def _enqueue_speech_request(
                 "user_capacity": "speech.capacity",
                 "text_too_large": "speech.too_large",
                 "empty_text": "speech.clarify",
-            }.get(result.reason_code, "speech.unavailable")
+            }.get(result.reason_code or "", "speech.unavailable")
         except Exception:
             logger.exception("Direct speech source enqueue failed")
             key = "speech.unavailable"
